@@ -2,7 +2,7 @@
 title: Reaching ServiceBay's API/MCP from a container running on the box itself
 whenToUse: You are an agent or script running in a container ON the ServiceBay host and cannot reach its API or /mcp endpoint — TLS handshakes are rejected, you get a bare 404, or a 301 to the public URL. Read this before concluding you need an /etc/hosts entry, --add-host, or a restored LAN route.
 kind: footgun
-tags: [mcp, api, networking, adr-0007, container, host-containers-internal, reverse-proxy, agent, troubleshooting]
+tags: [mcp, api, networking, adr-0007, container, host-containers-internal, reverse-proxy, agent, troubleshooting, token, auth]
 ---
 
 # The MCP endpoint is on the app port, not behind the proxy
@@ -60,6 +60,29 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'
 ```
+
+## Two things that look like a working token and aren't
+
+- **A `401` from `/api/health` means the box is up** — that route is auth-gated,
+  so a `401` is proof the app answered. Don't read it as "box down" and go
+  hunting for a restart.
+- **`$SERVICEBAY_MCP_TOKEN` is not the MCP token.** It's a different value (no
+  `sb_` prefix) and gets a **401** on every `/mcp` call. The credential that
+  actually works is the `Authorization: Bearer sb_<id>_<secret>` value already
+  configured for the `atHome-Servicebay` MCP entry in `~/.claude.json` — read
+  it from there, don't re-derive or substitute it. A script that runs
+  `export SB_TOKEN="$SERVICEBAY_MCP_TOKEN"` overrides the correct fallback and
+  then silently fails every box call for the rest of the session; leave
+  `SB_TOKEN` unset so tooling (e.g. `scripts/autoloop-box.ts`) falls back to
+  `~/.claude.json` on its own.
+- **Self-check before doing anything else**, once you're pointed at the right
+  URL and token: a `tools/call get_channel` (or `npm run autoloop:box --
+  channel`, which additionally needs `SB_BOX_URL=http://host.containers.internal:5888`
+  set explicitly — without it `channel` reports `{"channel":null}` even with a
+  correct token) must return `{"channel": "latest"|"dev"}`. A `null` channel or
+  a `-32001` error means the token or URL is wrong, not that the box is
+  unreachable — go back to the diagnostic above rather than concluding the box
+  is down.
 
 ## Things worth knowing before you use it
 

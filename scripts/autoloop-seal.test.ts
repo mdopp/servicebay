@@ -1,4 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   isPathMandated,
   PATH_MANDATED_PATHS,
@@ -199,4 +203,104 @@ describe('parseAddedLines', () => {
     const diff = ['diff --git a/x.ts b/x.ts', '--- a/x.ts', '+++ /dev/null', '@@ -1 +0,0 @@', '-gone'].join('\n');
     expect([...parseAddedLines(diff).keys()]).toEqual([]);
   });
+});
+
+// ---------------------------------------------------------------------------
+// #2761 — a seal that has ALREADY MERGED must never exit without its result
+// line. GitHub's unauthenticated-download throttle answers `git pull` with a
+// `fatal: remote error`, not a 401, so the credential helper never fires; the
+// old code let that throw kill the process after the merge and the orchestrator
+// lost sha/pathMandated/boxVerifyOwed. Driven as a real process against PATH
+// shims for git/gh/sleep — the finally is only real end-to-end.
+// ---------------------------------------------------------------------------
+describe('seal under the GitHub download throttle', () => {
+  const FAKE_TOKEN = 'gh-test-token-not-a-real-secret';
+  const THROTTLE =
+    'fatal: remote error: GitHub is temporarily limiting some unauthenticated downloads to protect the stability of the platform. Please retry later or authenticate.';
+
+  const runSeal = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'seal-throttle-'));
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    const gitLog = join(dir, 'git.log');
+    const envLog = join(dir, 'env.log');
+
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/usr/bin/env bash
+echo "$*" >> "${gitLog}"
+echo "$* | COUNT=\${GIT_CONFIG_COUNT:-none} KEY=\${GIT_CONFIG_KEY_0:-none} HASVAL=\${GIT_CONFIG_VALUE_0:+yes}" >> "${envLog}"
+case "$*" in
+  "status --porcelain") exit 0;;
+  *"pull --ff-only"*) echo "${THROTTLE}" >&2; exit 128;;
+  "rev-parse origin/main") echo "1111111111111111111111111111111111111111";;
+  "rev-parse --short HEAD") echo "SHOULDNOTHAPPEN";;
+  "diff --name-only"*) echo "packages/backend/src/lib/install/runner.ts";;
+  "diff --unified=0"*) exit 0;;
+  "rev-parse"*) echo "2222222222222222222222222222222222222222";;
+  *) exit 0;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(bin, 'gh'),
+      `#!/usr/bin/env bash
+case "$*" in
+  "auth token") echo "${FAKE_TOKEN}";;
+  "pr list"*) echo "123";;
+  "pr checks"*) echo '[{"name":"ci","state":"SUCCESS","bucket":"pass"}]';;
+  "pr merge"*) echo "merged";;
+  "pr view"*) echo "abcdef1234567890abcdef1234567890abcdef12";;
+  *) exit 0;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    // watchCi sleeps between polls — shim it so the test doesn't wait 30s.
+    writeFileSync(join(bin, 'sleep'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+
+    const repoRoot = process.cwd();
+    const r = spawnSync(join(repoRoot, 'node_modules', '.bin', 'tsx'), [join(repoRoot, 'scripts', 'autoloop-seal.ts'), 'batch/test'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      timeout: 120_000,
+    });
+    const line = (r.stdout ?? '').split('\n').find(l => l.startsWith('AUTOLOOP_SEAL_RESULT ')) ?? '';
+    return {
+      r,
+      result: line ? (JSON.parse(line.slice('AUTOLOOP_SEAL_RESULT '.length)) as Record<string, unknown>) : null,
+      gitCalls: readFileSync(gitLog, 'utf8'),
+      envCalls: readFileSync(envLog, 'utf8'),
+    };
+  };
+
+  it('still merges, still prints the result, and reports the pull failure as a warning', () => {
+    const { r, result } = runSeal();
+    expect(r.status).toBe(0);
+    expect(result).toBeTruthy();
+    expect(result!.ok).toBe(true);
+    expect(result!.pr).toBe(123);
+    expect(String(result!.postMergeWarning)).toContain('unauthenticated downloads');
+    // the gate still resolves — computed from the pre-merge batch tip, not from
+    // a local main the throttled pull never advanced
+    expect(result!.boxVerifyOwed).toBe(true);
+    expect(result!.pathMandated).toEqual(['packages/backend/src/lib/install/runner.ts']);
+    // and the sha falls back to the merge commit from the API
+    expect(result!.sha).toBe('abcdef1');
+  }, 130_000);
+
+  it('passes the auth env to every git call and never leaks the token', () => {
+    const { r, envCalls } = runSeal();
+    const lines = envCalls.trim().split('\n');
+    expect(lines.length).toBeGreaterThan(3);
+    for (const l of lines) {
+      expect(l).toContain('COUNT=1');
+      expect(l).toContain('KEY=http.https://github.com/.extraHeader');
+      expect(l).toContain('HASVAL=yes');
+    }
+    expect(`${r.stdout}${r.stderr}`).not.toContain(FAKE_TOKEN);
+    expect(`${r.stdout}${r.stderr}`).not.toContain(Buffer.from(`x-access-token:${FAKE_TOKEN}`).toString('base64'));
+  }, 130_000);
 });

@@ -2,7 +2,7 @@
 
 You are the **Box-Verify** sub-agent. You run **in the background** (the orchestrator spawns you with `run_in_background`) when the verify status is `"owed"` — a path-mandated change is on `main` but hasn't run on the real box. First **classify the change (Step 0)**: an app-behavior change takes the FULL path (flip to `:dev`, `/verify`, flip back); a render-only change takes the LIGHT path (scratch `nginx -t` + `:latest` probes, **no flip**, ~2–3 min). You record the verdict. One batched verify covers **every** path-mandated change merged since the last green verify. Return one line.
 
-Read first: the orchestrator's shared rules in `.claude/skills/autoloop-issues/SKILL.md` and memory `reference_mcp_servicebay_access` (the box address `<SERVICEBAY_BOX>`, SSH/HTTP/MCP paths, reinstall gotchas).
+Read first: the orchestrator's shared rules in `.claude/skills/autoloop-issues/SKILL.md` and assist `footgun-mcp-from-a-container-on-the-box` (the box address, the token that actually works vs. the one that 401s, self-check, HTTP/MCP paths). Pipeline-mechanics footguns (flip-back recovery, gate-tally, release-please shape) are assist `autoloop-issue-pipeline`.
 
 ## Box access + authorization — read this before you touch the box (#2532)
 
@@ -20,7 +20,7 @@ Read first: the orchestrator's shared rules in `.claude/skills/autoloop-issues/S
 export SB_BOX_URL=https://<admin-origin>     # full origin wins over $SB_BOX host:port
 npm run autoloop:box -- channel              # 200 + a channel ⇒ you have a working path
 ```
-Check that **first**, before any probe design. **Do NOT conclude "box unreachable" from "SSH has no key", from one timeout on :5888, or from a mid-restart refusal** — the box is often restarting during a `:dev` flip; retry with backoff (memory `feedback_seal_builder_ci_watch_wedge`, `reference_mcp_servicebay_access`). If *no* origin answers, the verdict is `owed` — never a hand-flip (see "Never").
+Check that **first**, before any probe design. **Do NOT conclude "box unreachable" from "SSH has no key", from one timeout on :5888, or from a mid-restart refusal** — the box is often restarting during a `:dev` flip; retry with backoff (memory `feedback_seal_builder_ci_watch_wedge`; box-access footgun above). If *no* origin answers, the verdict is `owed` — never a hand-flip (see "Never").
 
 **You do NOT touch the broker cache** (`.claude/state/autoloop-cache.json`) and you never call a state-mutating verb. You run concurrently with the builder, which owns it, so writing it would race — and `.claude/state/work-queue.json` is retired (#2639), so don't create it either. Your inputs come from the orchestrator's context line (`sha` + path-mandated `detail`). Your **only** output file is `.claude/state/box-verify.json`:
 ```json

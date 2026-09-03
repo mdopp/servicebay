@@ -81,28 +81,28 @@ const isTestFile = (p: string) => /\.test\.(ts|tsx)$/.test(p) || p.includes('/te
 // ---------------------------------------------------------------------------
 // 1. File-size ceiling.
 //
-// Pinned at 2,700 LOC: OnboardingWizard.tsx grew to 2,672 with the
-// multi-stack picker rework (#682-followup — multi-select picker +
-// Install-another loop + state migration). The "real" split of the
-// wizard into per-step components is the proper fix; bumping the
-// ceiling temporarily so the multi-stack PR isn't blocked by a
-// concurrent refactor that's larger in scope than the UX win.
+// One number for both source roots (frontend `src/` and backend `src/`). It
+// only ever goes DOWN: each god-module cut lowers it to the next-largest
+// survivor, so the file that just got split cannot silently grow back and the
+// next-biggest file inherits the pressure.
 //
-// Ratchet target: 1,500 once the three 2k dashboards + NetworkService
-// + OnboardingWizard are split into per-step files (see audit doc
-// ARCH follow-ups).
-// Step taken: OnboardingWizard split into wizard/steps/* in #693, file
-// dropped from 2,672 → ~1,300 LOC. Next-biggest survivor is
-// NetworkDashboard.tsx at 2,114 — held at 2,200 here until that split
-// lands so the ratchet keeps pressure on the remaining four files.
+// History: 2,700 (OnboardingWizard at 2,672) → 2,400 backend / 2,200 frontend
+// (#2379, `lib/mcp/server.ts` at 2,391) → 2,200 for both once #2384 split that
+// file into `lib/mcp/tools/*`.
 //
-// The backend root shares this ceiling. It briefly had its own, looser pin
-// (MAX_BACKEND_FILE_LOC = 2,400, #2379) because the newly-measured
-// `lib/mcp/server.ts` sat at 2,391 LOC; #2384 split that file into
-// `lib/mcp/tools/*` per tool group, so the separate pin is gone and both
-// roots are back on one number. Ratchet target: 1,500 with the frontend.
+// Now 1,700 (#2743). That step retired the two 2k frontend god modules:
+//   - `dashboards/NetworkDashboard.tsx` 2,149 → 1,421 (graph node/edge
+//     renderers + legend moved to `dashboards/_lib/NetworkGraph*.tsx`)
+//   - `app/(dashboard)/backup/page.tsx` 1,851 → 62 (one component per backup
+//     backend under `backup/_lib/`)
+//
+// Ratchet target stays 1,500. Two files block it today and each needs its own
+// unit — do NOT exempt them, cut them:
+//   - `components/OnboardingWizard.tsx` = 1,668 (per-step split, round two)
+//   - `backend/src/lib/registry.ts`     = 1,505
+// Lower this constant to the next-largest survivor as each one lands.
 // ---------------------------------------------------------------------------
-const MAX_FILE_LOC = 2_200;
+const MAX_FILE_LOC = 1_700;
 
 async function checkFileSize() {
     let over2000 = 0;

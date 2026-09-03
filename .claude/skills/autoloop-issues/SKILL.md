@@ -26,9 +26,9 @@ Why this shape: each sub-agent starts cold and returns only a one-line summary, 
   DOCS-COHERENCE runs as a separate parallel /loop (own worktree, disjoint fileset) — not dispatched here.
 ```
 
-The user's recurring rules (in `~/.claude/projects/-home-mdopp-servicebay/memory/MEMORY.md`) override anything in this skill if they conflict. Read it before the first iteration of a fresh /loop run.
+If the harness has session memory loaded for this project, it overrides anything in this skill on conflict — read it before the first iteration of a fresh /loop run. There is no fixed path to it: it lives outside this checkout (a per-machine, per-user directory), so a fresh clone carries none, and this skill must stand on its own without it.
 
-**The ServiceBay box is a dev/test target for this loop, not production — exercise it freely.** Stage agents use SSH, the MCP token, the HTTP API, and Playwright/Chrome to implement and verify changes, and flip the `:dev` channel without hesitation. **Do not ask the user for permission to use or flip the box** (access: memory `reference_mcp_servicebay_access`).
+**The ServiceBay box is a dev/test target for this loop, not production — exercise it freely.** Stage agents use the MCP token, the HTTP API, and Playwright/Chrome to implement and verify changes, and flip the `:dev` channel without hesitation. **Do not ask the user for permission to use or flip the box** (address, working token, self-check: assist `footgun-mcp-from-a-container-on-the-box`).
 
 ## State — GitHub is the source of truth; a broker keeps a tiny local cache
 
@@ -83,7 +83,7 @@ The builder enforces the per-issue side (fast gates only, commit to the batch br
 ## Step 0 — Preflight (every firing)
 
 1. **Working tree clean?** `git status --porcelain`. If dirty, exit — another session owns this tree. Don't stash or switch branches.
-2. **On `main`, up to date?** `git fetch origin && git checkout main && git pull --ff-only`. If FF fails, exit and report.
+2. **On `main`, up to date?** `git fetch origin && git checkout main && git pull --ff-only`. If FF fails, exit and report. If a `git` step dies with `fatal: remote error: GitHub is temporarily limiting some unauthenticated downloads`, re-run it with the gh token sent proactively — `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraHeader GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'x-access-token:%s' "$(gh auth token)" | base64 -w0)" git …` — the same triple `gitEnv()` in `scripts/autoloop-git.ts` puts on every autoloop git call (#2761).
 3. **Lock check.** If `.claude/state/autoloop.lock` exists with mtime < 10 min, another firing is running — exit. Otherwise touch it.
 4. **Read status.** `npm run autoloop:queue -- summary` (compact — batch, verify, planned count, gh label counts). On a cold start (no cache), `… -- rebuild --release-pr <n>` reconstructs it from GitHub. `… -- mirror --pr <n>` prunes the cache + re-projects the release-PR label.
 5. **Fold in any background Box-Verify result.** If `.claude/state/box-verify.json` exists, the background agent finished: fold it in with `npm run autoloop:queue -- verify-set <sha> <status> --detail "<…>" --pr <release PR>` (you are the single writer of the verify field), then **delete the result file**. `verify-get` auto-resets a `verifying` entry stuck >20 min (the agent died → it relaunches).
@@ -224,6 +224,6 @@ You never hand-prune anything — `scripts/autoloop-queue.ts` enforces it on eve
 - State broker: `scripts/autoloop-queue.ts` (`npm run autoloop:queue -- <verb>`); tests + the double-claim proof in `scripts/autoloop-queue.test.ts`.
 - Parallel docs loop: `.claude/skills/docs-coherence/SKILL.md` (run as its own `/loop /docs-coherence`).
 - Cross-repo sibling running the same design (its broker is `queue.py`): `mdopp/solarisbay` `.claude/skills/autoloop-issues/`. Portable shape + footguns: assist `autoloop-issue-pipeline`.
-- Memory index: `~/.claude/projects/-home-mdopp-servicebay/memory/MEMORY.md`.
-- Real-box access: memory `reference_mcp_servicebay_access`. `<SERVICEBAY_BOX>` lives there, not in this public repo.
+- Real-box access from a sandbox running on the box (address, the token that works vs. the one that 401s, self-check): assist `footgun-mcp-from-a-container-on-the-box`.
+- Pipeline mechanics learned the hard way (gate-tally-not-exit-code, `:dev` flip-back recovery, release-please's fix/feat-only + no-CI-checks shape, the god-module-split footguns): assist `autoloop-issue-pipeline`.
 - Release flow: release-please PR on `release-please--branches--main--components--servicebay`.

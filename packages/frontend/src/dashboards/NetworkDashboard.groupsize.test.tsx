@@ -114,7 +114,7 @@ describe('#2194/#2198 service-group sizing', () => {
   it('renders a slot-sized child leaf that fills its slot (h-full overflow-hidden, not h-auto)', async () => {
     // Lazy import so the @xyflow/react mock is installed before the module
     // graph resolves the dashboard's Handle/Position usage.
-    const { CustomNode } = await import('./NetworkDashboard');
+    const { CustomNode } = await import('./_lib/NetworkGraphNode');
 
     const childData: GraphNodeData = {
       type: 'container',
