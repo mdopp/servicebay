@@ -3,6 +3,7 @@
 import { useCallback } from 'react';
 import { useToast } from '@/providers/ToastProvider';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { previewSystemBackup, fetchBackupFile, restoreSystemBackup } from '@servicebay/api-client';
 import type { BackupPreviewResult, BackupRestoreSelection } from '@/lib/systemBackup';
 import type { PodmanConnection } from '@/lib/nodes';
 import type { SystemBackupEntrySummary } from './helpers';
@@ -103,24 +104,18 @@ export function useRestoreFlow(state: BackupState, nodes: PodmanConnection[]) {
     setRestoreFilePreviewError(null);
 
     try {
-      let response: Response;
+      let input: { fileName: string } | FormData;
       if (payload.file) {
         const formData = new FormData();
         formData.append('file', payload.file);
-        response = await fetch('/api/settings/backups/preview', { method: 'POST', body: formData });
+        input = formData;
       } else if (payload.fileName) {
-        response = await fetch('/api/settings/backups/preview', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileName: payload.fileName }),
-        });
+        input = { fileName: payload.fileName };
       } else {
         throw new Error('No backup selected');
       }
 
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Unable to read backup');
-
+      const data = await previewSystemBackup(input);
       setRestorePreview(data.preview as BackupPreviewResult);
       setRestoreSource(data.source);
       buildDefaultRestoreState(data.preview as BackupPreviewResult);
@@ -137,16 +132,9 @@ export function useRestoreFlow(state: BackupState, nodes: PodmanConnection[]) {
     setRestoreFilePreview({ nodeName, relativePath, content: '', loading: true });
     setRestoreFilePreviewError(null);
     try {
-      const payload = restoreSource.type === 'stored'
-        ? { fileName: restoreSource.fileName, nodeName, relativePath }
-        : { uploadToken: restoreSource.token, nodeName, relativePath };
-      const res = await fetch('/api/settings/backups/file', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Unable to load file');
+      const fileName = restoreSource.type === 'stored' ? restoreSource.fileName : undefined;
+      const uploadToken = restoreSource.type === 'upload' ? restoreSource.token : undefined;
+      const data = await fetchBackupFile(fileName, uploadToken, nodeName, relativePath);
       setRestoreFilePreview({ nodeName, relativePath, content: data.content ?? '', loading: false });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load file preview';
@@ -206,20 +194,14 @@ export function useRestoreFlow(state: BackupState, nodes: PodmanConnection[]) {
         serviceData: selectedServiceData.length > 0 ? selectedServiceData : undefined,
       };
 
-      const payload = restoreSource.type === 'stored'
-        ? { fileName: restoreSource.fileName, selection }
-        : { uploadToken: restoreSource.token, selection };
+      const fileName = restoreSource.type === 'stored' ? restoreSource.fileName : undefined;
+      const uploadToken = restoreSource.type === 'upload' ? restoreSource.token : undefined;
 
-      const res = await fetch('/api/settings/backups/restore', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+      await restoreSystemBackup({
+        fileName,
+        uploadToken,
+        selection,
       });
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Unable to restore backup');
-      }
 
       addToast('success', 'Restore complete', 'Selected settings and files were restored.');
       await fetchBackups();

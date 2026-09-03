@@ -71,7 +71,12 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.startsWith('/api/settings/backup-sync')) {
-      if ((init?.method ?? 'GET') !== 'GET') return json({ ok: true });
+      // What the route's action dispatcher really answers (`{ success, message }`,
+      // un-enveloped). The bare `{ ok: true }` this used to return only ever
+      // satisfied the old raw-fetch caller, which read nothing but `res.ok`.
+      if ((init?.method ?? 'GET') !== 'GET') {
+        return json({ success: true, message: 'Backup started' });
+      }
       // Mount-time load: nothing is running yet, so the Run Now button is live.
       if (!started) return json({ running: false, config: CONFIG, history: [] });
       syncPolls += 1;

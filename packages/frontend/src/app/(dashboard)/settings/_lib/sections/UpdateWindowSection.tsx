@@ -22,6 +22,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Lock } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Button, Field, Input } from '@/components/ui';
+import { fetchUpdateWindow, updateUpdateWindow, TypedFetchError } from '@servicebay/api-client';
 
 type Day = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 
@@ -95,9 +96,7 @@ export default function UpdateWindowSection() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/system/update-window');
-        if (!res.ok) return;
-        const data = await res.json() as { window: Partial<WindowConfig> | null };
+        const data = await fetchUpdateWindow();
         if (cancelled) return;
         if (data.window) {
           setServerHasValue(true);
@@ -107,6 +106,8 @@ export default function UpdateWindowSection() {
             applyTo: { ...DEFAULT_WINDOW.applyTo, ...(data.window.applyTo ?? {}) },
           });
         }
+      } catch (_e) {
+        // Ignore errors on load
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -142,24 +143,15 @@ export default function UpdateWindowSection() {
     setError(null);
     setSaving(true);
     try {
-      const res = await fetch('/api/system/update-window', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...window, days: sortedDays }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg = (data as { error?: string }).error || `HTTP ${res.status}`;
-        setError(msg);
-        addToast('error', 'Save failed', msg);
-        return;
-      }
+      await updateUpdateWindow({ ...window, days: sortedDays } as WindowConfig);
       setServerHasValue(true);
       addToast('success', 'Update window saved', window.enabled
         ? `${sortedDays.join(', ')} ${window.startTime} UTC (+${lengthHumanised(window.lengthMinutes)})`
         : 'Auto-updates locked — nothing will restart on its own.');
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Network error';
+      const msg = e instanceof TypedFetchError
+        ? e.message
+        : e instanceof Error ? e.message : 'Network error';
       setError(msg);
       addToast('error', 'Save failed', msg);
     } finally {

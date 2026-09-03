@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, HelpCircle, KeyRound, Loader2, XCircle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Badge, Button } from '@/components/ui';
+import { fetchNginxCredentials, rekeyNginxCredentials, forgetNginxCredentials, TypedFetchError } from '@servicebay/api-client';
 
 /**
  * Settings → Networking → Reverse Proxy (NPM) (#1530 — derive, don't ask).
@@ -29,30 +30,31 @@ export default function ReverseProxySection() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/system/nginx/credentials');
-      if (res.ok) setState(await res.json());
+      const data = await fetchNginxCredentials();
+      setState(data);
+    } catch (_e) {
+      // Ignore errors
     } finally {
       setBusy(null);
     }
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- async load on mount, guarded by useCallback
   useEffect(() => { void load(); }, [load]);
 
   const handleRekey = async () => {
     setBusy('rekey');
     try {
-      const res = await fetch('/api/system/nginx/credentials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        addToast('error', 'Re-key failed', data.message || `HTTP ${res.status}`);
-      } else {
-        addToast('success', 'NPM admin re-keyed', data.message || 'A fresh admin password was written into NPM and saved — proxy routes preserved.');
-        await load();
-      }
+      // The POST answers the re-key outcome, not the CredState view — re-read
+      // it so the section reflects the freshly stored credential.
+      const data = await rekeyNginxCredentials();
+      addToast('success', 'NPM admin re-keyed', data.message || 'A fresh admin password was written into NPM and saved — proxy routes preserved.');
+      await load();
+    } catch (e) {
+      const message = e instanceof TypedFetchError
+        ? e.message
+        : e instanceof Error ? e.message : 'Unknown error';
+      addToast('error', 'Re-key failed', message);
     } finally {
       setBusy(null);
     }
@@ -61,11 +63,14 @@ export default function ReverseProxySection() {
   const handleForget = async () => {
     setBusy('forget');
     try {
-      const res = await fetch('/api/system/nginx/credentials', { method: 'DELETE' });
-      if (res.ok) {
-        addToast('success', 'NPM credentials removed');
-        await load();
-      }
+      await forgetNginxCredentials();
+      addToast('success', 'NPM credentials removed');
+      await load();
+    } catch (e) {
+      const message = e instanceof TypedFetchError
+        ? e.message
+        : e instanceof Error ? e.message : 'Unknown error';
+      addToast('error', 'Failed to remove credentials', message);
     } finally {
       setBusy(null);
     }

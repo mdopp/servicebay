@@ -15,6 +15,7 @@ import {
 import { useToast } from '@/providers/ToastProvider';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { fetchSystemMode, checkMigrationPreflight, migrateToPublicDomain, TypedFetchError } from '@servicebay/api-client';
 
 interface ModeInfo {
   mode: 'lan' | 'public';
@@ -93,10 +94,9 @@ export default function PublicDomainSection() {
   const fetchPreflightRef = useRef<(domain: string) => void>(() => undefined);
 
   useEffect(() => {
-    fetch('/api/system/mode')
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (!data) return;
+    (async () => {
+      try {
+        const data = await fetchSystemMode();
         const next = data as ModeInfo;
         setInfo(next);
         if (next.mode === 'public') {
@@ -105,8 +105,10 @@ export default function PublicDomainSection() {
         } else {
           setPhase('idle');
         }
-      })
-      .catch(() => undefined);
+      } catch (e) {
+        // Ignore errors on load
+      }
+    })();
   }, []);
 
   const stopPolling = useCallback(() => {
@@ -121,13 +123,7 @@ export default function PublicDomainSection() {
   /** Single pre-flight call. Schedules the next tick on success. */
   const fetchPreflight = useCallback(async (domain: string) => {
     try {
-      const res = await fetch(`/api/system/reverse-proxy/preflight?publicDomain=${encodeURIComponent(domain)}`);
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        addToast('error', 'Pre-flight check failed', data.error || `HTTP ${res.status}`);
-        return;
-      }
-      const data = (await res.json()) as PreflightStatus;
+      const data = await checkMigrationPreflight(domain);
       setPreflight(data);
       if (data.ready) {
         setPhase('confirm');
@@ -135,7 +131,10 @@ export default function PublicDomainSection() {
         return;
       }
     } catch (e) {
-      addToast('error', 'Pre-flight check failed', e instanceof Error ? e.message : String(e));
+      const message = e instanceof TypedFetchError
+        ? e.message
+        : e instanceof Error ? e.message : String(e);
+      addToast('error', 'Pre-flight check failed', message);
     }
     // Schedule next tick. The phase check inside the closure guards
     // against firing after the operator backs out.
@@ -171,35 +170,32 @@ export default function PublicDomainSection() {
     setMigrating(true);
     setPhase('migrating');
     try {
-      const res = await fetch('/api/system/reverse-proxy/migrate-to-public', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ publicDomain: trimmed, dryRun }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        addToast('error', dryRun ? 'Dry-run failed' : 'Migration failed', data.error || `HTTP ${res.status}`);
-        setPhase('confirm');
-        return;
-      }
-      setResult(data as MigrationResult);
+      const data = await migrateToPublicDomain(trimmed, dryRun);
+      setResult(data);
       setPhase('done');
-      const okSteps = (data as MigrationResult).stepResults.filter(s => s.ok).length;
-      const total = (data as MigrationResult).stepResults.length;
+      const okSteps = data.stepResults.filter(s => s.ok).length;
+      const total = data.stepResults.length;
       addToast(
-        dryRun ? 'info' : (data as MigrationResult).errors.length === 0 ? 'success' : 'warning',
+        dryRun ? 'info' : data.errors.length === 0 ? 'success' : 'warning',
         dryRun ? 'Dry-run complete' : 'Migration applied',
         dryRun
           ? `${total} step${total === 1 ? '' : 's'} would run.`
           : `${okSteps}/${total} step${total === 1 ? '' : 's'} succeeded. See below for details.`,
       );
-      if (!dryRun && (data as MigrationResult).errors.length === 0) {
+      if (!dryRun && data.errors.length === 0) {
         // Refresh the mode badge so the section header flips to `public`.
-        const modeRes = await fetch('/api/system/mode').then(r => r.json()).catch(() => null);
-        if (modeRes) setInfo(modeRes as ModeInfo);
+        try {
+          const modeRes = await fetchSystemMode();
+          setInfo(modeRes as ModeInfo);
+        } catch (e) {
+          // Ignore mode refresh errors
+        }
       }
     } catch (e) {
-      addToast('error', 'Request failed', e instanceof Error ? e.message : String(e));
+      const message = e instanceof TypedFetchError
+        ? e.message
+        : e instanceof Error ? e.message : String(e);
+      addToast('error', 'Request failed', message);
       setPhase('confirm');
     } finally {
       setMigrating(false);

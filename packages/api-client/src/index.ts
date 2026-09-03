@@ -10,10 +10,12 @@
 // definitions in-place so the package is structurally independent.
 
 export * from './agent';
+export * from './backup';
 export * from './install';
 export * from './nodes';
 export * from './onboarding';
 export * from './services';
+export * from './settings';
 export * from './ssh';
 export * from './systemUpdates';
 export * from './serviceView';

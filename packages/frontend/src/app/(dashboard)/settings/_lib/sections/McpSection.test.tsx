@@ -246,8 +246,10 @@ describe('McpSection (#2100 settings migration)', () => {
     // Wait for the initial GET /api/settings to resolve so the toggle reflects
     // loaded state — clicking before that races the async load and the POST
     // never fires within the window (CI parallel-load flake).
+    // The GET now goes out through `apiFetch`, which always forwards an
+    // `init` slot — undefined for a bodyless read. Same request on the wire.
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith('/api/settings'),
+      expect(fetchMock).toHaveBeenCalledWith('/api/settings', undefined),
     );
     const switches = screen.getAllByRole('switch');
     fireEvent.click(switches[0]);

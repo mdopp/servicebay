@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Plus, Trash2, Send, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Button, Input } from '@/components/ui';
 import { useSettings } from '../SettingsContext';
+import { sendTestEmail } from '@servicebay/api-client';
 
 // Shared token-based input chrome for this section's text fields.
 const INPUT_CLASS =
@@ -36,17 +37,11 @@ export default function EmailNotificationsSection() {
       // sees in the inputs — onBlur usually does this, but the click
       // path can race the blur on some browsers.
       await persistSettings();
-      const res = await fetch('/api/system/notifications/email/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: testRecipient }),
-      });
-      const data = await res.json().catch(() => ({} as Record<string, unknown>));
-      if (res.ok && data.ok) {
+      const data = await sendTestEmail(testRecipient);
+      if (data.ok) {
         setTestStatus({ kind: 'ok', message: `Sent to ${testRecipient}. Check the inbox — including spam.` });
       } else {
-        const errMsg = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
-        setTestStatus({ kind: 'fail', message: errMsg });
+        setTestStatus({ kind: 'fail', message: 'The test send did not succeed.' });
       }
     } catch (e) {
       setTestStatus({ kind: 'fail', message: e instanceof Error ? e.message : String(e) });

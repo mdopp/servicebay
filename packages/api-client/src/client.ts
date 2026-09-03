@@ -117,3 +117,77 @@ export function mutateApi<T>(
       : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   });
 }
+
+// ---------------------------------------------------------------------------
+// The raw (un-enveloped) response seam
+// ---------------------------------------------------------------------------
+//
+// `withApiHandler`'s auto-envelope (`{ ok: true, data }`, above) only kicks
+// in when the route handler returns a plain value. A route written before
+// the api-client migration — and several still are — calls
+// `NextResponse.json(...)` itself, so its success body is whatever it put
+// there, unwrapped. `callApi` would fail schema validation against that
+// shape on every call. `rawApi`/`mutateRawApi` are `callApi`/`mutateApi`'s
+// siblings for exactly that case: validate the body directly (no `.data`
+// unwrap), but still read a `{ error }` field out of a non-OK body so a
+// server-authored message survives the migration.
+
+// Un-enveloped routes are not uniform about the failure field: most send
+// `{ error }` (that is all `apiError` ever emits), while a few hand-rolled
+// ones carry the operator-facing text in `message` (`/api/settings/gateway`'s
+// connection_failed, `/api/system/nginx/credentials`' re-key refusal). Read
+// both so the server's own wording survives instead of a bare "HTTP 400".
+const RawErrorBodySchema = z.object({
+  error: z.string().optional(),
+  message: z.string().optional(),
+});
+
+function rawErrorMessage(raw: unknown): string | undefined {
+  const parsed = RawErrorBodySchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  return parsed.data.message ?? parsed.data.error;
+}
+
+/** Call a route whose success body is NOT wrapped in `{ ok, data }`. */
+export async function rawApi<T>(
+  url: string,
+  schema: ZodType<T>,
+  init?: RequestInit,
+): Promise<T> {
+  const method = init?.method ?? 'GET';
+  const res = await apiFetch(url, init);
+  const raw: unknown = await res.json().catch(() => undefined);
+
+  if (!res.ok) {
+    throw new TypedFetchError(
+      rawErrorMessage(raw) ?? `${method} ${url} → HTTP ${res.status}`,
+      raw,
+      res.status,
+    );
+  }
+
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    throw new TypedFetchError(
+      `${method} ${url}: response failed schema validation`,
+      parsed.error,
+      res.status,
+    );
+  }
+  return parsed.data;
+}
+
+/** `rawApi` for a JSON-body mutation. `method` defaults to POST. */
+export function mutateRawApi<T>(
+  url: string,
+  schema: ZodType<T>,
+  body?: unknown,
+  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE' = 'POST',
+): Promise<T> {
+  return rawApi(url, schema, {
+    method,
+    ...(body === undefined
+      ? {}
+      : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  });
+}

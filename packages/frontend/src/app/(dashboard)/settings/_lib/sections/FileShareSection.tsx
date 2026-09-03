@@ -3,20 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Copy, KeyRound, Loader2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
-
-interface SambaUser {
-  id: string;
-  displayName?: string;
-  email?: string;
-  presentInSamba: boolean;
-}
-
-interface SyncResponse {
-  ok: true;
-  users: SambaUser[];
-  added: string[];
-  removed: string[];
-}
+import { fetchSambaUsers, setSambaUserPassword, TypedFetchError, type SambaUser } from '@servicebay/api-client';
 
 /**
  * Per-LLDAP-user Samba password management (#494).
@@ -44,14 +31,7 @@ export default function FileShareSection() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/system/file-share/samba/users');
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || `HTTP ${res.status}`);
-        setUsers(null);
-        return;
-      }
-      const data = (await res.json()) as SyncResponse;
+      const data = await fetchSambaUsers();
       setUsers(data.users);
       if (data.added.length > 0) {
         addToast('info', 'Samba sync', `${data.added.length} new user(s) added to the Samba directory.`);
@@ -60,7 +40,8 @@ export default function FileShareSection() {
         addToast('info', 'Samba sync', `${data.removed.length} stale user(s) removed.`);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setUsers(null);
+      setError(e instanceof TypedFetchError || e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -74,20 +55,11 @@ export default function FileShareSection() {
   const setPassword = useCallback(async (id: string) => {
     setBusyUser(id);
     try {
-      const res = await fetch(`/api/system/file-share/samba/users/${encodeURIComponent(id)}/set-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        addToast('error', 'Could not set password', data.error || `HTTP ${res.status}`);
-        return;
-      }
+      const data = await setSambaUserPassword(id);
       setFlashed({ id, password: data.password });
       addToast('success', 'Samba password set', 'Copy the value below — it will not be shown again.');
     } catch (e) {
-      addToast('error', 'Could not set password', e instanceof Error ? e.message : String(e));
+      addToast('error', 'Could not set password', e instanceof TypedFetchError || e instanceof Error ? e.message : String(e));
     } finally {
       setBusyUser(null);
     }

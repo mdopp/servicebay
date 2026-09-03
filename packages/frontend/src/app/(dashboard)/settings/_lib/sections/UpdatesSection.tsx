@@ -6,6 +6,7 @@ import BulkTemplateUpgrade from '@/components/BulkTemplateUpgrade';
 import ConfirmModal from '@/components/ConfirmModal';
 import ServiceBayUpdateCard from '@/components/ServiceBayUpdateCard';
 import { useToast } from '@/providers/ToastProvider';
+import { fetchBootStatus, setBootNext, cancelBootNext, TypedFetchError } from '@servicebay/api-client';
 
 /**
  * Settings → System updates tab.
@@ -37,13 +38,10 @@ export default function UpdatesSection() {
   const [cancellingBoot, setCancellingBoot] = useState(false);
   const [rebooting, setRebooting] = useState(false);
 
-  const fetchBootStatus = async () => {
+  const fetchBootStatusData = async () => {
     try {
-      const res = await fetch('/api/system/boot/usb-next');
-      if (res.ok) {
-        const data = await res.json();
-        setBootStatus(data);
-      }
+      const data = await fetchBootStatus();
+      setBootStatus(data);
     } catch (e) {
       console.error('Failed to fetch boot status:', e);
     }
@@ -53,43 +51,31 @@ export default function UpdatesSection() {
     setIsReinstallModalOpen(false);
     setArmingBoot(true);
     try {
-      const res = await fetch('/api/system/boot/usb-next', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reboot: true }),
-      });
-      if (res.ok) {
-        addToast('success', 'USB Boot Armed', 'System is rebooting to USB installation medium...');
-        setRebooting(true);
-        setTimeout(() => { window.location.reload(); }, 8000);
-      } else {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to arm USB Boot');
-      }
+      await setBootNext(true);
+      addToast('success', 'USB Boot Armed', 'System is rebooting to USB installation medium...');
+      setRebooting(true);
+      setTimeout(() => { window.location.reload(); }, 8000);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = e instanceof TypedFetchError
+        ? e.message
+        : e instanceof Error ? e.message : String(e);
       addToast('error', 'Boot Arming Failed', msg);
     } finally {
       setArmingBoot(false);
-      fetchBootStatus();
+      fetchBootStatusData();
     }
   };
 
   const cancelUsbBoot = async () => {
     setCancellingBoot(true);
     try {
-      const res = await fetch('/api/system/boot/usb-next', {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        addToast('success', 'USB Boot Cancelled', 'One-shot BootNext cleared. SSD boot restored.');
-        fetchBootStatus();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to clear BootNext');
-      }
+      await cancelBootNext();
+      addToast('success', 'USB Boot Cancelled', 'One-shot BootNext cleared. SSD boot restored.');
+      fetchBootStatusData();
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = e instanceof TypedFetchError
+        ? e.message
+        : e instanceof Error ? e.message : String(e);
       addToast('error', 'Cancellation Failed', msg);
     } finally {
       setCancellingBoot(false);
@@ -99,18 +85,12 @@ export default function UpdatesSection() {
   const triggerManualReboot = async () => {
     setRebooting(true);
     try {
-      const res = await fetch('/api/system/boot/usb-next', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reboot: true, bootNum: bootStatus?.bootNext || undefined }),
-      });
-      if (res.ok) {
-        addToast('success', 'Rebooting', 'System reboot command sent...');
-      } else {
-        throw new Error('Failed to trigger reboot');
-      }
+      await setBootNext(true, bootStatus?.bootNext || undefined);
+      addToast('success', 'Rebooting', 'System reboot command sent...');
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = e instanceof TypedFetchError
+        ? e.message
+        : e instanceof Error ? e.message : String(e);
       addToast('error', 'Reboot Failed', msg);
       setRebooting(false);
     }
@@ -118,7 +98,7 @@ export default function UpdatesSection() {
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async boot-status fetch on mount
-    fetchBootStatus();
+    fetchBootStatusData();
   }, []);
 
   return (

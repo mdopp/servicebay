@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw, HardDrive, Usb, CheckCircle2 } from 'lucide-react';
 import { Button, Input } from '@/components/ui';
+import { fetchBackupSyncMounts } from '@servicebay/api-client';
 import type { MountCandidate } from '@/lib/backup/mounts';
 
 const REMOVABLE_FSTYPES = new Set(['vfat', 'exfat', 'ntfs']);
@@ -141,12 +142,7 @@ function useMounts() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/settings/backup-sync/mounts');
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Unable to enumerate mounts (${res.status})`);
-      }
-      const data = await res.json();
+      const data = await fetchBackupSyncMounts();
       setMounts(Array.isArray(data.mounts) ? data.mounts : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load mounts');

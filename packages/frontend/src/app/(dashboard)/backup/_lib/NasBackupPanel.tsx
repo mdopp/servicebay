@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Button, Table } from '@/components/ui';
+import { restoreFromExternalBackup, backupNowToExternal, deleteExternalBackup } from '@servicebay/api-client';
 import ConfirmModal from '@/components/ConfirmModal';
 import { formatBytes } from './helpers';
 import ExternalBackupDestinationSection from './ExternalBackupDestinationSection';
@@ -55,15 +56,9 @@ export default function NasBackupPanel({ state, scheduleLine }: Props) {
     const { service, tarName } = nasRestoreTarget;
     setNasRestoring(service);
     try {
-      const res = await fetch('/api/system/external-backup/restore', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // Restore the SPECIFIC snapshot the operator picked (#1865), not just
-        // the latest — recovering from before a silently-corrupted run.
-        body: JSON.stringify({ service, tarName }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Restore failed');
+      // Restore the SPECIFIC snapshot the operator picked (#1865), not just
+      // the latest — recovering from before a silently-corrupted run.
+      const data = await restoreFromExternalBackup(service, tarName);
       addToast('success', 'Restored from NAS', `${tarName} → ${data.dataDir} (${data.files} files)`);
     } catch (error) {
       addToast('error', 'NAS restore failed', error instanceof Error ? error.message : 'Unknown error');
@@ -79,9 +74,7 @@ export default function NasBackupPanel({ state, scheduleLine }: Props) {
     if (nasBackingUp) return;
     setNasBackingUp(true);
     try {
-      const res = await fetch('/api/system/external-backup/backup-now', { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Backup failed');
+      const data = await backupNowToExternal();
       const failed = (data.results ?? []).filter((r: { ok: boolean }) => !r.ok).length;
       if (data.backedUp === 0 && data.total > 0) {
         const firstError = (data.results ?? []).find((r: { error?: string }) => r.error)?.error;
@@ -106,13 +99,7 @@ export default function NasBackupPanel({ state, scheduleLine }: Props) {
     const { tarName } = nasDeleteTarget;
     setNasDeleting(true);
     try {
-      const res = await fetch('/api/system/external-backup/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ service: nasDeleteTarget.service, tarName }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Delete failed');
+      await deleteExternalBackup(nasDeleteTarget.service, tarName);
       addToast('success', 'NAS backup deleted', `${tarName} has been removed from the NAS.`);
       await fetchNasOverview();
     } catch (error) {

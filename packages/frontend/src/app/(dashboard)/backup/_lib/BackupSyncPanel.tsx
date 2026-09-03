@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Button, Field, Input, Select, Textarea } from '@/components/ui';
+import { saveBackupSync, runBackupSync, testBackupSyncTarget, fetchBackupSyncState } from '@servicebay/api-client';
 import LocalTargetPicker from './LocalTargetPicker';
 import type { BackupState } from './useBackupState';
 
@@ -85,12 +86,7 @@ export default function BackupSyncPanel({ state }: Props) {
           }))
           .filter(src => src.path),
       };
-      const res = await fetch('/api/settings/backup-sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'save', config }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
+      await saveBackupSync(config);
       addToast('success', 'Backup Sync', 'Configuration saved.');
       await fetchBackupSync();
     } catch (e) {
@@ -114,12 +110,7 @@ export default function BackupSyncPanel({ state }: Props) {
     setBackupSyncTesting(true);
     setBackupSyncTestResult(null);
     try {
-      const res = await fetch('/api/settings/backup-sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'test', target: buildBackupTarget() }),
-      });
-      const result = await res.json();
+      const result = await testBackupSyncTarget(buildBackupTarget());
       setBackupSyncTestResult(result);
     } catch (e) {
       setBackupSyncTestResult({ success: false, message: e instanceof Error ? e.message : 'Connection test failed' });
@@ -131,20 +122,14 @@ export default function BackupSyncPanel({ state }: Props) {
   const handleRunBackupSync = async () => {
     setBackupSyncRunning(true);
     try {
-      const res = await fetch('/api/settings/backup-sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'run' }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error || 'Run failed');
+      await runBackupSync();
       addToast('info', 'Backup', 'Backup sync started. This may take a while.');
       // Only ever one sync poller (a second Run Now replaces the first), and it
       // dies with the page — see stopSyncPoll / the unmount effect (#2459).
       stopSyncPoll();
       const poll = setInterval(async () => {
         try {
-          const r = await fetch('/api/settings/backup-sync');
-          const data = await r.json();
+          const data = await fetchBackupSyncState();
           // The interval was cleared while this request was in flight (unmount, or
           // a newer run) — drop the answer instead of writing state for a view
           // that is gone (#2459).
