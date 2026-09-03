@@ -915,7 +915,7 @@ export default function ServicesDashboard() {
   // filteredServices is already computed in useEffect
 
     return (
-        <div className="h-full flex flex-col relative">
+        <div className="h-full flex flex-col relative" data-testid="services-dashboard">
             {serviceActionOverlays}
             {containerActionsOverlay}
             <ContainerDrawer
@@ -967,8 +967,17 @@ export default function ServicesDashboard() {
           {/* Live install monitor — folded in from the retired Home hub (IA
               slice 2): Services is now the landing page, so the install
               progress that every web client should see surfaces here. Renders
-              nothing unless an install is actually running. */}
-          <InstallProgressCard />
+              nothing unless an install is actually running.
+
+              The wrapper is the card's mount point, and it exists whether or
+              not an install is running — which is what the #1288 e2e gate
+              asserts (`toBeAttached`, not `toBeVisible`: with no install the
+              slot is an empty zero-height div). Without it the gate had
+              nothing deterministic to hold onto and drifted onto whatever
+              `tr`/`li` happened to be in the DOM (#2744). */}
+          <div data-testid="install-progress-slot">
+            <InstallProgressCard />
+          </div>
           {/* Update notices (#2604). They used to sit *above* the page header,
               outside this scroll region — pinned, un-scrollable, and on a phone
               they filled the screen before the first service appeared. Inside

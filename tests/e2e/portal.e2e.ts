@@ -62,15 +62,46 @@ test.describe('portal loads and shows service cards (#1253 gate)', () => {
 test.describe('install-progress bar path (#1288 gate)', () => {
   test('home dashboard loads post-login (InstallProgressCard mount point is present)', async ({ page }) => {
     await login(page)
-    // The Home dashboard mounts InstallProgressCard — it renders null when
-    // no install is active, but the RSC route must not crash. Verify the
-    // page renders with the services list visible.
+    // /services is the landing page and it mounts InstallProgressCard. The
+    // card renders null when no install is active, so the gate here is that
+    // the route renders and the mount point exists — NOT that any service
+    // row does.
+    //
+    // It used to assert `[data-testid="service-row"], tr, li` was visible.
+    // That was never a property of this page: on the CI server (#2744, agent
+    // stubbed, no box, zero services) the only `li`s on screen belong to
+    // DashboardHydrationGate's three-phase progress list, which unmounts the
+    // moment the twin reports in. So the spec passed or failed on whether
+    // Playwright happened to look before or after that swap — green on one
+    // run of a branch, red on the next with no code change.
     await page.goto('/services')
     await expect(page).toHaveURL(/\/services/, { timeout: 30_000 })
-    // The page body is rendered (no crash, no blank).
-    await expect(page.locator('body')).toBeVisible()
-    // The services table / list shows at least one row.
-    const serviceRows = page.locator('[data-testid="service-row"], tr, li').first()
-    await expect(serviceRows).toBeVisible({ timeout: 15_000 })
+
+    // 1. The dashboard root. Rendered unconditionally by ServicesDashboard —
+    //    before the socket connects, while hydrating, and with an empty
+    //    service list alike — so it holds on the CI server and on the box.
+    //    It is gone if the route crashes or streams a blank page, which is
+    //    the red-probe this test owes #1288.
+    await expect(page.getByTestId('services-dashboard').first()).toBeVisible({
+      timeout: 15_000,
+    })
+
+    // 2. The page heading (PageHeader's <h1>), likewise state-independent.
+    await expect(
+      page.getByRole('heading', { name: 'Services', exact: true }).first(),
+    ).toBeVisible({ timeout: 15_000 })
+
+    // 3. The InstallProgressCard mount point itself — the thing this test is
+    //    named for. `toBeAttached`, not `toBeVisible`: with no install running
+    //    the card renders null and the slot is an empty zero-height div.
+    //    Delete `<InstallProgressCard />` from the page and this goes red.
+    await expect(page.getByTestId('install-progress-slot').first()).toBeAttached({
+      timeout: 15_000,
+    })
+
+    // 4. And no error boundary took over the route.
+    await expect(
+      page.getByText(/application error|unhandled exception/i),
+    ).not.toBeVisible({ timeout: 5_000 })
   })
 })
