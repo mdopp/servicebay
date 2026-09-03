@@ -10,20 +10,31 @@ import { InstallJobProvider } from '@/providers/InstallJobProvider';
  *  hits the same `/api/install/status` mock the tests already serve. */
 const OnboardingWizard = () => <InstallJobProvider><OnboardingWizardView /></InstallJobProvider>;
 
-// 1. Mock Server Actions
-vi.mock('@/app/actions/onboarding', () => ({
+// 1. Mock the api-client methods the wizard drives (#2745 — these were the
+// onboarding/ssh/system server actions before they became routes). Partial
+// mock: everything else the wizard pulls from the package (schemas, view-model
+// helpers, the operator-email validators) stays real.
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
   checkOnboardingStatus: vi.fn(),
   skipOnboarding: vi.fn(),
   saveGatewayConfig: vi.fn(),
+  savePublicDomainConfig: vi.fn(),
   saveAutoUpdateConfig: vi.fn(),
   saveRegistriesConfig: vi.fn(),
   saveEmailConfig: vi.fn(),
   completeStackSetup: vi.fn(),
-  markInstallStarted: vi.fn(),
   forceClearInstallLock: vi.fn(),
+  generateLocalKey: vi.fn(),
+  fetchNodes: vi.fn(),
 }));
 
-import { checkOnboardingStatus, saveGatewayConfig, completeStackSetup } from '@/app/actions/onboarding';
+import {
+  checkOnboardingStatus,
+  saveGatewayConfig,
+  completeStackSetup,
+  fetchNodes,
+} from '@servicebay/api-client';
 
 // Mock template/registry actions
 vi.mock('@/app/actions', () => ({
@@ -34,18 +45,6 @@ vi.mock('@/app/actions', () => ({
 }));
 
 import { fetchTemplates, fetchReadme, fetchTemplateYaml, fetchTemplateVariables } from '@/app/actions';
-
-// Mock system actions
-vi.mock('@/app/actions/system', () => ({
-  getNodes: vi.fn(),
-}));
-
-import { getNodes } from '@/app/actions/system';
-
-// Mock SSH action
-vi.mock('@/app/actions/ssh', () => ({
-  generateLocalKey: vi.fn(),
-}));
 
 // 2. Mock Toast Provider
 const mockAddToast = vi.fn();
@@ -206,7 +205,7 @@ describe('OnboardingWizard', () => {
         if (typeof window !== 'undefined') {
             window.sessionStorage.clear();
         }
-        (getNodes as any).mockResolvedValue(mockNodes);
+        (fetchNodes as any).mockResolvedValue(mockNodes);
         (fetchTemplates as any).mockResolvedValue(mockStacks);
         (fetchReadme as any).mockResolvedValue(mockStackReadme);
         (fetchTemplateYaml as any).mockResolvedValue('apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{SERVICE_NAME}}');

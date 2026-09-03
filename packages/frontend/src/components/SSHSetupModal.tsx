@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { X, Terminal, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
-import { installSSHKey } from '@/app/actions/ssh';
+import { installSSHKey } from '@servicebay/api-client';
 import { Button, Input } from '@/components/ui';
 
 interface SSHSetupModalProps {

@@ -18,7 +18,12 @@ import path from 'node:path';
 import { startServer, fileReader, moduleDir, type ServerDeps } from './server';
 import { runReplan, type ReplanIO } from '../engine/replan';
 import { PLAN_SIDECAR_FILE, STATUS_FILE } from '../contract/status';
-import { hashFileContent, fingerprintFileContent } from '../cli/main';
+// Both hashers come from the ENGINE, not from `../cli/main` (#2747). Reaching
+// back into the CLI entrypoint made `cli/main.ts` -> `server/index.ts` ->
+// `cli/main.ts` a cycle, which is why this package was carved out of
+// `npm run check:deps`. The serve mode still LAUNCHES the CLI, but as a child
+// PROCESS (`launchWorkerChild` spawns it by path), not as an import.
+import { hashFileContent, fingerprintFileContent } from '../engine/hashFile';
 
 /** The read-only mount + shared out paths the container is launched with. */
 export interface ServeOptions {

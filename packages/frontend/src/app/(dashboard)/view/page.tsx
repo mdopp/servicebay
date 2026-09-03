@@ -1,4 +1,4 @@
-import { readFileContent } from '@/app/actions/system';
+import { readFileOnNode } from '@/lib/nodes/remoteFile';
 import PageHeader from '@/components/PageHeader';
 import FileViewer from '@/components/FileViewer';
 import { FileText, AlertCircle } from 'lucide-react';
@@ -29,7 +29,7 @@ export default async function ViewPage({ searchParams }: ViewPageProps) {
   let error = null;
 
   try {
-    content = await readFileContent(path, node);
+    content = await readFileOnNode(path, node);
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   }

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Mail, CheckCircle, AlertCircle, ShieldCheck, Loader2 } from 'lucide-react';
 import { Input, Button } from '../WizardUI';
 import { Card } from '@/components/ui';
-import { saveEmailConfig } from '@/app/actions/onboarding';
+import { saveEmailConfig } from '@servicebay/api-client';
 
 interface EmailConfig {
     host: string;

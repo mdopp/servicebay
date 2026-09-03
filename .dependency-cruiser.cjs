@@ -114,6 +114,20 @@ module.exports = {
             },
         },
         {
+            name: 'install-runner-single-entry',
+            severity: 'error',
+            comment:
+                'Every install path — wizard, MCP install_template, napi upgrade, reconfigure — ' +
+                'converges on assembleManifest → createJob → startJob in install/runner.ts. ' +
+                '#2742 split that file into phase modules under install/phases/; the runner stays ' +
+                'the facade that owns the phase ORDER and the job status, so a caller reaching ' +
+                'past it into a single phase would deploy without the surrounding order and ' +
+                'without a job to report into. Covered by DIRECTORY prefix, not a file list, so a ' +
+                'phase added tomorrow is behind the facade with no edit here.',
+            from: { pathNot: '^packages/backend/src/lib/install/' },
+            to: { path: '^packages/backend/src/lib/install/phases/' },
+        },
+        {
             name: 'one-renderer',
             severity: 'error',
             comment:
@@ -139,6 +153,24 @@ module.exports = {
                 'is caught by the sibling invariant (scripts/invariants/npmApiLiterals.ts).',
             from: { pathNot: '^packages/backend/src/lib/npm/' },
             to: { path: '^packages/backend/src/lib/npm/http\\.ts$' },
+        },
+        {
+            name: 'no-app-actions',
+            severity: 'error',
+            comment:
+                'No `packages/frontend/src/app/actions/` (#2745). The directory held the last ' +
+                'Server Actions: nodes / ssh / onboarding CRUD with no route twin, `getNodes` ' +
+                'defined identically in two of its modules, and — because Server Actions are ' +
+                'routed on PAGE paths — no coverage from the `/api/*` auth gate in proxy.ts, so ' +
+                'each one had to remember to call assertAdminSession() itself (#1203). They are ' +
+                'now `withApiHandler` routes under /api/system/{nodes,ssh,onboarding,os-updates} ' +
+                'behind zod-contracted @servicebay/api-client methods, which get the session gate ' +
+                'structurally and the 401 -> /login redirect via apiFetch. This rule was the ' +
+                '"legacy" line in docs/ARCHITECTURE_INVARIANTS.md; a doc line is advisory, an ' +
+                'import-graph edge is not. New server-side surfaces: route handler + api-client ' +
+                'method, never a new action module here.',
+            from: {},
+            to: { path: '^packages/frontend/src/app/actions/' },
         },
         {
             name: 'no-test-from-prod',

@@ -64,3 +64,48 @@ export function hashFileContent(record: ImportRecord, fsImpl: HashFileIO = realH
   }
   return h.digest('hex');
 }
+
+/** Bytes read from each end for the cheap dedup fingerprint (#1995). */
+const FINGERPRINT_EDGE_BYTES = 64 * 1024;
+
+/**
+ * Cheap content FINGERPRINT: sha256 of (size + 64KB head + 64KB middle + 64KB
+ * tail) - reads at most 192KB instead of the whole file. This IS the dedup
+ * identity (#1995): equal size+fingerprint is treated as the same content, with
+ * no full-hash confirm, so a backup disk full of same-size duplicates is not
+ * read whole. A head+middle+tail+size collision between two genuinely different
+ * files is astronomically unlikely, and the import is copy-only over a READ-ONLY
+ * source - worst case of a false match is one file not copied (still on the
+ * disk), never data loss.
+ *
+ * It lived in `cli/main.ts` next to the CLI's real IO until #2747; the serve-mode
+ * entrypoint (`server/index.ts`) needed it and reached back into the CLI - that is
+ * the `cli/main.ts` -> `server/index.ts` -> `cli/main.ts` cycle that kept this whole
+ * package out of `npm run check:deps`. Both hashers now live here, in the engine
+ * layer both sides already depend on, so the edge only points one way.
+ */
+export function fingerprintFileContent(record: ImportRecord, fsImpl: HashFileIO = realHashFileIO): string {
+  const size = record.size;
+  const h = createHash('sha256').update(String(size));
+  const fd = fsImpl.openSync(record.sourcePath, 'r');
+  try {
+    if (size <= FINGERPRINT_EDGE_BYTES * 3) {
+      const buf = Buffer.allocUnsafe(size);
+      fsImpl.readSync(fd, buf, 0, size, 0);
+      h.update(buf);
+    } else {
+      const seg = Buffer.allocUnsafe(FINGERPRINT_EDGE_BYTES);
+      for (const offset of [
+        0,
+        Math.floor(size / 2 - FINGERPRINT_EDGE_BYTES / 2),
+        size - FINGERPRINT_EDGE_BYTES,
+      ]) {
+        fsImpl.readSync(fd, seg, 0, FINGERPRINT_EDGE_BYTES, offset);
+        h.update(seg);
+      }
+    }
+  } finally {
+    fsImpl.closeSync(fd);
+  }
+  return h.digest('hex');
+}

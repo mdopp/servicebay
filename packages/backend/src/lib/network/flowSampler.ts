@@ -14,6 +14,7 @@
 import { listNodes } from '@/lib/nodes';
 import { getStoreSnapshot } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
+import { intervalBackgroundTask, type BackgroundTask } from '@/lib/runtime/lifecycle';
 import { collectHostSockets, resolveFlows } from './socketFlows';
 import { recordFlows } from './flowsStore';
 
@@ -64,13 +65,23 @@ async function sampleAllNodes(): Promise<void> {
   }
 }
 
-let started = false;
-
-/** Start the periodic sampler. Idempotent — safe to call once at boot. */
-export function startFlowSampler(): void {
-  if (started) return;
-  started = true;
-  setTimeout(() => { void sampleAllNodes(); }, SAMPLE_BOOT_DELAY_MS);
-  setInterval(() => { void sampleAllNodes(); }, SAMPLE_INTERVAL_MS);
-  logger.info('FlowSampler', `Started — sampling service↔service flows every ${SAMPLE_INTERVAL_MS / 60000} min.`);
+/**
+ * The sampler as a background task (#2738). `server.ts` registers it in the
+ * runtime task list; the kernel owns the timer and clears it on SIGTERM.
+ */
+export function flowSamplerTask(): BackgroundTask {
+  const task = intervalBackgroundTask({
+    name: 'flow-sampler',
+    intervalMs: SAMPLE_INTERVAL_MS,
+    firstRunDelayMs: SAMPLE_BOOT_DELAY_MS,
+    tick: sampleAllNodes,
+  });
+  return {
+    name: task.name,
+    start() {
+      task.start();
+      logger.info('FlowSampler', `Started — sampling service↔service flows every ${SAMPLE_INTERVAL_MS / 60000} min.`);
+    },
+    stop() { task.stop(); },
+  };
 }

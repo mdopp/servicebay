@@ -16,13 +16,14 @@ import { useToast } from '@/providers/ToastProvider';
 import { AppConfig } from '@/lib/config';
 import { PodmanConnection } from '@/lib/nodes';
 import {
-  getNodes,
+  fetchNodes,
   createNode,
   editNode,
   deleteNode,
   setNodeAsDefault,
-} from '@/app/actions/nodes';
-import { checkConnection, checkFullConnection } from '@/app/actions/ssh';
+  checkConnection,
+  checkFullConnection,
+} from '@servicebay/api-client';
 import {
   DEFAULT_TEMPLATE_SCHEMA,
   type SettingsOverrides,
@@ -250,7 +251,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const refreshNodes = useCallback(async () => {
     try {
-      const list = await getNodes();
+      const list = await fetchNodes();
       setNodes(dedupeNodes(list));
     } catch (e) {
       console.error('Failed to fetch nodes', e);
@@ -449,7 +450,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
         if (result.success) {
           await refreshNodes();
-          const warning = (result as { warning?: string }).warning;
+          const warning = result.warning;
           if (warning) {
             if (
               warning.includes('timed out') ||
@@ -471,7 +472,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         addToast(
           'error',
           mode === 'edit' ? 'Failed to update node' : 'Failed to add node',
-          (result as { error?: string }).error,
+          result.error,
         );
         return false;
       } catch (error) {

@@ -56,8 +56,9 @@ vi.mock('@/hooks/useStackInstall', () => ({
   }),
 }));
 
-vi.mock('@/app/actions/system', () => ({
-  getNodes: vi.fn(async () => [{ Name: 'Local' }]),
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
+  fetchNodes: vi.fn(async () => [{ Name: 'Local' }]),
 }));
 
 const PENDING = {

@@ -172,7 +172,7 @@ zero-caller claim was established.
 
 | Candidate | LOC | Groundwork first |
 |---|---:|---|
-| `packages/frontend/src/app/actions/*` server actions — `ARCHITECTURE_INVARIANTS.md` calls the directory legacy; `getNodes` is defined identically in `actions/system.ts` and `actions/nodes.ts` | 560 (+115 test) | They are the *only* implementation (no route twins for nodes/ssh/onboarding). Write the route handlers + api-client methods, then delete. Deletable today: the duplicate `getNodes` in `actions/system.ts`. |
+| ~~`packages/frontend/src/app/actions/*` server actions~~ — **deleted (#2745)**: nodes / ssh / onboarding CRUD had no route twin and `getNodes` was defined identically in two of its modules. Now `withApiHandler` routes under `/api/system/{nodes,ssh,onboarding,os-updates}` behind zod-contracted api-client methods; the depcruise rule `no-app-actions` keeps the directory gone. | 560 (+115 test) | — |
 | ~~`packages/backend/src/lib/mcp/approveRoute.ts` + `/api/system/mcp/approve`~~ — **deleted (#2735)**: a third view over the durable approvals store (#2234) that reshaped records and hard-coded `expiresAt: null`. Both UI surfaces read `/api/approvals`; the `server.ts` intercept is gone. | 144 | — |
 
 ### 3.5 Checked and **not** removable — so nobody re-litigates it
@@ -220,10 +220,16 @@ precede the next new store.
 **For.** `packages/disk-import-worker` (5.3k LOC) is already a sandboxed one-shot
 worker with its own CLI and server layer; the backend side (`lib/diskImport/`,
 1.6k) plus `app/(dashboard)/disk-import/page.tsx` (760) plus the routes are a thin
-shell. It is a one-time migration tool, not a running service. It is already
-excluded from `check:deps` because of the `cli/main.ts ⇄ server/index.ts` cycle
-(`ARCHITECTURE_INVARIANTS.md`). Its own release cycle would keep core release
-notes about the core.
+shell. It is a one-time migration tool, not a running service. Its own release
+cycle would keep core release notes about the core.
+
+**Status (#2747).** The precondition this section named — "first the contract
+becomes explicit" — is done: the three wire documents (`status.json`, `plan.json`,
+`replan-request.json`) have zod schemas in one place
+(`packages/disk-import-worker/src/contract/schema.ts`), a two-sided contract test
+(`packages/backend/src/lib/diskImport/contract.test.ts`), and the `cli/main.ts ⇄
+server/index.ts` cycle is gone, so the package is a `check:deps` root like every
+other. A move is now a move, decidable on its own merit.
 
 **Against.** It shares the session and `mutate` scope gate, the
 `file_access_request` flow, and the canonical target-folder conventions. A second

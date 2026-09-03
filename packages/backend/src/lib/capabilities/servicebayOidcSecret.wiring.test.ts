@@ -186,8 +186,11 @@ describe('assertServicebayOidcRotationSafe', () => {
  * failed-deploy-is-a-no-op argument.
  */
 describe('install-path wiring (#2417)', () => {
+  // #2742 split `install/runner.ts` into phase modules; the per-item deploy
+  // sequence these two call sites bracket now lives in the kube-play phase.
+  // The assertions are unchanged — only the file they read moved.
   const runner = fs.readFileSync(
-    path.join(__dirname, '..', 'install', 'runner.ts'), 'utf-8',
+    path.join(__dirname, '..', 'install', 'phases', 'kubePlay.ts'), 'utf-8',
   );
 
   it('runs the rotation pre-flight before the deploy is attempted', () => {

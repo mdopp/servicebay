@@ -11,7 +11,7 @@ import 'prismjs/components/prism-yaml';
 import 'prismjs/components/prism-ini'; // For systemd/kube files (ini-like)
 import 'prismjs/themes/prism-tomorrow.css'; // Dark theme for code
 import HistoryViewer from './HistoryViewer';
-import { getNodes } from '@/app/actions/system';
+import { fetchNodes } from '@servicebay/api-client';
 import { PodmanConnection } from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -131,7 +131,7 @@ export default function ServiceForm({ initialData, isEdit, defaultNode, onClose,
   });
 
   useEffect(() => {
-    getNodes().then(setNodes);
+    fetchNodes().then(setNodes);
   }, []);
 
   // Initialize Description from KubeContent

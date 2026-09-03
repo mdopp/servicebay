@@ -224,7 +224,7 @@ describe('loadPostDeployScript — script bodies ship verbatim (#2415)', () => {
   it('the deploy call site never re-introduces a render pass', () => {
     // Guards the seam: the behavioural test above only proves the loader is
     // a pass-through, not that `deployItem` stopped wrapping it.
-    const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+    const src = fs.readFileSync(path.join(__dirname, 'phases', 'kubePlay.ts'), 'utf-8');
     const assignment = src.match(/const hasPostDeployScript = .*/);
     expect(assignment?.[0]).toBe(
       'const hasPostDeployScript = Boolean(await loadPostDeployScript(item.name, input.templateSource));',
@@ -235,7 +235,7 @@ describe('loadPostDeployScript — script bodies ship verbatim (#2415)', () => {
   it('never puts a script body on the wire — the route reads it from the registry (#2503)', () => {
     // The deploy POST may carry the template SOURCE, never the script. If
     // this regresses, an arbitrary body is executable again via /api/services.
-    const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+    const src = fs.readFileSync(path.join(__dirname, 'phases', 'kubePlay.ts'), 'utf-8');
     const bodyStart = src.indexOf('body: JSON.stringify({');
     expect(bodyStart).toBeGreaterThan(-1);
     const body = src.slice(bodyStart, src.indexOf('}),', bodyStart));
@@ -312,10 +312,10 @@ describe('buildMigrationSteps — migration bodies ship verbatim (#2435)', () =>
   // reach; the message itself is unit-tested in
   // `stackInstall/migrations.test.ts`.
   it('checks the declared upgrade floor before selecting a chain', () => {
-    const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+    const src = fs.readFileSync(path.join(__dirname, 'phases', 'migrations.ts'), 'utf-8');
     const floorAt = src.indexOf('checkMinUpgradableSchemaVersion(\n');
     const chainAt = src.indexOf('selectMigrationChain(installedVersion');
-    expect(floorAt, 'runner.ts no longer calls checkMinUpgradableSchemaVersion').toBeGreaterThan(-1);
+    expect(floorAt, 'the migrations phase no longer calls checkMinUpgradableSchemaVersion').toBeGreaterThan(-1);
     expect(chainAt).toBeGreaterThan(-1);
     // A floor check after the chain selection would never fire: the missing
     // hop below the floor makes selectMigrationChain refuse first, which is
@@ -324,7 +324,7 @@ describe('buildMigrationSteps — migration bodies ship verbatim (#2435)', () =>
   });
 
   it('re-throws the floor refusal instead of logging "continuing without migrations"', () => {
-    const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+    const src = fs.readFileSync(path.join(__dirname, 'phases', 'migrations.ts'), 'utf-8');
     // The catch guard must key off the shared prefix constant, not a literal
     // — a second hand-written copy is how a new refusal gets swallowed.
     expect(src).toMatch(/e\.message\.startsWith\(MIGRATION_REFUSAL_PREFIX\)/);
@@ -334,7 +334,7 @@ describe('buildMigrationSteps — migration bodies ship verbatim (#2435)', () =>
   it('the deploy call site never re-introduces a render pass', () => {
     // Guards the seam: the mapper is a pass-through, but `deployItem`
     // must not wrap it (this is exactly how the bug survived #2415).
-    const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+    const src = fs.readFileSync(path.join(__dirname, 'phases', 'migrations.ts'), 'utf-8');
     expect(src).toMatch(/migrations = buildMigrationSteps\(result\.chain\);/);
     expect(src).not.toMatch(/renderTemplate\(s\.content/);
     expect(src).not.toMatch(/migrations\s*=\s*renderTemplate/);
@@ -369,7 +369,7 @@ describe('summariseIncompleteRun — report the denominator, not the return stat
 
 // ─── #2610 — the registry line says what refreshed, not that something did ──
 describe('the install dialog’s registry refresh line (#2610)', () => {
-  const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+  const src = fs.readFileSync(path.join(__dirname, 'phases', 'preflight.ts'), 'utf-8');
 
   it('no longer claims "Refreshed external registries" regardless of outcome', () => {
     // The exact string the reference box printed while one of its two
@@ -385,6 +385,7 @@ describe('the install dialog’s registry refresh line (#2610)', () => {
 
 describe('runJob terminal verdict + failure logging (#2601)', () => {
   const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+  const kubePlaySrc = fs.readFileSync(path.join(__dirname, 'phases', 'kubePlay.ts'), 'utf-8');
 
   it('the deploy-loop catch logs before it patches the job to error', () => {
     // Pre-fix this catch set `phase: 'error'` and returned WITHOUT writing a
@@ -407,7 +408,7 @@ describe('runJob terminal verdict + failure logging (#2601)', () => {
   });
 
   it('an item with no spec in the manifest says so instead of returning silently', () => {
-    expect(src).toMatch(/carries no template spec in this manifest/);
+    expect(kubePlaySrc).toMatch(/carries no template spec in this manifest/);
   });
 
   it('the internal-runner-error path writes to the job log too', () => {

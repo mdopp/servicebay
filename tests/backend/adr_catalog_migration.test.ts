@@ -164,6 +164,7 @@ describe('#2607 — whenToUse makes each decision findable when an agent self-se
     ['0013', 'an agent asks me to mint it a token by hand, or a shipped tool never appears in any session because no token carries its scope'],
     ['0014', 'i merged an assist and get_assist on the box still says no such id, or i am about to add a second place assists are read from'],
     ['0015', 'a file i deleted from a template source tree is still on the node, and i am about to make the deploy clean up whatever the template no longer ships'],
+    ['0016', 'adding a new durable json store under DATA_DIR, or wondering why a config document refuses to load because it only understands an older schema version'],
   ];
 
   it('covers every ADR with a probe — no record gets a free pass', async () => {
@@ -273,11 +274,11 @@ describe('#2607 — orientation names the catalog as where decisions live', () =
     expect(read('docs', 'ARCHITECTURE_INVARIANTS.md')).toContain('assists/adr-');
     const index = read('docs', 'adr', 'README.md');
     expect(index).toContain('assist catalog');
-    // The NEXT free number, not the highest taken one — 0014 is now spent
-    // (#2701), so the index must advertise 0015. Matching a number that also
+    // The NEXT free number, not the highest taken one — 0016 is now spent
+    // (#2701), so the index must advertise 0017. Matching a number that also
     // appears as an index row would pass vacuously.
     expect(index, 'names the next free number so the collision cannot recur')
-      .toMatch(/Next free number:\s*\*\*0015\*\*/);
+      .toMatch(/Next free number:\s*\*\*0017\*\*/);
   });
 
   // #2701 / ADR 0014 INVERTED this: the image used to be how the ADRs (and the

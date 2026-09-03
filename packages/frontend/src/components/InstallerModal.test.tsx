@@ -24,8 +24,13 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/registry',
 }));
 
-const getNodes = vi.fn(() => Promise.resolve([{ Name: 'box-1' }]));
-vi.mock('@/app/actions/system', () => ({ getNodes: () => getNodes() }));
+const { fetchNodes } = vi.hoisted(() => ({
+  fetchNodes: vi.fn(async () => [{ Name: 'box-1' }]),
+}));
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
+  fetchNodes,
+}));
 
 // The upgrade banner owns its own network fetch; stub it to report ready so
 // the Continue gate is exercised from both sides.
@@ -219,7 +224,7 @@ describe('InstallerModal — phase footers', () => {
     const install = screen.getByRole('button', { name: 'Install' });
     expect(install.className).toContain('bg-status-ok');
     expect(install.className).toContain('text-on-accent');
-    // getNodes resolved a single node, so it auto-selects and enables Install.
+    // fetchNodes resolved a single node, so it auto-selects and enables Install.
     await waitFor(() => expect((install as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(install);
     expect(controller.runInstall).toHaveBeenCalledWith({ node: 'box-1' });

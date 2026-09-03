@@ -4365,7 +4365,8 @@ class VerbatimScriptBodies(unittest.TestCase):
     docstring/comment naming the template.yml placeholder) or a Python
     f-string brace escape. None of them was ever a value-delivery
     mechanism: the values arrive through the process environment
-    (`postDeployEnv` in packages/backend/src/lib/install/runner.ts).
+    (`buildPostDeployEnv` in
+    packages/backend/src/lib/install/phases/assetTransport.ts).
     These cases pin that down site by site, so a future author can't
     quietly start depending on a render pass that no longer happens.
     """

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { getSystemUpdates } from '@/app/actions/system';
+import { getSystemUpdates, fetchNodes } from '@servicebay/api-client';
 import { logger } from '@servicebay/api-client';
 import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check, Info, Monitor, Settings, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { summarizeDnsResolvers, type DnsResolverLabel } from '@/dashboards/_lib/dnsResolvers';
@@ -10,7 +10,6 @@ import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import { useSocket } from '@/hooks/useSocket';
 import SectionLoading from '@/components/SectionLoading';
-import { getNodes } from '@/app/actions/nodes';
 import { PodmanConnection } from '@servicebay/api-client';
 import { Select, SelectOption } from '@/components/Select';
 
@@ -81,7 +80,7 @@ export function SystemInfoContent() {
 
   // Load available nodes
   useEffect(() => {
-        getNodes()
+        fetchNodes()
             .then(setNodes)
             .catch(e => logger.error('SystemInfoDashboard', 'Failed to fetch nodes', e));
     }, []);

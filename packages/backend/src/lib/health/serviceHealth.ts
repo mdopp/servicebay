@@ -38,6 +38,7 @@ import net from 'net';
 import { clearServiceHealth as repoClearServiceHealth, setServiceHealth as repoSetServiceHealth } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
 import type { ServiceHealth } from '@/lib/agent/types';
+import { managedInterval, type ManagedInterval } from '@/lib/runtime/timers';
 import type { HealthcheckConfig } from './serviceHealthcheck';
 
 /** A registered service + its resolved (post-Mustache) probe config. */
@@ -60,7 +61,7 @@ interface HealthBody {
 }
 
 export class ServiceHealthPoller {
-  private timers = new Map<string, NodeJS.Timeout>();
+  private timers = new Map<string, ManagedInterval>();
   private registry = new Map<string, RegisteredService>();
   private running = false;
 
@@ -118,15 +119,13 @@ export class ServiceHealthPoller {
     this.stopTimer(key); // never double-schedule
     const reg = this.registry.get(key);
     if (!reg) return;
-    const timer = setInterval(() => { void this.tick(key); }, reg.config.intervalMs);
     // Don't block process exit on the poller — it's a background concern.
-    timer.unref?.();
+    const timer = managedInterval(`service-health:${key}`, () => { void this.tick(key); }, reg.config.intervalMs, { unref: true });
     this.timers.set(key, timer);
   }
 
   private stopTimer(key: string): void {
-    const timer = this.timers.get(key);
-    if (timer) clearInterval(timer);
+    this.timers.get(key)?.stop();
     this.timers.delete(key);
   }
 

@@ -22,9 +22,10 @@ import { NotificationBatcher } from './notificationBatcher';
 import { DATA_DIR } from '@/lib/dirs';
 import { getNodeTwins, subscribeToTwin } from '@/lib/store/repository';
 import { runDiagnoseChecks, DIAGNOSE_INTERVAL_SECONDS } from '@/lib/diagnose/diagnoseChecks';
+import { managedInterval, type ManagedInterval } from '@/lib/runtime/timers';
 
 // In-memory interval tracking
-const intervals = new Map<string, NodeJS.Timeout>();
+const intervals = new Map<string, ManagedInterval>();
 
 const CHECKS_FILE = path.join(DATA_DIR, 'checks.json');
 
@@ -73,11 +74,10 @@ export class HealthService {
     //     measure downtime as `now − lastSeenAt`. Cheap (one small JSON
     //     write) and well under the boot-grace window so an unclean crash
     //     still leaves a recent healthy timestamp.
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    this.heartbeatTimer = setInterval(() => {
+    this.heartbeatTimer?.stop();
+    this.heartbeatTimer = managedInterval('health-heartbeat', () => {
       NotificationBatcher.heartbeat();
-    }, HEARTBEAT_INTERVAL_MS);
-    if (typeof this.heartbeatTimer.unref === 'function') this.heartbeatTimer.unref();
+    }, HEARTBEAT_INTERVAL_MS, { unref: true });
 
     // 1c. Daily self-diagnose run (#1423). The diagnose suite is heavy
     //     (multi-probe agent fan-out), so it runs once a day rather than
@@ -114,7 +114,7 @@ export class HealthService {
 
   private static checksWatcher: fs.FSWatcher | null = null;
   private static checksWatcherDebounce: NodeJS.Timeout | null = null;
-  private static heartbeatTimer: NodeJS.Timeout | null = null;
+  private static heartbeatTimer: ManagedInterval | null = null;
   private static bootstrappedNodes = new Set<string>();
   private static twinUnsubscribe: (() => void) | null = null;
 
@@ -227,7 +227,7 @@ export class HealthService {
     }
   }
 
-  private static diagnoseTimer: NodeJS.Timeout | null = null;
+  private static diagnoseTimer: ManagedInterval | null = null;
 
   /** Kick off a daily self-diagnose run (#1423). Runs once shortly after
    *  init, then every {@link DIAGNOSE_INTERVAL_SECONDS}. The first run is
@@ -249,8 +249,12 @@ export class HealthService {
     };
     // Defer the first run ~60 s past boot so the agent is connected.
     const FIRST_RUN_DELAY_MS = 60_000;
-    setTimeout(() => { void tick(); }, FIRST_RUN_DELAY_MS);
-    this.diagnoseTimer = setInterval(() => { void tick(); }, DIAGNOSE_INTERVAL_SECONDS * 1000);
+    this.diagnoseTimer = managedInterval(
+      'health-diagnose',
+      () => { void tick(); },
+      DIAGNOSE_INTERVAL_SECONDS * 1000,
+      { firstRunDelayMs: FIRST_RUN_DELAY_MS },
+    );
   }
 
   static getChecks() {
@@ -270,8 +274,38 @@ export class HealthService {
   }
 
   static stopAll() {
-    intervals.forEach(timer => clearInterval(timer));
+    intervals.forEach(timer => timer.stop());
     intervals.clear();
+  }
+
+  /**
+   * Tear down everything `init` started (#2738). Registered as the
+   * `health-service` background task, so the runtime kernel calls this on
+   * SIGTERM before the sockets are drained — otherwise a check tick could
+   * still be writing results while the process closes its stores.
+   */
+  static async shutdown(): Promise<void> {
+    this.stopAll();
+    this.heartbeatTimer?.stop();
+    this.heartbeatTimer = null;
+    this.diagnoseTimer?.stop();
+    this.diagnoseTimer = null;
+    if (this.checksWatcherDebounce) {
+      clearTimeout(this.checksWatcherDebounce);
+      this.checksWatcherDebounce = null;
+    }
+    try { this.checksWatcher?.close(); } catch { /* already closed */ }
+    this.checksWatcher = null;
+    this.twinUnsubscribe?.();
+    this.twinUnsubscribe = null;
+    // Lazy, like the bootstrap import above — keeps `service.ts` from taking a
+    // static edge on the poller module just for teardown.
+    try {
+      const { getServiceHealthPoller } = await import('./serviceHealth');
+      getServiceHealthPoller().stop();
+    } catch (e) {
+      logger.warn('Health', `Service-health poller stop failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   private static scheduleCheck(check: CheckConfig) {
@@ -280,10 +314,10 @@ export class HealthService {
 
     // Schedule
     const ms = (check.interval || 60) * 1000;
-    const timer = setInterval(() => {
+    const timer = managedInterval(`health-check:${check.id}`, () => {
       this.runAndEmit(check);
     }, ms);
-    
+
     intervals.set(check.id, timer);
   }
 

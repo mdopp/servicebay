@@ -113,12 +113,16 @@ this page came to assert a wrong largest-file name, a wrong file count, and a
 | `withApiHandler` adoption across `route.ts` files | `MIN_WITH_API_HANDLER_RATIO` | 100% |
 | `DigitalTwinStore.getInstance()` call sites | `TWIN_GETINSTANCE_MAX` | 0 |
 | Bare `fs.writeFile`/`writeFileSync` in durable-state modules | `DURABLE_STATE_BARE_WRITE_BUDGET` | 0 |
+| Durable stores adopted onto `defineStore` (floor, forward-only) | `VERSIONED_STORE_MIN` | 2 |
+| Bare `setInterval` in `packages/backend/src` outside `packages/backend/src/lib/runtime` | `BACKEND_BARE_SETINTERVAL_BUDGET` | 0 |
 
 Source roots walked: `packages/frontend/src`, `packages/backend/src`.
 
 Security paths (`SECURITY_PATHS`): `packages/backend/src/lib/auth`, `packages/backend/src/lib/mcp`, `packages/backend/src/lib/agent/executor.ts`, `packages/frontend/src/proxy.ts`.
 
-Durable-state modules (`DURABLE_STATE_MODULES`): `packages/backend/src/lib/config.ts`, `packages/backend/src/lib/health/store.ts`.
+Durable-state modules (`DURABLE_STATE_MODULES`): `packages/backend/src/lib/config.ts`, `packages/backend/src/lib/health/store.ts`, `packages/backend/src/lib/health/bootState.ts`, `packages/backend/src/lib/network/store.ts`.
+
+Versioned stores (`VERSIONED_STORE_MODULES`): `packages/backend/src/lib/health/bootState.ts`, `packages/backend/src/lib/network/store.ts`.
 
 _Generated from the constants — run `npm run check:invariants -- --write-docs` after changing one. For the **measured** values at HEAD run `npm run check:invariants`: they are deliberately not stored here, because a hand-maintained measurement table is stale the next time anyone merges (#2427)._
 
@@ -169,7 +173,7 @@ paths included, because there is no separate security budget for it.
 
 **One NPM client (#2731).** Nginx Proxy Manager's admin API (`/api/nginx/proxy-hosts`, `/certificates`, `/access-lists`) is spoken to from `packages/backend/src/lib/npm/` only: `http.ts` is the transport (bearer, JSON, abort budget, never throws on an HTTP status), `proxyHosts.ts` / `certs.ts` / `accessLists.ts` the typed client, `client.ts` the discovery + login (#2730). The proxy-hosts orchestration (create-or-reconcile, cert acquisition, conf-file patching, persistence, health-check sync) is the kernel in `lib/reverseProxy/proxyHostProvisioning.ts`; the HTTP route and the MCP `create_proxy_route` / `remove_proxy_route` / `get_proxy_routes` tools are thin callers of it. Two gates, because one is blind: the depcruise rule keeps `lib/npm/http.ts` import-private (only `lib/npm/` may import it), and the grep invariant fails any `/api/nginx` literal in non-test source outside `lib/npm/` — a caller that re-derives the URL with a bare `fetch` never shows up in the import graph. Before #2731 that client existed eleven times (route, migration orchestrator, two health probes, four diagnose probes, MCP tools), each with its own timeout and error text. `/api/tokens` and `/api/users` are deliberately outside this rule: they are NPM's auth surface, owned by `lib/npm/client.ts`, the auth probe and the bootstrap rekey.
 
-**Which packages depcruise walks.** `check:deps` cruises `packages/api-client/src`, `packages/backend/src`, `packages/backup-worker/src` and `packages/frontend/src`. `packages/disk-import-worker/src` is **not** covered yet: adding it surfaces a real `no-circular` violation (`cli/main.ts` ⇄ `server/index.ts`, via the deliberate lazy `import('../server/index')` in serve mode), and breaking that cycle is its own change, not a config edit. Extend the root list in `package.json` once it is broken — never add an exemption to make the package pass.
+**Which packages depcruise walks.** `check:deps` cruises **every** workspace package's `src`: `packages/{api-client,backend,backup-manifest,backup-worker,disk-import-worker,frontend}/src`. There is no carve-out. `packages/disk-import-worker` was the last one outside, on a real `no-circular` violation (`cli/main.ts` ⇄ `server/index.ts`: serve mode lazily `import('../server/index')`ed the CLI, and `server/index.ts` imported the two content hashers back out of it). #2747 broke it by moving `fingerprintFileContent` down into `engine/hashFile.ts` next to `hashFileContent`, so both entrypoints take the hashers from the engine layer they already depend on and the edge points one way. A new package goes on that command line when it is created — never an exemption to make one pass.
 
 ### Code-style / consistency
 
@@ -197,12 +201,52 @@ paths included, because there is no separate security budget for it.
 | Invariant | Enforced by |
 |---|---|
 | Bare `fs.writeFile`/`writeFileSync` in durable-state modules | `check-invariants.ts:DURABLE_STATE_BARE_WRITE_BUDGET` |
+| Adopted stores keep declaring `defineStore` (forward-only list) | `check-invariants.ts:VERSIONED_STORE_MODULES` / `VERSIONED_STORE_MIN` |
 
 **Durable-state writes are atomic (#2414).** `config.json` and `checks.json` under `DATA_DIR` are the operator's data, not caches: losing `config.json` re-onboards the box (domain, auth and service config gone, wizard opens on a configured box), losing `checks.json` drops every configured health check. A bare `fs.writeFile`/`writeFileSync` truncates the target *before* the new bytes land, so a power cut / OOM-kill / container stop mid-write destroys the file permanently. `packages/backend/src/lib/util/atomicWrite.ts` is the only sanctioned writer — `atomicWriteFile` (async) and `atomicWriteFileSync` (sync twin, for the stores whose public API is sync) both do tmp → fsync → rename, so a crash leaves the *original* intact.
 
 The modules held to this are listed in `DURABLE_STATE_MODULES` (`check-invariants.ts`) and enumerated in the generated block above. The list is repo-relative and **forward-only** — add a module when it starts owning durable `DATA_DIR` state; never delete one to make a bare write pass. Unlike the older path-based checks, a listed path that does **not** resolve is itself a violation, so a move/rename can't silently disable the gate the way the pre-#2379 `SECURITY_PATHS` did. `atomicWrite.ts` is deliberately not on the list — it *is* the primitive. Crash behaviour is proved by fault injection in `tests/backend/durable_write_crash_safety.test.ts` (each survival case is paired with a control that performs the pre-fix truncate-then-partial-write and must destroy the file).
 
-Explicitly out of scope: `health/store.ts` result files and `health/bootState.ts` are caches, cheap to rebuild — `writeResults` rides the atomic helper anyway because it shares the module, `bootState.ts` does not.
+Explicitly out of scope: `health/store.ts` result files are a cache, cheap to rebuild — `writeResults` rides the atomic helper anyway because it shares the module. (`health/bootState.ts` was in this exemption until #2739 adopted it onto `defineStore`, which put its heartbeat write on `atomicWriteFileSync`.)
+
+**Durable stores are versioned; migrations are forward-only (#2739).** Writing durably is half the problem; the other half is *changing the shape* of what is written. `packages/backend/src/lib/store/defineStore.ts` is the mechanism: a store declares `{ name, schema, version, migrations }`, a file at an older version is pulled forward through every registered migration on load, and a file at a **newer** version is refused loudly — on read *and* on write — rather than being silently overwritten by a downgraded build. A file with no envelope is version 0, so adopting an existing store means registering the `migrations[1]` that names its pre-adoption on-disk shape; no flag day, and the next write re-stamps the file. The predecessor pattern — a `CURRENT_SCHEMA_VERSION` field nothing ever branched on — was deleted in #2725 and must not come back. Rationale and the full rule: ADR 0016 (`assists/adr-0016-durable-stores-are-versioned-and-forward-only.md`).
+
+Adoption is store-by-store, so the gate is a growth ratchet rather than a budget: `VERSIONED_STORE_MODULES` (enumerated in the generated block above) may only get longer, every listed module must still call `defineStore` and must also appear in `DURABLE_STATE_MODULES`, and a listed path that no longer resolves is a violation. Un-adopting a store means lowering `VERSIONED_STORE_MIN` — a visible, deliberate edit. `defineStore.ts` itself is deliberately absent from the list for the same reason `atomicWrite.ts` is: it *is* the mechanism. The envelope is proved not to weaken #2414 by a third fault-injection case in `tests/backend/durable_write_crash_safety.test.ts`.
+
+### Background work (runtime kernel, #2738)
+
+| Invariant | Enforced by |
+|---|---|
+| Bare `setInterval` in `packages/backend/src` outside `lib/runtime/` | `scripts/invariants/backgroundTasks.ts:BACKEND_BARE_SETINTERVAL_BUDGET` |
+
+**Every recurring backend job is a registered background task.** Before #2738 the
+backend had **13** bare `setInterval` calls across seven modules and `server.ts`.
+None was cleared on SIGTERM, so a restart could leave a tick mid-flight writing
+to a store the process was already tearing down; and the only thing declaring
+boot order for ~30 subsystems was where a call happened to sit in an 800-line
+linear boot script.
+
+`packages/backend/src/lib/runtime/` is the kernel. `timers.ts` owns the single
+`setInterval` call site and hands back a named, idempotently-cancellable
+`ManagedInterval` whose callback is wrapped so a throwing tick logs instead of
+killing the process. `lifecycle.ts` owns the registry: `registerBackgroundTask`
+/ `registerIntervalTask` declare `{ name, start, stop }`, `startBackgroundTasks`
+starts them in registration order (a task registered later — e.g. from the
+`server.listen` callback — starts immediately and still joins the shutdown
+order), and `runGracefulShutdown` on SIGTERM/SIGINT stops every task in
+**reverse registration order**, then drains the sockets, then exits. Reverse
+order makes teardown the mirror of boot: a task can rely on everything
+registered before it still being alive while it stops. Each stop is logged, so
+`journalctl --user -u servicebay` shows an ordered teardown instead of silence.
+The ordering, the late-registration path and the force-exit timer are proved on
+fake timers in `packages/backend/src/lib/runtime/lifecycle.test.ts`.
+
+`server.ts` therefore holds the **task list**, not timers. The budget is **0**
+and downward-only: a new recurring job registers a task. Tests are exempt (they
+drive their own clock) and the kernel directory is exempt because it *is* the
+mechanism — the same carve-out `lib/util/atomicWrite.ts` gets from the
+bare-write budget. `RUNTIME_KERNEL_DIR` is asserted to resolve to a non-empty
+file set, so moving the kernel cannot silently disable its own gate (#2379).
 
 ### Security boundaries (pattern enforcement)
 
@@ -269,8 +313,18 @@ What enforces what:
 Frontend reaches the backend exclusively through:
 
 - `@servicebay/api-client` — typed seam (default for new code).
-- `@/app/actions/*` — server actions, already typed (legacy; new server-action surfaces go through the api-client client + a route handler instead).
 - Direct `fetch('/api/...')` — grandfathered for ~80 legacy call sites; new code uses `typedFetch`.
+
+**No Server Actions under `packages/frontend/src/app/actions/`** — enforced by the
+depcruise rule `no-app-actions`, not by this paragraph (#2745). The directory held
+nodes / ssh / onboarding CRUD as the *only* implementation of those surfaces, with
+`getNodes` defined identically in two of its modules. Because Server Actions are
+routed on page paths, the `/api/*`-only gate in `proxy.ts` never covered them and
+each action had to remember `assertAdminSession()` itself (#1203). They are now
+`withApiHandler` routes under `/api/system/{nodes,ssh,onboarding,os-updates}` behind
+zod-contracted api-client methods, which pick up the session gate structurally and
+the 401 → `/login` redirect via `apiFetch`. A new server-side surface is a route
+handler plus an api-client method — never a new action module.
 
 ---
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { getNodes } from '@/app/actions/system';
+import { fetchNodes } from '@servicebay/api-client';
 import { useStackInstall, type UseStackInstallReturn } from '@/hooks/useStackInstall';
 
 /**
@@ -117,7 +117,7 @@ function useUpgradePlan(onError: (msg: string) => void) {
 function useSingleNode(): string | undefined {
   const [node, setNode] = useState<string | undefined>(undefined);
   useEffect(() => {
-    getNodes().then(ns => { if (ns.length === 1) setNode(ns[0].Name); }).catch(() => undefined);
+    fetchNodes().then(ns => { if (ns.length === 1) setNode(ns[0].Name); }).catch(() => undefined);
   }, []);
   return node;
 }

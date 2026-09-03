@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import PageHeader from '@/components/PageHeader';
 import { Eraser, RefreshCw, Server, Monitor } from 'lucide-react';
 import { TerminalRef } from '@/components/Terminal';
-import { getNodes } from '@/app/actions/nodes';
+import { fetchNodes } from '@servicebay/api-client';
 import { PodmanConnection } from '@servicebay/api-client';
 import { Select, SelectOption } from '@/components/Select';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -44,7 +44,7 @@ export default function TerminalDashboard() {
     }, [nodeParam, pathname, queryString, router]);
 
   useEffect(() => {
-        getNodes().then(setNodes).catch(console.error);
+        fetchNodes().then(setNodes).catch(console.error);
     }, []);
 
     useEffect(() => {

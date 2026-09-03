@@ -3,11 +3,12 @@ import { GatewayProvider } from './types';
 import { FritzBoxProvider } from './fritzbox';
 import { getConfig } from '../config';
 import { logger } from '@/lib/logger';
+import { managedInterval, type ManagedInterval } from '../runtime/timers';
 
 export class GatewayPoller {
   private static instance: GatewayPoller;
   private provider: GatewayProvider | null = null;
-  private interval: NodeJS.Timeout | null = null;
+  private interval: ManagedInterval | null = null;
 
   private constructor() {}
 
@@ -51,11 +52,11 @@ export class GatewayPoller {
     await this.poll();
 
     // Loop
-    this.interval = setInterval(() => this.poll(), 60000); // 1 minute
+    this.interval = managedInterval('gateway-poll', () => { void this.poll(); }, 60000); // 1 minute
   }
   
   public stop() {
-      if (this.interval) clearInterval(this.interval);
+      this.interval?.stop();
       this.interval = null;
   }
 

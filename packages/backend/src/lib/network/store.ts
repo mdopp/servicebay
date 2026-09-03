@@ -1,18 +1,47 @@
-import fs from 'fs/promises';
 import path from 'path';
+import { z } from 'zod';
 import { DATA_DIR } from '../dirs';
-import { atomicWriteFile } from '../util/atomicWrite';
+import { defineStore } from '../store/defineStore';
 
-const STORE_PATH = path.join(DATA_DIR, 'network-edges.json');
+const STORE_PATH = () => path.join(DATA_DIR, 'network-edges.json');
 
-export interface ManualEdge {
-  id: string;
-  source: string;
-  target: string;
-  label?: string;
-  port?: number;
-  created_at: string;
-}
+const ManualEdgeSchema = z.object({
+  id: z.string(),
+  source: z.string(),
+  target: z.string(),
+  label: z.string().optional(),
+  /**
+   * `null` is tolerated as well as absent: the `POST /api/network/edges` route
+   * derives the port with `parseInt`, and a non-numeric body field lands as
+   * `NaN` — which `JSON.stringify` writes as `null`. Refusing it on read would
+   * turn a sloppy request into a store that no longer loads.
+   */
+  port: z.number().nullish(),
+  created_at: z.string(),
+});
+
+export type ManualEdge = z.infer<typeof ManualEdgeSchema>;
+
+/**
+ * Operator-drawn edges on the network graph (#2739 adoption).
+ *
+ * Version 1 is the first versioned shape. `migrations[1]` describes what every
+ * existing box has on disk: a bare `ManualEdge[]` array with no envelope, from
+ * before `defineStore` existed. A non-array (an empty or hand-mangled file)
+ * migrates to an empty list rather than failing the schema, matching the
+ * "missing/corrupt file reads back as no edges" behaviour this store has always
+ * had.
+ */
+const edgeStore = defineStore<ManualEdge[]>({
+  name: 'network-edges',
+  file: STORE_PATH,
+  version: 1,
+  schema: z.array(ManualEdgeSchema),
+  migrations: {
+    1: previous => (Array.isArray(previous) ? previous : []),
+  },
+  fallback: () => [],
+});
 
 /**
  * Per-process serialization for edge mutations. addEdge/removeEdge
@@ -30,12 +59,7 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
 
 export class NetworkStore {
   static async getEdges(): Promise<ManualEdge[]> {
-    try {
-      const content = await fs.readFile(STORE_PATH, 'utf-8');
-      return JSON.parse(content);
-    } catch {
-      return [];
-    }
+    return edgeStore.read();
   }
 
   static async addEdge(edge: ManualEdge): Promise<void> {
@@ -57,12 +81,13 @@ export class NetworkStore {
     });
   }
 
+  /**
+   * Writes go through the versioned store, which stamps the envelope and hands
+   * the body to `atomicWriteFile` (tmp → fsync → rename, #2414) so a crash
+   * mid-save can't truncate the operator's edges — and refuses to overwrite a
+   * file a newer ServiceBay wrote.
+   */
   private static async saveEdges(edges: ManualEdge[]): Promise<void> {
-    await fs.mkdir(path.dirname(STORE_PATH), { recursive: true });
-    // Use atomicWriteFile so a crash mid-save can't corrupt the file
-    // (writes a temp + rename). The previous fs.writeFile would
-    // truncate the file before refilling, leaving an empty edge list
-    // on disk if the process died at the wrong moment.
-    await atomicWriteFile(STORE_PATH, JSON.stringify(edges, null, 2));
+    await edgeStore.write(edges);
   }
 }

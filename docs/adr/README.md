@@ -16,7 +16,7 @@ situation* it applies, so it turns up when an agent self-selects.
 - **New architecture decision** → `assists/adr-NNNN-title.md`, `kind: adr`,
   with a `whenToUse` line written for the *situation* an agent will be in when
   it needs the decision — not a restatement of the title. Next free number:
-  **0015**.
+  **0017**.
 - Format is unchanged: **Status · Context · Decision · Consequences**.
 - **UX-surface** decisions still live in [../UX_DECISIONS.md](../UX_DECISIONS.md)
   and [../UX_PHILOSOPHY.md](../UX_PHILOSOPHY.md); the credential self-heal
@@ -42,6 +42,7 @@ situation* it applies, so it turns up when an agent self-selects.
 | 0013 | [`adr-0013-clients-request-their-own-access`](../../assists/adr-0013-clients-request-their-own-access.md) | Clients request their own access and a human only confirms; a three-class table decides which scopes may be self-requested at all, and the scope vocabulary exists exactly once |
 | 0014 | [`adr-0014-assist-catalog-delivered-at-runtime`](../../assists/adr-0014-assist-catalog-delivered-at-runtime.md) | The assist catalog is delivered at runtime, not baked into the image — exactly one source, and a failed delivery is empty and loud rather than stale and quiet |
 | 0015 | [`adr-0015-template-deletions-need-a-delivered-files-manifest`](../../assists/adr-0015-template-deletions-need-a-delivered-files-manifest.md) | A template deletes only what it demonstrably delivered — a delivered-files manifest, never a mirroring sync, because runtime files live in the same directories |
+| 0016 | [`adr-0016-durable-stores-are-versioned-and-forward-only`](../../assists/adr-0016-durable-stores-are-versioned-and-forward-only.md) | Durable JSON stores declare a version; migrations are forward-only and a file a newer build wrote is refused loudly rather than silently overwritten |
 
 ## The 0009 collision (#2617)
 

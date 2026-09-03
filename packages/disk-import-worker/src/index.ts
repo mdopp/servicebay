@@ -28,5 +28,9 @@ export * from './engine/routing';
 export * from './engine/suggest';
 
 // --- Status-file contract (shared with servicebay) ---
+// `status`/`lazyTree` are the TYPES; `schema` is the runtime zod contract for the
+// three wire documents (status.json / plan.json / replan-request.json) that both
+// sides validate against — one place, no re-declaration on the servicebay side (#2747).
 export * from './contract/status';
+export * from './contract/schema';
 export * from './contract/lazyTree';

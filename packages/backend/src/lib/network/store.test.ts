@@ -58,3 +58,33 @@ describe('NetworkStore mutex', () => {
     expect(edges[0].id).toBe('a');
   });
 });
+
+describe('NetworkStore versioned adoption (#2739)', () => {
+  it('reads the pre-adoption bare array a box already has on disk', async () => {
+    // What network-edges.json looks like on every box that upgraded into the
+    // versioned store: no envelope, just the edges.
+    await fs.writeFile(STORE_PATH, JSON.stringify([mkEdge('legacy')], null, 2));
+
+    const edges = await NetworkStore.getEdges();
+    expect(edges.map(e => e.id)).toEqual(['legacy']);
+  });
+
+  it('re-stamps that file at version 1 on the next write, keeping the data', async () => {
+    await fs.writeFile(STORE_PATH, JSON.stringify([mkEdge('legacy')], null, 2));
+
+    await NetworkStore.addEdge(mkEdge('fresh'));
+
+    const onDisk = JSON.parse(await fs.readFile(STORE_PATH, 'utf-8'));
+    expect(onDisk.__store).toBe('network-edges');
+    expect(onDisk.version).toBe(1);
+    expect(onDisk.data.map((e: { id: string }) => e.id).sort()).toEqual(['fresh', 'legacy']);
+  });
+
+  it('refuses a file written by a newer ServiceBay instead of resetting it', async () => {
+    const newer = JSON.stringify({ __store: 'network-edges', version: 2, data: [] }, null, 2);
+    await fs.writeFile(STORE_PATH, newer);
+
+    await expect(NetworkStore.getEdges()).rejects.toThrow(/only understands version 1/);
+    expect(await fs.readFile(STORE_PATH, 'utf-8')).toBe(newer);
+  });
+});

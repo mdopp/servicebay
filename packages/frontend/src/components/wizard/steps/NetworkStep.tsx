@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Globe, Network, Key, CheckCircle, Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
 import { Input, Button } from '../WizardUI';
-import { OnboardingStatus } from '@/app/actions/onboarding';
+import type { OnboardingStatus } from '@servicebay/api-client';
 
 interface NetworkStepProps {
     selection: {
