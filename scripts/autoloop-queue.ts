@@ -149,6 +149,16 @@ const apiRepo = (repo?: string): string => repo ?? '{owner}/{repo}';
 
 // ----------------------------------------------------------------------- cache
 
+/**
+ * The unit kinds the broker accepts. `consolidation` is the single slot per
+ * batch the planner may take from the ratchet/dup reports (`check:lint-ratchet`,
+ * `check:frontend-dup`, `check:invariants`) once no user issue is waiting
+ * (#2746). The rule lives here rather than in the playbook prose because a rule
+ * an LLM re-reads each run is advisory; a refusal in `plan` is structural.
+ */
+export const UNIT_KINDS = ['issue', 'cluster', 'lint-sweep', 'dep-updates', 'consolidation'] as const;
+export const CONSOLIDATION_KIND = 'consolidation';
+
 export interface Unit {
   id: string;
   kind?: string;
@@ -211,6 +221,28 @@ export function pruneState(d: CacheState): CacheState {
   // Drop finished units — GitHub (closed issues / merged PRs) is the durable record.
   d.units = Object.fromEntries(Object.entries(d.units).filter(([, u]) => u.status !== 'done'));
   return d;
+}
+
+/** A unit that carries real user work — what a consolidation slot yields to. */
+const carriesUserIssues = (u: Unit): boolean =>
+  u.kind !== CONSOLIDATION_KIND && (u.issues?.length ?? 0) > 0;
+
+/**
+ * Why a consolidation unit may NOT be planned right now, or `null` if it may.
+ * Two rules, both #2746: **at most one slot per batch**, and **only when no
+ * user issue is waiting** — consolidation is what the loop does with a dry
+ * queue, never what it does instead of the backlog.
+ */
+export function consolidationRefusal(d: CacheState): string | null {
+  const live = Object.values(d.units).filter(u => u.status !== 'done');
+  if (live.some(u => u.kind === CONSOLIDATION_KIND)) {
+    return 'this batch already holds a consolidation slot (at most one per batch)';
+  }
+  const waiting = live.filter(u => u.status === 'planned' && carriesUserIssues(u)).map(u => u.id);
+  if (waiting.length) {
+    return `user issues are waiting (${waiting.join(', ')}) — they come first`;
+  }
+  return null;
 }
 
 export class Cache {
@@ -505,6 +537,9 @@ export const VERBS: Record<string, (c: Ctx, a: Args) => number> = {
           verify: d.verify ? { sha: d.verify.sha, status: d.verify.status } : null,
           planned_units: planned.length,
           next_unit: planned[0]?.id ?? null,
+          // Whether this batch's one consolidation slot (#2746) is already taken.
+          consolidation_slot:
+            Object.values(d.units).find(u => u.kind === CONSOLIDATION_KIND && u.status !== 'done')?.id ?? null,
           last_codebase_eval: d.last_codebase_eval,
           gh: w
             ? {
@@ -610,9 +645,20 @@ export const VERBS: Record<string, (c: Ctx, a: Args) => number> = {
   /** Record a planned unit + label its member issues `autoloop:queued`. */
   plan(c, a) {
     const unit = JSON.parse(String(a._[0])) as Unit;
+    if (unit.kind && !(UNIT_KINDS as readonly string[]).includes(unit.kind)) {
+      c.out(`not planned ${unit.id}: unknown kind ${JSON.stringify(unit.kind)} — one of ${UNIT_KINDS.join(', ')}`);
+      return 2;
+    }
     unit.status ??= 'planned';
     unit.pr ??= null;
     const d = c.cache.load();
+    if (unit.kind === CONSOLIDATION_KIND) {
+      const why = consolidationRefusal(d);
+      if (why) {
+        c.out(`not planned ${unit.id}: ${why}`);
+        return 2;
+      }
+    }
     d.units[String(unit.id)] = unit;
     c.cache.save(d);
     for (const n of unit.issues ?? []) {
