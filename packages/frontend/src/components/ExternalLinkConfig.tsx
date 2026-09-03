@@ -5,7 +5,7 @@ import { useToast } from '@/providers/ToastProvider';
 import { useRouter } from 'next/navigation';
 import { Link as LinkIcon, Save } from 'lucide-react';
 import { createExternalLink } from '@servicebay/api-client';
-import { Card, Button, Field } from '@/components/ui';
+import { Card, Button, Field, Input } from '@/components/ui';
 
 const inputCls =
     'w-full px-space-3 py-space-2 rounded-card border border-border bg-surface-2 text-text ' +
@@ -64,7 +64,7 @@ export default function ExternalLinkConfig() {
                     <Card padding="lg" className="space-y-6">
                         <Field label="Name">
                             {(props) => (
-                                <input
+                                <Input
                                     {...props}
                                     type="text"
                                     value={linkForm.name}
@@ -77,7 +77,7 @@ export default function ExternalLinkConfig() {
 
                         <Field label="URL">
                             {(props) => (
-                                <input
+                                <Input
                                     {...props}
                                     type="url"
                                     value={linkForm.url}
@@ -90,7 +90,7 @@ export default function ExternalLinkConfig() {
 
                         <Field label="Description">
                             {(props) => (
-                                <input
+                                <Input
                                     {...props}
                                     type="text"
                                     value={linkForm.description}
@@ -102,7 +102,7 @@ export default function ExternalLinkConfig() {
                         </Field>
 
                         <label className="flex items-center gap-space-2 text-sm text-text-muted">
-                            <input
+                            <Input
                                 type="checkbox"
                                 checked={linkForm.monitor}
                                 onChange={e => setLinkForm({ ...linkForm, monitor: e.target.checked })}

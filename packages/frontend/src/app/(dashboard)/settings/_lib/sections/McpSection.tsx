@@ -41,7 +41,7 @@ function AuditEntryRow({ entry }: { entry: AuditEntry }) {
 
 function ToggleSwitch({ on, disabled, onColor, ariaChecked, onClick }: { on: boolean | null; disabled: boolean; onColor: string; ariaChecked: boolean; onClick: () => void }) {
   return (
-    <button
+    <Button
       type="button"
       disabled={disabled}
       onClick={onClick}
@@ -50,7 +50,7 @@ function ToggleSwitch({ on, disabled, onColor, ariaChecked, onClick }: { on: boo
       aria-checked={ariaChecked}
     >
       <span className={`inline-block h-4 w-4 transform rounded-chip bg-white transition-transform ${on ? 'translate-x-6' : 'translate-x-1'}`} />
-    </button>
+    </Button>
   );
 }
 
@@ -310,7 +310,7 @@ export default function McpSection() {
           MCP endpoint
         </label>
         <div className="flex items-stretch gap-2">
-          <input
+          <Input
             type="text"
             readOnly
             value={mcpUrl}
@@ -390,7 +390,7 @@ export default function McpSection() {
           operators who don't care about the audit feed. Lazy-loads on
           open so a heavy log doesn't slow down the rest of Settings. */}
       <div className="mt-4 pt-4 border-t border-border">
-        <button
+        <Button
           type="button"
           onClick={() => {
             const next = !auditOpen;
@@ -407,7 +407,7 @@ export default function McpSection() {
             )}
           </span>
           <span className="text-xs text-text-subtle">{auditOpen ? '▾' : '▸'}</span>
-        </button>
+        </Button>
         {auditOpen && <McpAuditFeed entries={audit} loading={auditLoading} onRefresh={loadAudit} />}
       </div>
     </>

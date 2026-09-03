@@ -153,16 +153,16 @@ const servicebayPlugin = {
     // raw elements + intentionally map raw colours to tokens internally). See
     // docs/ARCHITECTURE_INVARIANTS.md § ui-primitive-and-design-token-reuse.
     //
-    // ROLLOUT: introduced at "warn" (not "error"). A one-shot fix was
-    // infeasible — the raw-colour rule alone fires ~3100 times across ~85
-    // files, and rewriting each to a semantic token while keeping every
-    // component visually identical is far past a single unit's safe blast
-    // radius. warn keeps the 0-error gate green while surfacing every new + old
-    // violation. RATCHET PLAN: burn the count down file-by-file (lint-sweep
-    // units), then flip each rule to "error" once its class is at 0 — never
-    // loosen. TODO(#2353): ratchet no-raw-color-literal → error after the
-    // colour-token migration; ratchet no-raw-ui-primitive → error after the
-    // <button>/<table>/<input> migration.
+    // ROLLOUT: no-raw-ui-primitive introduced at "warn" (not "error"). A
+    // one-shot fix was infeasible — rewriting every raw element to a
+    // primitive while keeping each component visually identical is far past
+    // a single unit's safe blast radius. warn keeps the 0-error gate green
+    // while surfacing every new + old violation. RATCHET PLAN: burn the
+    // count down file-by-file (lint-sweep units), then flip to "error" once
+    // the class is at 0 — never loosen. TODO(#2353): ratchet
+    // no-raw-ui-primitive → error after the <button>/<table>/<input>
+    // migration. (no-raw-color-literal already flipped to "error" — its
+    // ratchet reached 0.)
     //
     // ENFORCED since #2430 — the plan above is no longer prose: the counts are
     // pinned in .eslint-ratchet-baseline.json and `npm run check:lint-ratchet`
@@ -511,13 +511,12 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // #2353 — UI-primitive + design-token reuse, scoped to the frontend
-    // application surfaces and EXEMPTING the primitives themselves
-    // (components/ui/ wraps the raw elements + maps raw colours to tokens
-    // internally). Introduced at "warn" during rollout; ratchet each rule to
-    // "error" once its violation class is at 0 (see the rule comment + the
-    // invariant doc). Test files are exempt so fixtures/markup snapshots don't
-    // trip the colour rule.
+    // #2353 — UI-primitive reuse, scoped to the frontend application
+    // surfaces and EXEMPTING the primitives themselves (components/ui/
+    // wraps the raw elements internally). Introduced at "warn" during
+    // rollout; ratchet to "error" once its violation class is at 0 (see the
+    // rule comment + the invariant doc). Test files are exempt so
+    // fixtures/markup snapshots don't trip it.
     files: ["packages/frontend/src/**/*.{ts,tsx,js,jsx}"],
     ignores: [
       "packages/frontend/src/components/ui/**",
@@ -525,7 +524,22 @@ const eslintConfig = defineConfig([
     ],
     rules: {
       "sb/no-raw-ui-primitive": "warn",
-      "sb/no-raw-color-literal": "warn",
+    },
+  },
+  {
+    // #2353 — design-token reuse. Started with the same staging shape as
+    // no-raw-ui-primitive above (warn + ratchet); the ratchet reached 0 and
+    // the rule flipped to a hard `error` (docs/ARCHITECTURE_INVARIANTS.md §
+    // UI-primitive and design-token reuse). Exemption set unchanged:
+    // components/ui/ legitimately maps raw colours to tokens internally,
+    // and tests are exempt so fixtures/markup snapshots don't trip it.
+    files: ["packages/frontend/src/**/*.{ts,tsx,js,jsx}"],
+    ignores: [
+      "packages/frontend/src/components/ui/**",
+      "**/*.test.{ts,tsx,js,jsx}",
+    ],
+    rules: {
+      "sb/no-raw-color-literal": "error",
     },
   },
   {

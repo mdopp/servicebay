@@ -47,9 +47,12 @@ const BASELINE_FILE = path.join(REPO_ROOT, '.eslint-ratchet-baseline.json');
  * patch hid that — same mechanism, different class) and left again once its
  * baseline hit 0: it is now a hard `error` in eslint.config.mjs, so ESLint
  * itself is the gate from here on.
+ *
+ * `sb/no-raw-color-literal` left the same way (#2353 colour-token migration
+ * complete): its baseline hit 0, so it is now a hard `error` in
+ * eslint.config.mjs.
  */
 const RATCHETED_RULES = [
-    'sb/no-raw-color-literal',
     'sb/no-raw-ui-primitive',
 ] as const;
 

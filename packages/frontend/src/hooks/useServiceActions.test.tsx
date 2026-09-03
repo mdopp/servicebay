@@ -134,7 +134,7 @@ describe('useServiceActions overlays', () => {
       for (const label of ['Start', 'Stop', 'Restart Service', 'Update & Restart']) {
         const btn = screen.getByRole('button', { name: label });
         expect(btn.className).toContain('border-border');
-        expect(btn.className).toContain('hover:bg-surface-2');
+        expect(btn.className).toContain('hover:bg-surface-muted');
         expect(btn.className).not.toMatch(/border-gray-|bg-gray-/);
       }
       // fullWidth only applies to the two stacked buttons.
@@ -145,9 +145,9 @@ describe('useServiceActions overlays', () => {
     it('renders Delete Service as a status-fail tinted button', () => {
       const del = screen.getByRole('button', { name: 'Delete Service' });
       expect(del.className).toContain('text-status-fail');
-      expect(del.className).toContain('bg-status-fail/10');
-      expect(del.className).toContain('border-status-fail/20');
-      expect(del.className).toContain('hover:bg-status-fail/20');
+      expect(del.className).toContain('bg-transparent');
+      expect(del.className).toContain('border-status-fail/40');
+      expect(del.className).toContain('hover:bg-status-fail/10');
       expect(del.className).not.toMatch(/red-\d/);
     });
 
