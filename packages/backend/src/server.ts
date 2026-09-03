@@ -261,7 +261,8 @@ app.prepare().then(() => {
             return null;
           });
           if (session) {
-            // Cookie auth retains the broad operator scopes for back-compat.
+            // A scope-less cookie (password login) retains the broad operator
+            // scopes for back-compat.
             // Fresh installs that want stricter behaviour use named tokens.
             // `exec` is deliberately ABSENT and must stay absent (#2623): this
             // list never carried it literally — it only ever arrived through
@@ -269,7 +270,13 @@ app.prepare().then(() => {
             // session therefore can no longer call exec_command/container_exec
             // over /mcp; that is the point, not an oversight. `reboot` is still
             // reached via the surviving `destroy`⇒`reboot` rule (#1765).
-            auth = { user: session.user, scopes: ['read', 'lifecycle', 'mutate', 'destroy', 'propose'] };
+            // A bridged session (POST /api/auth/session-from-token) carries the
+            // source token's `scopes`; honour them instead of the broad set, or
+            // a `read`-only token becomes a full operator over /mcp (#2768).
+            auth = {
+              user: session.user,
+              scopes: session.scopes ?? ['read', 'lifecycle', 'mutate', 'destroy', 'propose'],
+            };
           }
         }
         if (!auth) {
@@ -343,6 +350,19 @@ app.prepare().then(() => {
   // `podman ps` rather than from an in-process session that could be stranded.
 
   // Socket.IO auth: every connection must carry a valid session cookie.
+  //
+  // This admits any authenticated session ON PURPOSE and is NOT the whole gate
+  // (#2769). One Socket.IO connection multiplexes logs, install progress,
+  // resource broadcasts AND terminals, so a scope check here would be either
+  // too strict (a `read` token could not watch logs) or — as it was before
+  // #2769 — too loose: nothing downstream looked at `session.scopes` either, so
+  // a cookie bridged from a `read`-only token could `join('host')` and receive a
+  // live host shell. The shell-grade check therefore lives per-verb next to the
+  // capability it guards: `terminalScopeRefusal` in `lib/terminal/sessionManager.ts`
+  // holds `join`/`input`/`resize` to `exec`. Any FUTURE privileged socket event
+  // owes its own check in the same place — do not assume this middleware made
+  // one for you. The session (scopes included) is stashed on `socket.data.user`
+  // for exactly that purpose.
   io.use(async (socket, next) => {
     const session = await getSessionFromCookieHeader(socket.handshake.headers.cookie);
     if (!session) {

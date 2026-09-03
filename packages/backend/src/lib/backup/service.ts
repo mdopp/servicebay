@@ -328,6 +328,29 @@ async function rsyncOneSource(
     return parseRsyncStats(stdout);
 }
 
+/**
+ * One line stating which sources actually landed on the target when a run did
+ * not sync all of them (#2773).
+ *
+ * The per-source loop below used to have no try/catch, so a throw from source 2
+ * escaped past source 1 and the history entry + failure alert carried only that
+ * one bare rsync error — the operator could not tell whether source 1's data
+ * had reached the target. Same denominator honesty as `summariseIncompleteRun`
+ * in `packages/backend/src/lib/install/runner.ts`.
+ */
+export function summariseBackupRun(
+    synced: ReadonlyArray<string>,
+    failed: ReadonlyArray<{ path: string; error: string }>,
+): string {
+    const total = synced.length + failed.length;
+    if (failed.length === 0) return `✅ ${synced.length}/${total} source(s) synced.`;
+    const failedText = failed.map(f => `${f.path} — ${f.error}`).join('; ');
+    if (synced.length === 0) {
+        return `❌ Nothing was synced: 0 of ${total} source(s) reached the target (${failedText}).`;
+    }
+    return `❌ ${synced.length}/${total} source(s) synced (${synced.join(', ')}). NOT synced: ${failedText}.`;
+}
+
 async function runBackupItems(
     config: BackupConfig,
     startedAt: Date,
@@ -356,10 +379,27 @@ async function runBackupItems(
 
         let totalBytes = 0;
         let totalFiles = 0;
+        const synced: string[] = [];
+        const failed: { path: string; error: string }[] = [];
+        // Per-source try/catch: one source's rsync failing must not discard the
+        // outcome of the sources around it (#2773).
         for (const { source, subFolder } of assigned) {
-            const stats = await rsyncOneSource(source, config.target, subFolder, sharedMountPath);
-            totalBytes += stats.bytesTransferred ?? 0;
-            totalFiles += stats.filesTransferred ?? 0;
+            try {
+                const stats = await rsyncOneSource(source, config.target, subFolder, sharedMountPath);
+                totalBytes += stats.bytesTransferred ?? 0;
+                totalFiles += stats.filesTransferred ?? 0;
+                synced.push(source.path);
+            } catch (e) {
+                const error = e instanceof Error ? e.message : String(e);
+                logger.error('Backup', `Source ${source.path} failed: ${error}`);
+                failed.push({ path: source.path, error });
+            }
+        }
+
+        if (failed.length > 0) {
+            // runBackup's catch turns this into the history entry and the
+            // failure-alert email, so the summary is what the operator sees.
+            throw new Error(summariseBackupRun(synced, failed));
         }
 
         return await recordBackupSuccess(config, startedAt, sources.length, totalBytes, totalFiles, previousStatus);
@@ -506,10 +546,22 @@ async function updateBackupStatus(success: boolean, message: string, duration: n
 
 // ─── Scheduler ───────────────────────────────────────────────────────
 
-function getNextDateForSchedule(now: Date, schedule: string, dayOfWeek?: number, dayOfMonth?: number): Date {
-    const next = new Date(now);
+/**
+ * `now` is the real wall clock; `anchor` is today's date at the configured
+ * HH:MM. These used to be the same object (#2770) — the caller passed the
+ * anchor as `now` — so every `next <= now` comparison below compared the anchor
+ * to itself, was always true, and rolled every schedule forward a full cycle
+ * even when today's slot was still ahead. With the agent updater restarting the
+ * backend nightly, that pushed a daily backup out by another day every night.
+ */
+function getNextDateForSchedule(now: Date, anchor: Date, schedule: string, dayOfWeek?: number, dayOfMonth?: number): Date {
+    const next = new Date(anchor);
     switch (schedule) {
         case 'hourly':
+            // Only the configured minute means anything hourly — anchoring on
+            // the configured HOUR would return a time in the past for most of
+            // the day, and a negative setTimeout delay fires immediately.
+            next.setUTCHours(now.getUTCHours());
             if (next <= now) next.setUTCHours(next.getUTCHours() + 1);
             break;
         case 'daily':
@@ -536,17 +588,17 @@ function getNextDateForSchedule(now: Date, schedule: string, dayOfWeek?: number,
     return next;
 }
 
-function getNextRunTime(config: BackupConfig): Date {
+export function getNextRunTime(config: BackupConfig): Date {
     const now = new Date();
     const [hourStr, minuteStr] = (config.time || '02:00').split(':');
     const hour = Number(hourStr) || 0;
     const minute = Number(minuteStr) || 0;
 
-    const next = new Date(now);
-    next.setUTCSeconds(0, 0);
-    next.setUTCHours(hour, minute);
+    const anchor = new Date(now);
+    anchor.setUTCSeconds(0, 0);
+    anchor.setUTCHours(hour, minute);
 
-    return getNextDateForSchedule(next, config.schedule, config.dayOfWeek, config.dayOfMonth);
+    return getNextDateForSchedule(now, anchor, config.schedule, config.dayOfWeek, config.dayOfMonth);
 }
 
 export function scheduleBackup(): void {

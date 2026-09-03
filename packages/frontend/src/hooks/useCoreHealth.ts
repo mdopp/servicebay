@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { z } from 'zod';
+import { typedFetch } from '@servicebay/api-client';
 
 // Shape of GET /api/system/core-health. Shared by the CoreHealthBanner
 // and the Home dashboard's health headline so the two can't disagree —
@@ -28,6 +30,27 @@ export interface CoreDegradedEntry {
 
 const POLL_INTERVAL_MS = 15_000;
 
+const CoreUnhealthyCauseSchema = z.object({
+  summary: z.string(),
+  action: z.object({ label: z.string(), href: z.string() }).optional(),
+});
+
+const CoreNotReadySchema = z.object({
+  template: z.string(),
+  state: z.enum(['unhealthy', 'unknown']),
+  cause: CoreUnhealthyCauseSchema.optional(),
+});
+
+const CoreDegradedEntrySchema = z.object({
+  stack: z.string(),
+  label: z.string(),
+  notReady: z.array(CoreNotReadySchema),
+});
+
+const CoreHealthResponseSchema = z.object({
+  degraded: z.array(CoreDegradedEntrySchema).optional(),
+});
+
 /**
  * Polls `/api/system/core-health` for `tier: core` stacks that aren't
  * ready. Returns the raw `degraded` list plus a derived view that counts
@@ -46,9 +69,7 @@ export function useCoreHealth(): {
     let cancelled = false;
     const tick = async () => {
       try {
-        const res = await fetch('/api/system/core-health');
-        if (!res.ok) return;
-        const data = (await res.json()) as { degraded?: CoreDegradedEntry[] };
+        const data = await typedFetch('/api/system/core-health', CoreHealthResponseSchema);
         if (cancelled) return;
         setDegraded(Array.isArray(data.degraded) ? data.degraded : []);
       } catch {

@@ -48,7 +48,10 @@ export default function ConfirmModal({
     onConfirm();
   };
 
-  useEscapeKey(() => { if (!isLoading) handleCancel(); }, isOpen);
+  // `topMostOnly` joins the shared overlay stack instead of registering an
+  // independent window listener, so one Escape pops exactly this layer and the
+  // panel that opened the confirmation stays put until the next press (#2774).
+  useEscapeKey(() => { if (!isLoading) handleCancel(); }, isOpen, true);
 
   useEffect(() => {
     if (!isOpen) return;

@@ -128,6 +128,49 @@ describe('useSocket — connect_error handling', () => {
     }
   });
 
+  it('kicks a stalled initial connect ONCE for N mounted consumers (#2772)', () => {
+    vi.useFakeTimers();
+    const mounted: { unmount: () => void }[] = [];
+    try {
+      fakeSocket.connected = false;
+      // The root layout mounts several `useSocket()` consumers together
+      // (DigitalTwinProvider, ServerIdentityWatcher, useConnectionStatus).
+      // Each used to schedule its own retry timer, so a stalled handshake
+      // got torn down once per consumer.
+      for (let i = 0; i < 3; i += 1) mounted.push(renderHook(() => useSocket()));
+      fakeSocket.connect.mockClear();
+      fakeSocket.disconnect.mockClear();
+
+      vi.advanceTimersByTime(3000);
+      expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
+      expect(fakeSocket.connect).toHaveBeenCalledTimes(1);
+    } finally {
+      for (const m of mounted) m.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the shared kick alive when one of several consumers unmounts (#2772)', () => {
+    vi.useFakeTimers();
+    try {
+      fakeSocket.connected = false;
+      const first = renderHook(() => useSocket());
+      const second = renderHook(() => useSocket());
+      fakeSocket.connect.mockClear();
+      fakeSocket.disconnect.mockClear();
+
+      // A single consumer unmounting must not cancel the timer the others
+      // are still relying on — only the last one out clears it.
+      first.unmount();
+      vi.advanceTimersByTime(3000);
+      expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
+      expect(fakeSocket.connect).toHaveBeenCalledTimes(1);
+      second.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('exposes the disconnect reason so the UI can judge how alarming it is (#2398)', () => {
     const { result } = renderHook(() => useSocket());
     expect(result.current.disconnectReason).toBeNull();

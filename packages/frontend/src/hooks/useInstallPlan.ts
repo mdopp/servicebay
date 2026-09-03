@@ -22,6 +22,8 @@
 'use client';
 
 import { useCallback, useState } from 'react';
+import { z } from 'zod';
+import { apiFetch } from '@servicebay/api-client';
 
 /** Frontend mirror of the backend `InstallPlan` shape (see
  *  `packages/backend/src/lib/install/installPlan.ts`). Declared locally
@@ -53,6 +55,27 @@ interface UninstallResult {
   error?: string;
 }
 
+const InstallPlanChangeSchema = z.object({
+  stack: z.string(),
+  templates: z.array(z.string()),
+});
+
+const InstallPlanSchema = z.object({
+  install: z.array(InstallPlanChangeSchema).optional(),
+  reinstall: z.array(InstallPlanChangeSchema).optional(),
+  uninstall: z.array(z.object({ stack: z.string() })).optional(),
+  blocked: z.array(z.object({ stack: z.string(), reason: z.string() })).optional(),
+  templatesToDeploy: z.array(z.string()).optional(),
+  noop: z.boolean().optional(),
+});
+
+const UninstallResponseSchema = z.object({
+  ok: z.boolean().optional(),
+  error: z.string().optional(),
+  failed: z.array(z.object({ template: z.string(), error: z.string() })).optional(),
+  deleted: z.array(z.string()).optional(),
+}).passthrough();
+
 export interface UseInstallPlanReturn {
   /** Last resolved plan, or null before the first fetch. */
   plan: InstallPlan | null;
@@ -74,7 +97,7 @@ export interface UseInstallPlanReturn {
  *  the hook can route the message into `error`. Normalizes a missing
  *  array (truncated/legacy body) to `[]` so callers iterate safely. */
 async function postPlan(desired: string[], reinstall: string[], node?: string): Promise<InstallPlan> {
-  const res = await fetch('/api/install/plan', {
+  const res = await apiFetch('/api/install/plan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ desired, reinstall, node }),
@@ -83,14 +106,18 @@ async function postPlan(desired: string[], reinstall: string[], node?: string): 
     const data = await res.json().catch(() => ({}));
     throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`);
   }
-  const raw = (await res.json()) as Partial<InstallPlan>;
+  const raw = (await res.json()) as Partial<z.infer<typeof InstallPlanSchema>>;
+  const parsed = InstallPlanSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error('Invalid response format from /api/install/plan');
+  }
   return {
-    install: raw.install ?? [],
-    reinstall: raw.reinstall ?? [],
-    uninstall: raw.uninstall ?? [],
-    blocked: raw.blocked ?? [],
-    templatesToDeploy: raw.templatesToDeploy ?? [],
-    noop: raw.noop ?? true,
+    install: parsed.data.install ?? [],
+    reinstall: parsed.data.reinstall ?? [],
+    uninstall: parsed.data.uninstall ?? [],
+    blocked: parsed.data.blocked ?? [],
+    templatesToDeploy: parsed.data.templatesToDeploy ?? [],
+    noop: parsed.data.noop ?? true,
   };
 }
 
@@ -98,15 +125,24 @@ async function postPlan(desired: string[], reinstall: string[], node?: string): 
  *  box refuses core/atomic-wipe stacks (Factory-Reset-only) with a 400. */
 async function postUninstall(stack: string, node?: string): Promise<UninstallResult> {
   try {
-    const res = await fetch(`/api/system/stacks/${encodeURIComponent(stack)}/wipe`, {
+    const url = `/api/system/stacks/${encodeURIComponent(stack)}/wipe`;
+    const res = await apiFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirm: `WIPE-${stack}`, node }),
     });
-    const data = await res.json().catch(() => ({}));
+    const raw = (await res.json().catch(() => ({}))) as z.infer<typeof UninstallResponseSchema>;
+
+    // Validate against schema
+    const parsed = UninstallResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { ok: false, error: `Failed to uninstall: invalid response format` };
+    }
+    const data = parsed.data;
+
     if (!res.ok || data.ok === false) {
       const failedMsg = Array.isArray(data.failed) && data.failed.length > 0
-        ? data.failed.map((f: { template: string; error: string }) => `${f.template}: ${f.error}`).join('; ')
+        ? data.failed.map((f) => `${f.template}: ${f.error}`).join('; ')
         : undefined;
       return { ok: false, error: (typeof data.error === 'string' ? data.error : failedMsg) ?? `HTTP ${res.status}` };
     }

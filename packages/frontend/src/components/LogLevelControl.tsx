@@ -1,10 +1,18 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { z } from 'zod';
 import { Settings, AlertCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
-import { humanizeError } from '@servicebay/api-client';
+import { humanizeError, typedFetch } from '@servicebay/api-client';
 import { Field } from '@/components/ui';
+
+// Zod schemas for API responses
+const LogLevelResponseSchema = z.object({
+  success: z.boolean(),
+  logLevel: z.string().optional(),
+  error: z.string().optional(),
+});
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -22,10 +30,9 @@ export default function LogLevelControl() {
   useEffect(() => {
     const loadLogLevel = async () => {
       try {
-        const response = await fetch('/api/settings/logLevel');
-        const data = await response.json();
+        const data = await typedFetch('/api/settings/logLevel', LogLevelResponseSchema);
         if (data.success) {
-          setLogLevel(data.logLevel);
+          setLogLevel(data.logLevel as LogLevel);
         }
       } catch (err) {
         console.error('Failed to load log level:', err);
@@ -40,13 +47,15 @@ export default function LogLevelControl() {
   const persistLogLevel = async (nextLevel: LogLevel) => {
     setSaving(true);
     try {
-      const response = await fetch('/api/settings/logLevel', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ logLevel: nextLevel })
-      });
-
-      const data = await response.json();
+      const data = await typedFetch(
+        '/api/settings/logLevel',
+        LogLevelResponseSchema,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ logLevel: nextLevel })
+        }
+      );
       if (data.success) {
         addToast('success', 'Log Level Updated', `Log level changed to ${nextLevel}`);
       } else {

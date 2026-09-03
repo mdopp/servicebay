@@ -46,7 +46,12 @@ type BackupSyncState = {
   smbShare: string;
   smbPath: string;
   smbUsername: string;
+  /** Write-only: the stored secret is never sent to the browser (#2771). A
+   *  blank value on save means "keep what is stored". */
   smbPassword: string;
+  /** Whether the box has an smb password stored, so the form can say so
+   *  without ever holding the value (#2771). */
+  smbHasPassword: boolean;
   nfsHost: string;
   nfsExport: string;
   nfsPath: string;
@@ -87,7 +92,7 @@ export function useBackupState() {
     targetType: 'local',
     localPath: '/mnt/backup',
     sshHost: '', sshPort: '22', sshUser: 'root', sshPath: '/backup', sshIdentityFile: '/app/data/ssh/id_rsa',
-    smbHost: '', smbShare: '', smbPath: '', smbUsername: '', smbPassword: '',
+    smbHost: '', smbShare: '', smbPath: '', smbUsername: '', smbPassword: '', smbHasPassword: false,
     nfsHost: '', nfsExport: '', nfsPath: '',
     sources: [{ path: '/mnt/data', excludePatterns: '' }],
   });
@@ -170,7 +175,11 @@ export function useBackupState() {
           smbShare: t.type === 'smb' ? t.share : prev.smbShare,
           smbPath: t.type === 'smb' ? (t.path ?? '') : prev.smbPath,
           smbUsername: t.type === 'smb' ? (t.username ?? '') : prev.smbUsername,
-          smbPassword: t.type === 'smb' ? (t.password ?? '') : prev.smbPassword,
+          // The GET reports `hasPassword`, never the value (#2771) — reset the
+          // editor field so a save that doesn't touch it sends blank, which the
+          // route reads as "keep the stored secret".
+          smbPassword: t.type === 'smb' ? '' : prev.smbPassword,
+          smbHasPassword: t.type === 'smb' ? Boolean(t.hasPassword) : prev.smbHasPassword,
           nfsHost: t.type === 'nfs' ? t.host : prev.nfsHost,
           nfsExport: t.type === 'nfs' ? t.export : prev.nfsExport,
           nfsPath: t.type === 'nfs' ? (t.path ?? '') : prev.nfsPath,

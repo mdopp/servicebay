@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { z } from 'zod';
+import { typedFetch } from '@servicebay/api-client';
 
 /**
  * Re-poll schedule (ms) used by `verifyAfterUpdate` after a successful update
@@ -30,9 +32,17 @@ export interface ServiceImageUpdate {
   updateAvailable: boolean;
 }
 
-interface ImageUpdatesResponse {
-  services: ServiceImageUpdate[];
-}
+const ServiceImageUpdateSchema = z.object({
+  service: z.string(),
+  image: z.string(),
+  runningDigest: z.string().nullable(),
+  registryDigest: z.string().nullable(),
+  updateAvailable: z.boolean(),
+});
+
+const ImageUpdatesResponseSchema = z.object({
+  services: z.array(ServiceImageUpdateSchema),
+});
 
 /**
  * Fetch the per-service image-update report once on mount. Distinct from the
@@ -57,9 +67,7 @@ export function useImageUpdates() {
    */
   const refresh = useCallback(async (): Promise<number | null> => {
     try {
-      const res = await fetch('/api/system/stacks/image-updates', { cache: 'no-store' });
-      if (!res.ok) return null;
-      const data: ImageUpdatesResponse = await res.json();
+      const data = await typedFetch('/api/system/stacks/image-updates', ImageUpdatesResponseSchema, { cache: 'no-store' });
       const services = Array.isArray(data?.services) ? data.services : [];
       setUpdates(services);
       return services.filter(u => u.updateAvailable).length;

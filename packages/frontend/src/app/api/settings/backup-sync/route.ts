@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getConfig, updateConfig } from '@/lib/config';
 import { runBackup, getBackupHistory, isBackupRunning, testBackupTarget, scheduleBackup } from '@/lib/backup/service';
 import type { BackupConfig, BackupTarget } from '@/lib/backup/types';
-import { resolveBackupSources } from '@/lib/backup/types';
+import { resolveBackupSources, redactBackupConfig, preserveBackupTargetSecrets } from '@/lib/backup/types';
 import { HealthStore } from '@/lib/health/store';
 import { withApiHandler } from '@/lib/api/handler';
 import crypto from 'crypto';
@@ -30,12 +30,15 @@ function ensureBackupHealthCheck(enabled: boolean) {
   }
 }
 
-// GET — Return backup config + recent history + status
+// GET — Return backup config + recent history + status. The target's stored
+// smb password is masked to a `hasPassword` flag (#2771): the settings load
+// must never round-trip the live secret into the browser, so the form shows
+// "a password is stored" and the operator overwrites it to change it.
 export const GET = withApiHandler({}, async () => {
   const config = await getConfig();
   const history = await getBackupHistory();
   return NextResponse.json({
-    config: config.backup || null,
+    config: config.backup ? redactBackupConfig(config.backup) : null,
     history: history.slice(0, 20),
     running: isBackupRunning(),
   });
@@ -59,7 +62,16 @@ export const POST = withApiHandler({ body: PostBody }, async ({ body }) => {
       if (!backupConfig) {
         return NextResponse.json({ error: 'config is required' }, { status: 400 });
       }
-      await updateConfig({ backup: backupConfig });
+      // The form never holds the stored password, so a save that left the
+      // field alone sends it blank — keep the stored secret rather than
+      // wiping it (#2771).
+      const existing = await getConfig();
+      await updateConfig({
+        backup: {
+          ...backupConfig,
+          target: preserveBackupTargetSecrets(backupConfig.target, existing.backup?.target),
+        },
+      });
       ensureBackupHealthCheck(backupConfig.enabled);
       scheduleBackup();
       return NextResponse.json({ success: true });
@@ -84,7 +96,9 @@ export const POST = withApiHandler({ body: PostBody }, async ({ body }) => {
       // guard Run does (#1612) — a target on the source's filesystem is refused.
       const cfg = await getConfig();
       const sources = cfg.backup ? resolveBackupSources(cfg.backup) : [];
-      const result = await testBackupTarget(target, sources);
+      // Same blank-means-stored rule as save (#2771), so Test still works on a
+      // target whose password the operator never re-typed.
+      const result = await testBackupTarget(preserveBackupTargetSecrets(target, cfg.backup?.target), sources);
       return NextResponse.json(result);
     }
   }

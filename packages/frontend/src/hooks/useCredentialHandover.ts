@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { credentialReceipt } from '@servicebay/api-client';
+import { z } from 'zod';
+import { credentialReceipt, typedFetch } from '@servicebay/api-client';
 
 /**
  * Browser half of the forced credential hand-over (#2560).
@@ -23,6 +24,19 @@ type SaveFilePicker = (opts: {
   suggestedName?: string;
   types?: { description: string; accept: Record<string, string[]> }[];
 }) => Promise<{ createWritable: () => Promise<{ write: (d: BlobPart) => Promise<void>; close: () => Promise<void> }> }>;
+
+const CredentialHandoverOfferSchema = z.object({
+  pending: z.number(),
+  token: z.string().optional(),
+  filename: z.string().optional(),
+  csv: z.string().optional(),
+  error: z.string().optional(),
+});
+
+const CredentialHandoverConfirmSchema = z.object({
+  ok: z.boolean().optional(),
+  dropped: z.number().optional(),
+});
 
 export type HandoverOutcome =
   | { status: 'delivered'; dropped: number }
@@ -74,11 +88,9 @@ const message = (e: unknown): string => {
 };
 
 async function runCredentialHandover(): Promise<HandoverOutcome> {
-  let offer: { pending: number; token?: string; filename?: string; csv?: string };
+  let offer: z.infer<typeof CredentialHandoverOfferSchema>;
   try {
-    const res = await fetch('/api/system/credentials/handover', { method: 'POST' });
-    offer = await res.json();
-    if (!res.ok) return { status: 'failed', message: (offer as { error?: string }).error || `HTTP ${res.status}` };
+    offer = await typedFetch('/api/system/credentials/handover', CredentialHandoverOfferSchema, { method: 'POST' });
   } catch (e) {
     return { status: 'failed', message: message(e) };
   }
@@ -93,13 +105,12 @@ async function runCredentialHandover(): Promise<HandoverOutcome> {
   // Only now, holding the whole file and having written it without error,
   // do we tell the server it may forget these passwords.
   try {
-    const res = await fetch('/api/system/credentials/handover/confirm', {
+    const data = await typedFetch('/api/system/credentials/handover/confirm', CredentialHandoverConfirmSchema, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: offer.token, receipt: credentialReceipt(offer.csv) }),
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) {
+    if (!data.ok) {
       return {
         status: 'failed',
         message: 'The saved file did not match what ServiceBay sent, so nothing was deleted. Please download it again.',
