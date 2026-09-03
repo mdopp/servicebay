@@ -55,7 +55,10 @@ function installFetch(opts: {
       return jsonRes(opts.offer ?? { pending: 1, token: 'tok-1', filename: 'creds.csv', csv: CSV });
     }
     if (url === '/api/system/credentials') {
-      return jsonRes({ manifest: { savedAt: 'now', credentials: opts.credentials }, proxyHosts: [] });
+      // Matches the real route body exactly (`proxyHosts` + `publicDomain`
+      // are always present, #1626/#1627) — the typed client validates the
+      // full shape now, where the old bare `fetch()` only read `.manifest`.
+      return jsonRes({ manifest: { savedAt: 'now', credentials: opts.credentials }, proxyHosts: [], publicDomain: null });
     }
     throw new Error(`unexpected fetch: ${url}`);
   }) as any;
@@ -216,7 +219,7 @@ describe('CredentialHandoverGate — deletion is gated on proven delivery', () =
         calls.confirm.push(JSON.parse(String(init?.body)));
         return jsonRes({ ok: true, dropped: 1 });
       }
-      return jsonRes({ manifest: { savedAt: 'now', credentials: [PENDING] }, proxyHosts: [] });
+      return jsonRes({ manifest: { savedAt: 'now', credentials: [PENDING] }, proxyHosts: [], publicDomain: null });
     });
     stubSave('ok');
     render(<CredentialHandoverGate />);
