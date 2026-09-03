@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import { useToast } from '@/providers/ToastProvider';
+import { fetchSystemBackups, fetchBackupSyncState, fetchExternalBackupList } from '@servicebay/api-client';
 import type { BackupLogEntry, BackupPreviewResult } from '@/lib/systemBackup';
 import type { SystemBackupEntrySummary } from './helpers';
 
@@ -123,12 +124,7 @@ export function useBackupState() {
   const fetchBackups = useCallback(async () => {
     setBackupsLoading(true);
     try {
-      const res = await fetch('/api/settings/backups');
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Unable to load backups');
-      }
-      const data: SystemBackupEntrySummary[] = await res.json();
+      const data: SystemBackupEntrySummary[] = await fetchSystemBackups();
       setBackups(data);
     } catch (error) {
       console.error(error);
@@ -141,9 +137,7 @@ export function useBackupState() {
 
   const fetchBackupSync = useCallback(async () => {
     try {
-      const res = await fetch('/api/settings/backup-sync');
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await fetchBackupSyncState();
       if (data.config) {
         const c = data.config;
         const t = c.target || { type: 'local', path: '/mnt/backup' };
@@ -197,10 +191,9 @@ export function useBackupState() {
   const fetchNasOverview = useCallback(async () => {
     setNasLoading(true);
     try {
-      const res = await fetch('/api/system/external-backup/list');
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Unable to read NAS backups');
-      setNasOverview({ configured: data.configured, connection: data.connection, backups: data.backups ?? [], schedule: data.schedule });
+      const data = await fetchExternalBackupList();
+      if (!data.ok) throw new Error(data.error || 'Unable to read NAS backups');
+      setNasOverview({ configured: data.registered, connection: data.connected ? { ok: true } : { ok: false, error: 'Not connected' }, backups: data.backups ?? [], schedule: data.schedule });
     } catch (error) {
       console.error(error);
       setNasOverview({ configured: false, connection: null, backups: [] });

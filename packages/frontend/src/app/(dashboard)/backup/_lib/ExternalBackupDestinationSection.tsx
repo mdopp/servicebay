@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Button, Input, Textarea } from '@/components/ui';
+import { fetchExternalBackupTarget, saveExternalBackupTarget, testExternalBackupTarget } from '@servicebay/api-client';
 import type { ExternalBackupTarget } from '@/lib/config';
 
 type TargetType = 'fritzbox' | 'ftp' | 'ssh';
@@ -225,9 +226,9 @@ export default function ExternalBackupDestinationSection({ onSaved }: { onSaved?
   const set = (patch: Partial<FormState>) => setForm(prev => ({ ...prev, ...patch }));
 
   useEffect(() => {
-    fetch('/api/system/external-backup/target')
-      .then(r => (r.ok ? r.json() : null))
-      .then((data: { target: TargetView } | null) => {
+    (async () => {
+      try {
+        const data = await fetchExternalBackupTarget();
         if (!data?.target) return;
         const t = data.target;
         setView(t);
@@ -240,8 +241,12 @@ export default function ExternalBackupDestinationSection({ onSaved }: { onSaved?
           secure: !!t.secure,
           dir: t.dir ?? '',
         });
-      })
-      .finally(() => setBusy(null));
+      } catch {
+        // ignore
+      } finally {
+        setBusy(null);
+      }
+    })();
   }, []);
 
   const submit = async (action: 'save' | 'test') => {
@@ -251,27 +256,23 @@ export default function ExternalBackupDestinationSection({ onSaved }: { onSaved?
     }
     setBusy(action);
     try {
-      const res = await fetch('/api/system/external-backup/target', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, target: buildTarget(form) }),
-      });
-      const data = await res.json().catch(() => ({}));
+      const target = buildTarget(form);
       if (action === 'test') {
-        if (data.ok) addToast('success', 'Connected to the backup destination');
-        else addToast('error', 'Connection test failed', data.error || `HTTP ${res.status}`);
+        const data = await testExternalBackupTarget(target);
+        if (data.success) addToast('success', 'Connected to the backup destination');
+        else addToast('error', 'Connection test failed', data.message);
         return;
       }
-      if (!res.ok) {
-        addToast('error', 'Could not save destination', data.error || `HTTP ${res.status}`);
-        return;
-      }
+      await saveExternalBackupTarget(target);
       addToast('success', 'Backup destination saved');
       set({ password: '', privateKey: '' });
       // Refresh the masked view + let the parent re-probe.
-      const refreshed = await fetch('/api/system/external-backup/target').then(r => (r.ok ? r.json() : null));
+      const refreshed = await fetchExternalBackupTarget();
       if (refreshed?.target) setView(refreshed.target);
       onSaved?.();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Unknown error';
+      addToast('error', 'Operation failed', message);
     } finally {
       setBusy(null);
     }

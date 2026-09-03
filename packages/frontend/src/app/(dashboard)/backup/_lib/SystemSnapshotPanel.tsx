@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Button, Table } from '@/components/ui';
+import { createSystemBackupStream, deleteSystemBackup, restoreSystemBackup } from '@servicebay/api-client';
 import ConfirmModal from '@/components/ConfirmModal';
 import {
   formatBytes,
@@ -65,7 +66,7 @@ export default function SystemSnapshotPanel({ state, scheduleLine, openRestoreOv
     let errorMessage: string | null = null;
 
     try {
-      const res = await fetch('/api/settings/backups', { method: 'POST' });
+      const res = await createSystemBackupStream();
       if (!res.body) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || 'Streaming not supported by server');
@@ -136,13 +137,7 @@ export default function SystemSnapshotPanel({ state, scheduleLine, openRestoreOv
     if (!deleteTarget || deletingBackup) return;
     setDeletingBackup(true);
     try {
-      const res = await fetch('/api/settings/backups', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName: deleteTarget.fileName }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Unable to delete backup');
+      await deleteSystemBackup(deleteTarget.fileName);
       addToast('success', 'Backup deleted', `${deleteTarget.fileName} has been removed.`);
       await fetchBackups();
     } catch (error) {
@@ -159,15 +154,7 @@ export default function SystemSnapshotPanel({ state, scheduleLine, openRestoreOv
     setRestoringLatest(true);
     try {
       const latest = backups[0];
-      const res = await fetch('/api/settings/backups/restore', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName: latest.fileName }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Restore failed');
-      }
+      await restoreSystemBackup({ fileName: latest.fileName });
       addToast('success', 'Restore complete', `Restored from ${latest.fileName}`);
       await fetchBackups();
     } catch (e) {
