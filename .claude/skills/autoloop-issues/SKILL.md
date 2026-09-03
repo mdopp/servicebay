@@ -26,9 +26,9 @@ Why this shape: each sub-agent starts cold and returns only a one-line summary, 
   DOCS-COHERENCE runs as a separate parallel /loop (own worktree, disjoint fileset) — not dispatched here.
 ```
 
-The user's recurring rules (in `~/.claude/projects/-home-mdopp-servicebay/memory/MEMORY.md`) override anything in this skill if they conflict. Read it before the first iteration of a fresh /loop run.
+If the harness has session memory loaded for this project, it overrides anything in this skill on conflict — read it before the first iteration of a fresh /loop run. There is no fixed path to it: it lives outside this checkout (a per-machine, per-user directory), so a fresh clone carries none, and this skill must stand on its own without it.
 
-**The ServiceBay box is a dev/test target for this loop, not production — exercise it freely.** Stage agents use SSH, the MCP token, the HTTP API, and Playwright/Chrome to implement and verify changes, and flip the `:dev` channel without hesitation. **Do not ask the user for permission to use or flip the box** (access: memory `reference_mcp_servicebay_access`).
+**The ServiceBay box is a dev/test target for this loop, not production — exercise it freely.** Stage agents use the MCP token, the HTTP API, and Playwright/Chrome to implement and verify changes, and flip the `:dev` channel without hesitation. **Do not ask the user for permission to use or flip the box** (address, working token, self-check: assist `footgun-mcp-from-a-container-on-the-box`).
 
 ## State — GitHub is the source of truth; a broker keeps a tiny local cache
 
@@ -224,6 +224,6 @@ You never hand-prune anything — `scripts/autoloop-queue.ts` enforces it on eve
 - State broker: `scripts/autoloop-queue.ts` (`npm run autoloop:queue -- <verb>`); tests + the double-claim proof in `scripts/autoloop-queue.test.ts`.
 - Parallel docs loop: `.claude/skills/docs-coherence/SKILL.md` (run as its own `/loop /docs-coherence`).
 - Cross-repo sibling running the same design (its broker is `queue.py`): `mdopp/solarisbay` `.claude/skills/autoloop-issues/`. Portable shape + footguns: assist `autoloop-issue-pipeline`.
-- Memory index: `~/.claude/projects/-home-mdopp-servicebay/memory/MEMORY.md`.
-- Real-box access: memory `reference_mcp_servicebay_access`. `<SERVICEBAY_BOX>` lives there, not in this public repo.
+- Real-box access from a sandbox running on the box (address, the token that works vs. the one that 401s, self-check): assist `footgun-mcp-from-a-container-on-the-box`.
+- Pipeline mechanics learned the hard way (gate-tally-not-exit-code, `:dev` flip-back recovery, release-please's fix/feat-only + no-CI-checks shape, the god-module-split footguns): assist `autoloop-issue-pipeline`.
 - Release flow: release-please PR on `release-please--branches--main--components--servicebay`.

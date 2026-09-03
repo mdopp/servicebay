@@ -154,6 +154,48 @@ that ref, applied only after it is won. Then:
   config over a measurement you don't control — and fixture the *misleading* real values
   in the test so the regression can't return.
 
+## Mechanics that are easy to get wrong
+
+- **A compound gate command's exit code lies.** `lint && typecheck && check:arch && test`
+  can exit `0` while the vitest tally line underneath reads `1 failed | 601 passed` —
+  a shared runner config can let one bad suite's failure not propagate the way you'd
+  expect through the `&&` chain. **Read the tally line, never trust the exit code alone**,
+  before sealing a batch or reporting a gate green.
+- **The local fast/full gate is not the same set CI runs.** It does not run `knip` or
+  `check:invariants` — CI does. A stale `node_modules` can additionally make the local
+  gate pass when a clean install would fail. Local-green is necessary, not sufficient;
+  CI is still the real gate.
+- **release-please only bumps on `fix:`/`feat:` commits.** A batch made entirely of
+  `refactor:`/`test:`/`docs:` commits produces **no release PR** — a verify step that
+  waits for one waits forever; check the commit mix before expecting a release PR to
+  appear. The release PR itself reports **no CI checks** (`mergeStateStatus: UNSTABLE`)
+  by design — merging it once the box-verify is green (not once CI is green — there is
+  none) is correct, not a workaround.
+- **A `:dev` flip-back interruption is recoverable, not fatal.** If the process running
+  the dev-verify harness dies mid-run, the box can be left on `:dev` (the `finally` that
+  flips it back never executes because the process is gone). Recovery is to **re-invoke
+  the same harness with the same SHA and a trivial probe** — flipping an
+  already-`:dev` box to `:dev` is a no-op, so the re-run proceeds straight to
+  flip-back. The channel-flip call itself can also fail mid-run ("Agent disconnected",
+  a timeout) without killing the process; the harness's `finally` still attempts the
+  flip-back on that path, so a failed flip call is not a reason to hand-flip — re-run
+  the harness, don't "help" it. The box must never be left stranded on `:dev`.
+- **Cutting a god module into a directory breaks two things silently.** (1) a
+  dependency-cruiser rule keyed on the old single-file path needs to become a
+  **directory-prefix** rule (e.g. one entry point rule covering every file under the new
+  directory), or the boundary check stops covering the split code; (2) any test that
+  **source-greps the old file** for a marker (a constant name, an export) keeps compiling
+  and keeps passing green on the wrong assumption — the grep just stops matching, silently,
+  because the string moved with the code to a new path. `git grep <the moved marker>`
+  across `tests/` before sealing a module split, not after a red CI catches it. The
+  file-size ratchet the split is presumably shrinking (`MAX_FILE_LOC` in
+  `scripts/check-invariants.ts`) names the files still over budget — keep it in sync.
+- **`restore_trashed_service` starts the unit now (fixed by #2756).** Older assumptions
+  had it leaving the restored unit `inactive`, requiring a manual start before a "restore
+  and check" verify would see anything running. Today it starts the unit itself and
+  reports `startup: "active"|"converging"|"failed"|"error"` in its result — treat
+  `converging` as "not finished yet, poll `list_services`", not as a failure.
+
 ## Human attention goes to one place
 
 Design so the operator's whole job is answering specific questions. Every ambiguous

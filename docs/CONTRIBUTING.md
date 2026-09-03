@@ -7,6 +7,12 @@ recipe plus a working example already in the tree to crib from.
 For the surrounding context — runtime topology, module boundaries, install
 flow — read [`ARCHITECTURE.md`](./ARCHITECTURE.md) first. For *why* the
 diagnose probe shape exists, read [`UX_PHILOSOPHY.md`](./UX_PHILOSOPHY.md).
+Before deciding anything about auth, networking, backups, installs, tokens,
+releases or the runtime, check the assist catalog for an ADR first
+(`assists/adr-*.md`, browsed via the `list_assists`/`get_assist` MCP tools or
+straight off disk) — see `CLAUDE.md`. Running as an agent inside a container
+**on** the box itself and `/mcp` or the API won't answer the way you expect?
+That's assist `footgun-mcp-from-a-container-on-the-box`, not a DNS/TLS problem.
 
 ## Dev environment
 

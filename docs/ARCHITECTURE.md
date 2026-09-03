@@ -1,5 +1,12 @@
 # Architecture (Target V4.1 - Reactive Digital Twin)
 
+> New here? The *why* behind a decision, not just the *what*, lives in the
+> assist catalog as ADRs — `assists/adr-*.md`, read via the `list_assists` /
+> `get_assist` MCP tools or straight off disk (`docs/adr/README.md` is the
+> index; see `CLAUDE.md`). Running as an agent in a container on the box
+> itself? Read assist `footgun-mcp-from-a-container-on-the-box` before you
+> conclude the MCP endpoint needs a DNS or TLS fix.
+
 ## Self-enforcing rubric
 
 The invariants below are no longer enforced by quarterly review — they're mechanically checked on every PR. See [`ARCHITECTURE_INVARIANTS.md`](ARCHITECTURE_INVARIANTS.md) for the rubric, current thresholds, ratchet targets, and how to change a threshold deliberately.

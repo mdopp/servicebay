@@ -44,6 +44,7 @@ Then the branch:
 - Smallest change that satisfies the unit's `acceptance`. **No** drive-by refactors, **no** new abstractions, **no** "improve while I'm here." CLAUDE.md: *"Three similar lines is better than a premature abstraction."*
 - `[Refactor]`-titled units: stay within the file/module named; a neighbouring file needs its own PR, not a drive-by.
 - **Invariant ratchet** (`docs/ARCHITECTURE_INVARIANTS.md`): when you resolve an exemption, *tighten* `scripts/check-invariants.ts` / `.dependency-cruiser.cjs`. Never loosen.
+- **Cutting a god module into a directory:** update the depcruise rule to a directory-prefix rule and `git grep` the tests for any path/marker string that just moved, *before* the fast gate — both break silently otherwise (assist `autoloop-issue-pipeline`, "Mechanics that are easy to get wrong").
 
 ### 3a. Acceptance-criteria self-verify — built ≠ done (memory `feedback_acceptance_criteria_must_gate_close`)
 When the unit carries **explicit acceptance criteria** — a spec §N checklist (e.g. `docs/ux/settings-ia-redesign.md` §10) or an issue **acceptance section** — "built" is not the report. Before you set the unit `built`, **verify EACH criterion against the actual code/browser** and report **per-criterion status** (✓ met / ✗ unmet / ? owed-to-box). CI proves "compiles + the written tests pass," **not** "the documented criteria are met" — a partial build passes CI cleanly when the unbuilt criteria have no test encoding them (this is exactly how #2030's 4-noun nav was closed "done" while the nav still rendered 8 items).
@@ -64,7 +65,7 @@ npm run typecheck       # tsc --noEmit — SAME as CI's typecheck job; vitest do
 npm run check:arch      # invariants + depcruise — must pass
 npx vitest run --changed   # tests transitively affected by this unit's changes
 ```
-`--changed` reads the uncommitted working tree, so run it **before** committing. A real failure → fix the root cause; **never** mock around it or skip it (memory `feedback_vitest_fetch_response_reuse`, `feedback_test_local_node_match_ci`). Lint count up → fix before committing.
+`--changed` reads the uncommitted working tree, so run it **before** committing. A real failure → fix the root cause; **never** mock around it or skip it (memory `feedback_vitest_fetch_response_reuse`, `feedback_test_local_node_match_ci`). Lint count up → fix before committing. **Read the vitest tally line, not just the command's exit code** — a compound `&&` gate can exit `0` while the tally underneath reads a failure (assist `autoloop-issue-pipeline`). This matters even more at the seal's full-suite run (below).
 
 ### 5. Commit to the batch branch (no push)
 - Conventional Commits; scope mirrors the path (`fix(portal):`, `refactor(dashboards):`, …).
