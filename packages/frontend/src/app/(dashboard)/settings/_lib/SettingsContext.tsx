@@ -13,7 +13,6 @@ import {
 import { useRouter } from 'next/navigation';
 import SSHSetupModal from '@/components/SSHSetupModal';
 import { useToast } from '@/providers/ToastProvider';
-import { AppConfig } from '@/lib/config';
 import { PodmanConnection } from '@/lib/nodes';
 import {
   fetchNodes,
@@ -23,6 +22,10 @@ import {
   setNodeAsDefault,
   checkConnection,
   checkFullConnection,
+  fetchSettingsView,
+  saveSettingsView,
+  TypedFetchError,
+  type SettingsViewUpdate,
 } from '@servicebay/api-client';
 import {
   DEFAULT_TEMPLATE_SCHEMA,
@@ -260,9 +263,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const refreshConfig = useCallback(async () => {
     try {
-      const res = await fetch('/api/settings');
-      if (!res.ok) throw new Error('Failed to fetch config');
-      const data: AppConfig = await res.json();
+      const data = await fetchSettingsView();
 
       if (data.registries) {
         if (Array.isArray(data.registries)) {
@@ -276,8 +277,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
       setServerName(data.serverName || '');
 
-      const response = data as AppConfig & { templateSettingsSchema?: Record<string, TemplateSettingsSchemaEntry> };
-      const schema = response.templateSettingsSchema || DEFAULT_TEMPLATE_SCHEMA;
+      const schema = data.templateSettingsSchema || DEFAULT_TEMPLATE_SCHEMA;
       const defaults = Object.fromEntries(
         Object.entries(schema).map(([k, v]) => [k, v.default ?? '']),
       ) as Record<string, string>;
@@ -344,7 +344,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
           to: emailOverrides.to ?? emailRecipients,
         };
 
-        const newConfig: Partial<AppConfig> = {
+        const newConfig: SettingsViewUpdate = {
           serverName: serverName || undefined,
           templateSettings: enforcedTemplateValues,
           registries: {
@@ -356,16 +356,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
           },
         };
 
-        const res = await fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newConfig),
-        });
-
-        if (!res.ok) {
-          const errorBody = await res.json().catch(() => ({}));
-          throw new Error(errorBody.error || 'Failed to save settings');
-        }
+        await saveSettingsView(newConfig);
 
         addToast('success', 'Settings saved', 'Your changes were stored.');
       } catch (error) {
@@ -373,7 +364,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         addToast(
           'error',
           'Failed to save settings',
-          error instanceof Error ? error.message : undefined,
+          error instanceof TypedFetchError || error instanceof Error ? error.message : undefined,
         );
       } finally {
         setSaving(false);

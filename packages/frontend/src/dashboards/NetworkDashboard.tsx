@@ -12,6 +12,7 @@ import type { ServiceViewModel } from '@servicebay/api-client';
 import { useServiceActions } from '@/hooks/useServiceActions';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import ServiceDetailSummary from '@/components/serviceDetail/ServiceDetailSummary';
+import { createNetworkEdge, deleteNetworkEdge, updateExternalLink } from '@servicebay/api-client';
 
 import { 
   ReactFlow, 
@@ -200,18 +201,13 @@ export default function NetworkDashboard() {
       setShowConnectionModal(false);
       
       try {
-        const res = await fetch('/api/network/edges', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                source: pendingConnection.source,
-                target: pendingConnection.target,
-                type: 'manual',
-                port: connectionPort
-            })
+        await createNetworkEdge({
+            source: pendingConnection.source,
+            target: pendingConnection.target,
+            type: 'manual',
+            port: connectionPort
         });
 
-        if (!res.ok) throw new Error('Failed');
         addToast('success', 'Connection created');
         fetchGraph(); // Rerender layout
       } catch {
@@ -791,20 +787,14 @@ export default function NetworkDashboard() {
             ? linkForm.ipTargetsText.split(',').map(s => s.trim()).filter(Boolean) 
             : [];
 
-        const res = await fetch(`/api/services/${encodeURIComponent(linkForm.name)}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                url: linkForm.url,
-                description: linkForm.description,
-                monitor: linkForm.monitor,
-                ipTargets,
-                type: 'link'
-            })
+        await updateExternalLink(linkForm.name, {
+            url: linkForm.url,
+            description: linkForm.description,
+            monitor: linkForm.monitor,
+            ipTargets,
+            type: 'link'
         });
 
-        if (!res.ok) throw new Error('Failed to update link');
-        
         addToast('success', 'Link updated successfully');
         setShowLinkModal(false);
         setLinkForm({ name: '', url: '', description: '', monitor: false, ipTargetsText: '' });
@@ -860,10 +850,7 @@ export default function NetworkDashboard() {
       }
       const originalId = (edgeInfo?.data as { originalId?: string })?.originalId || selectedEdge;
       try {
-          const res = await fetch(`/api/network/edges?id=${encodeURIComponent(originalId)}`, {
-              method: 'DELETE'
-          });
-          if (!res.ok) throw new Error('Failed to delete edge');
+          await deleteNetworkEdge(originalId);
           addToast('success', 'Connection removed');
           setSelectedEdge(null);
           fetchGraph();

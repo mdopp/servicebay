@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
+import { bulkRevokeApiTokens } from '@servicebay/api-client';
 import {
   isSelectable,
   tokensMatchingFilter,
@@ -31,18 +32,10 @@ export interface BulkRevokeReport {
  */
 async function postBulkRevoke(selection: TokenView[]): Promise<BulkRevokeReport> {
   const ids = selection.map(t => t.id);
-  const res = await fetch('/api/system/api-tokens/revoke', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids }),
-  });
-  const data = await res.json().catch(() => null);
-  if (!data || !Array.isArray(data.results)) {
-    throw new Error(data?.error || `Bulk revoke failed — HTTP ${res.status}`);
-  }
+  const data = await bulkRevokeApiTokens(ids);
   return {
-    requested: data.requested ?? ids.length,
-    revoked: data.revoked ?? 0,
+    requested: data.requested,
+    revoked: data.revoked,
     results: data.results as RevokeResult[],
     names: Object.fromEntries(selection.map(t => [t.id, t.name])),
   };

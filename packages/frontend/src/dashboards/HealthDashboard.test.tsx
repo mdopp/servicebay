@@ -21,7 +21,11 @@ const checks = [
     target: 'https://example.com',
     interval: 60,
     enabled: true,
+    created_at: new Date().toISOString(),
     status: 'ok',
+    lastRun: new Date().toISOString(),
+    lastResult: null,
+    history: [],
   },
 ];
 
@@ -208,7 +212,9 @@ describe('HealthDashboard (#2100 dashboards migration)', () => {
     expect(saveCalls).toBe(1);
 
     // Release the request; the button re-enables via the modal closing.
-    releaseSave(new Response('{}', { status: 200 }));
+    // POST /api/health/checks goes through `withApiHandler`, so a real
+    // response is enveloped `{ ok: true, data: <saved check> }`.
+    releaseSave(new Response(JSON.stringify({ ok: true, data: { ...checks[0], id: 'new' } }), { status: 200 }));
     await waitFor(() => expect(screen.queryByText('Create Health Check')).toBeNull());
   });
 });

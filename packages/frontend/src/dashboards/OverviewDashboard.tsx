@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Activity, AlertCircle, Boxes, CheckCircle2, Server } from 'lucide-react';
 import type { ServiceViewModel } from '@servicebay/api-client';
+import { getHealthChecks, getSystemUpdateStatus } from '@servicebay/api-client';
 import { useDigitalTwinContext } from '@/providers/DigitalTwinProvider';
 import { useCoreHealth } from '@/hooks/useCoreHealth';
 import { useImageUpdates, type ServiceImageUpdate } from '@/hooks/useImageUpdates';
@@ -78,9 +79,7 @@ function useDiagnoseOverview(): DiagnoseBreakdown {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/health/checks');
-        if (!res.ok) return;
-        const rows = (await res.json()) as EnrichedCheckRow[];
+        const rows = await getHealthChecks();
         if (cancelled) return;
         setBreakdown({ ...summarizeDiagnoseRows(rows), loaded: true });
       } catch (error) {
@@ -166,11 +165,7 @@ function useLastUpdated(): string | null {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/system/update');
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          config?: { autoUpdate?: { appliedImageUpdatedAt?: string } };
-        };
+        const data = await getSystemUpdateStatus();
         if (cancelled) return;
         setAppliedAt(data.config?.autoUpdate?.appliedImageUpdatedAt ?? null);
       } catch (error) {
