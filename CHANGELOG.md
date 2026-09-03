@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.26.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.25.1...servicebay-v5.26.0) (2026-09-03)
+
+
+### Features
+
+* **store:** version durable JSON stores behind defineStore ([ee615f4](https://github.com/mdopp/servicebay/commit/ee615f4735ff86fe43121d6b513f8895f61ab7b4)), closes [#2739](https://github.com/mdopp/servicebay/issues/2739)
+
 ## [5.25.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.25.0...servicebay-v5.25.1) (2026-09-03)
 
 
