@@ -71,6 +71,19 @@ export async function setServicebayChannel(channel: Channel): Promise<void> {
   // tag throws here and propagates to the caller instead of being swallowed in
   // a detached async (which left the box reporting the old channel, #2064).
   await executor.execSafe(['podman', 'pull', `${IMAGE}:${channel}`], { timeoutMs: 5 * 60 * 1000 });
+  // The pulled image is on disk and the OLD (still privileged) container is
+  // the one running this code — the only moment at which the quadlet's
+  // user-namespace mapping can be brought in line with the uid the NEW image
+  // declares before it starts (#2788). A no-op while both images run as root.
+  // Never fatal: a failure here just leaves the quadlet as it was, which is
+  // exactly today's behaviour.
+  try {
+    const { reconcileServicebayQuadletUserNs } = await import('@/lib/quadletUserNs');
+    const res = await reconcileServicebayQuadletUserNs(executor);
+    logger.info('channel', `servicebay.container UserNS reconcile before the swap: ${res.outcome} (${res.detail})`);
+  } catch (e) {
+    logger.error('channel', `UserNS reconcile before the swap failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
   await executor.execSafe(['systemctl', '--user', 'daemon-reload']);
   // Recreate + restart, detached: rm -f tears down the running container (us)
   // so the quadlet recreates it from the new image; the request returns first.
