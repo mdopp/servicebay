@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Globe, Home } from 'lucide-react';
+import { fetchCurrentUser } from '@servicebay/api-client';
 import { useSystemMode } from '@/hooks/useSystemMode';
 
 interface DomainTagProps {
@@ -27,9 +28,8 @@ function useResolvedUsername(supplied: string | null | undefined): string | null
   useEffect(() => {
     if (!needsSelfFetch) return;
     let cancelled = false;
-    fetch('/api/auth/me')
-      .then(r => (r.ok ? r.json() : null))
-      .then(d => { if (!cancelled && d?.authenticated && d.username) setSelfUser(d.username as string); })
+    fetchCurrentUser()
+      .then(d => { if (!cancelled && d.authenticated && d.username) setSelfUser(d.username); })
       .catch(() => { /* non-essential */ });
     return () => { cancelled = true; };
   }, [needsSelfFetch]);

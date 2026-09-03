@@ -4,6 +4,6 @@
   "rules": {
     "sb/no-raw-color-literal": 1,
     "sb/no-raw-ui-primitive": 84,
-    "sb/no-raw-api-fetch": 36
+    "sb/no-raw-api-fetch": 25
   }
 }

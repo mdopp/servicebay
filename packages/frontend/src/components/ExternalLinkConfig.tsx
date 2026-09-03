@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useToast } from '@/providers/ToastProvider';
 import { useRouter } from 'next/navigation';
 import { Link as LinkIcon, Save } from 'lucide-react';
+import { createExternalLink } from '@servicebay/api-client';
 import { Card, Button, Field } from '@/components/ui';
 
 const inputCls =
@@ -22,13 +23,7 @@ export default function ExternalLinkConfig() {
         }
 
         try {
-            const res = await fetch('/api/services', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...linkForm, type: 'link' })
-            });
-
-            if (!res.ok) throw new Error('Failed to save link');
+            await createExternalLink({ ...linkForm, type: 'link' });
 
             addToast('success', 'Link added successfully');
             setLinkForm({ name: '', url: '', description: '', monitor: false });

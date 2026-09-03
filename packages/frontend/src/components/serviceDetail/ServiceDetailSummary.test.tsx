@@ -46,7 +46,20 @@ function svc(over: Partial<ServiceViewModel> = {}): ServiceViewModel {
 }
 
 function check(over: Partial<Check> & { diagnose?: { status?: string } }): Check {
-  return { id: Math.random().toString(36), name: 'x', type: 'http', status: 'ok', target: 'jellyfin', ...over } as Check;
+  return {
+    id: Math.random().toString(36),
+    name: 'x',
+    type: 'http',
+    status: 'ok',
+    target: 'jellyfin',
+    interval: 60,
+    enabled: true,
+    created_at: new Date().toISOString(),
+    lastRun: new Date().toISOString(),
+    lastResult: null,
+    history: [],
+    ...over,
+  } as Check;
 }
 
 function renderSummary(ui: React.ReactElement) {

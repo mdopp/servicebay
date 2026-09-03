@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, History, Info, Loader2, Wrench, X } from 'lucide-react';
 import { Button, DataTable, Field, Input } from '@/components/ui';
+import { fetchSystemMode, getHealthCheckHistory, runDiagnoseAction } from '@servicebay/api-client';
 
 /**
  * Shared probe-list renderer used by Settings → Self-Diagnose and by the
@@ -187,9 +188,14 @@ function worstStatus(probes: DiagnoseProbe[]): ProbeStatus {
  */
 async function runVerifyFromDeviceAction(): Promise<{ ok: boolean; message: string }> {
   try {
-    const modeRes = await fetch('/api/system/mode');
-    const modeData = await modeRes.json().catch(() => ({}));
-    const activeDomain = modeData.activeDomain ?? 'home.arpa';
+    let activeDomain = 'home.arpa';
+    try {
+      const modeData = await fetchSystemMode();
+      activeDomain = modeData.activeDomain ?? 'home.arpa';
+    } catch {
+      // Mode fetch failed — fall back to the default LAN domain, same as
+      // the previous `.catch(() => ({}))` behaviour.
+    }
     const verifyRes = await fetch(`http://admin.${activeDomain}/api/system/verify-lan-dns`, {
       method: 'GET',
       signal: AbortSignal.timeout(3000),
@@ -264,8 +270,7 @@ export default function DiagnoseProbeList({
     setHistoryData([]);
     setHistoryLoading(true);
     try {
-      const res = await fetch(`/api/health/checks/${encodeURIComponent(`diagnose:${probe.id}`)}/history`);
-      if (res.ok) setHistoryData(await res.json());
+      setHistoryData(await getHealthCheckHistory(`diagnose:${probe.id}`));
     } catch {
       // Leave historyData empty — the drawer shows its "no history" state.
     } finally {
@@ -294,28 +299,22 @@ export default function DiagnoseProbeList({
     }
 
     try {
-      const res = await fetch('/api/system/diagnose/run-action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          probeId: probe.id,
-          actionId: action.id,
-          node,
-          ...(itemId ? { itemId } : {}),
-          ...(payload ? { payload } : {}),
-        }),
+      const data = await runDiagnoseAction({
+        probeId: probe.id,
+        actionId: action.id,
+        node,
+        ...(itemId ? { itemId } : {}),
+        ...(payload ? { payload } : {}),
       });
-      const data = await res.json().catch(() => ({}));
-      const ok = res.ok && data.ok !== false;
       setActionState(s => ({
         ...s,
         [key]: {
-          ok,
-          message: data.message ?? (ok ? 'Done.' : `HTTP ${res.status}`),
-          details: typeof data.details === 'string' ? data.details : undefined,
+          ok: data.ok,
+          message: data.message ?? (data.ok ? 'Done.' : `HTTP ${data.status}`),
+          details: data.details,
         },
       }));
-      if (ok && data.refresh !== false && onRefresh) onRefresh();
+      if (data.ok && data.refresh !== false && onRefresh) onRefresh();
     } catch (e) {
       setActionState(s => ({
         ...s,

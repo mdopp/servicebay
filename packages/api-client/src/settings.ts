@@ -335,6 +335,29 @@ export function fetchSystemMode() {
 }
 
 // ---------------------------------------------------------------------------
+// API Methods - Current-user introspection
+// ---------------------------------------------------------------------------
+
+/** GET /api/auth/me — lenient: callers read a subset (`authenticated`,
+ *  `username`) and treat a fetch failure as "not signed in", never a throw. */
+export const CurrentUserSchema = z
+  .object({
+    authenticated: z.boolean(),
+    username: z.string().optional(),
+    displayName: z.string().optional(),
+    email: z.string().optional(),
+    groups: z.array(z.string()).optional(),
+    source: z.string().optional(),
+  })
+  .passthrough();
+export type CurrentUser = z.infer<typeof CurrentUserSchema>;
+
+/** GET /api/auth/me */
+export function fetchCurrentUser() {
+  return rawApi('/api/auth/me', CurrentUserSchema);
+}
+
+// ---------------------------------------------------------------------------
 // API Methods - Public Domain Migration
 // ---------------------------------------------------------------------------
 
