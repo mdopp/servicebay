@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const state = {
   nodes: [] as any[],
+  spawned: [] as any[],
 };
 
 vi.mock('../nodes', () => ({
@@ -13,16 +14,40 @@ vi.mock('@/lib/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-// node-pty pulls in a native binary at import time. The functions under test
-// don't spawn anything (they just compute the spec), so stub the module out.
+// node-pty pulls in a native binary at import time. Most functions under test
+// don't spawn anything (they just compute the spec), so stub the module out —
+// but the scope-gate tests below need to observe whether a PTY was spawned, so
+// the stub hands back a minimal fake process instead of `undefined`.
 vi.mock('node-pty', () => ({
-  spawn: vi.fn(),
+  spawn: vi.fn(() => {
+    const proc = {
+      pid: 4242,
+      onData: vi.fn(),
+      onExit: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+    };
+    state.spawned.push(proc);
+    return proc;
+  }),
 }));
 
-import { resolvePtySpec, buildContainerInnerCmd, buildContainerExecCmd, TERMINAL_RUN_PRESETS } from './sessionManager';
+import * as pty from 'node-pty';
+import {
+  resolvePtySpec,
+  buildContainerInnerCmd,
+  buildContainerExecCmd,
+  TERMINAL_RUN_PRESETS,
+  TerminalSessionManager,
+  TERMINAL_SCOPE,
+  terminalScopeRefusal,
+} from './sessionManager';
 
 beforeEach(() => {
   state.nodes = [];
+  state.spawned = [];
+  vi.mocked(pty.spawn).mockClear();
 });
 
 describe('resolvePtySpec — container terminals', () => {
@@ -271,5 +296,152 @@ describe('sessionManager — run= in the session-target grammar', () => {
     await expect(
       resolvePtySpec('container:Local:claude-dev-claude-dev:run=evil'),
     ).rejects.toThrow(/Unknown terminal run preset/);
+  });
+});
+
+/**
+ * Scope gate on the Socket.IO terminal surface (#2769).
+ *
+ * `io.use` in `server.ts` admits any socket whose cookie decodes to *a* valid
+ * session — it has to, because the same socket carries logs, install progress
+ * and resource broadcasts. That makes the terminal handlers the place the
+ * shell-grade scope is checked: without it, a cookie bridged from a `read`-only
+ * token (`POST /api/auth/session-from-token`) could `join('host')` and get a
+ * live PTY on the box, laundering away the `exec` gate every MCP tool enforces.
+ *
+ * `exec` is never implied by another scope (#2623), so the check is a literal
+ * one — mirroring `cookieScopeRefusal` in `lib/api/requireSession.ts` (#2768),
+ * including its back-compat rule that a scope-less cookie (password login)
+ * means all scopes.
+ */
+describe('terminalScopeRefusal — the scope rule (#2769)', () => {
+  it('requires exec, the scope no other scope implies (#2623)', () => {
+    expect(TERMINAL_SCOPE).toBe('exec');
+  });
+
+  it('admits a scope-less cookie session (password login == all scopes, back-compat)', () => {
+    expect(terminalScopeRefusal({ user: 'admin', expires: new Date() })).toBeNull();
+  });
+
+  it('admits a scoped session that literally carries exec', () => {
+    expect(terminalScopeRefusal({ user: 'token:dev', expires: new Date(), scopes: ['read', 'exec'] })).toBeNull();
+  });
+
+  it('refuses a read-only bridged session', () => {
+    expect(terminalScopeRefusal({ user: 'token:ro', expires: new Date(), scopes: ['read'] })).toMatch(/exec/);
+  });
+
+  it('refuses a destroy session — destroy must not launder into shell (#2623)', () => {
+    expect(
+      terminalScopeRefusal({ user: 'token:ops', expires: new Date(), scopes: ['read', 'lifecycle', 'mutate', 'destroy', 'propose'] }),
+    ).toMatch(/exec/);
+  });
+
+  it('refuses a socket with no session at all', () => {
+    expect(terminalScopeRefusal(undefined)).toBeTruthy();
+  });
+});
+
+describe('TerminalSessionManager — join/input/resize are scope-gated (#2769)', () => {
+  function harness() {
+    const handlers = new Map<string, (payload: any) => unknown>();
+    const emitted: Array<{ event: string; payload: any }> = [];
+    const rooms: string[] = [];
+    const socket: any = {
+      data: {} as { user?: any },
+      on: (event: string, fn: (payload: any) => unknown) => { handlers.set(event, fn); },
+      emit: (event: string, payload: any) => { emitted.push({ event, payload }); },
+      join: (room: string) => { rooms.push(room); },
+    };
+    let connect: ((s: any) => void) | undefined;
+    const io: any = {
+      on: (event: string, fn: (s: any) => void) => { if (event === 'connection') connect = fn; },
+      to: () => ({ emit: () => {} }),
+    };
+    const manager = new TerminalSessionManager({ io });
+    return { manager, socket, handlers, emitted, rooms, bind: () => connect!(socket) };
+  }
+
+  it('refuses join for a read-only bridged session: no PTY, no room, an explicit error', async () => {
+    const h = harness();
+    h.manager.start();
+    // The host pre-spawn in start() is server-side warm-up, not a user action.
+    const preSpawns = vi.mocked(pty.spawn).mock.calls.length;
+    h.bind();
+    h.socket.data.user = { user: 'token:ro', expires: new Date(), scopes: ['read'] };
+
+    await h.handlers.get('join')!({ id: 'host', cols: 80, rows: 30 });
+
+    expect(vi.mocked(pty.spawn).mock.calls.length).toBe(preSpawns);
+    expect(h.rooms).toEqual([]);            // must not be joined — the room streams PTY output
+    expect(h.emitted.some(e => e.event === 'history')).toBe(false);
+    const denial = h.emitted.find(e => e.event === 'output');
+    expect(denial).toBeDefined();
+    expect(String(denial!.payload)).toMatch(/denied/i);
+    expect(String(denial!.payload)).toMatch(/exec/);
+    h.manager.stop();
+  });
+
+  it('refuses a container join for a destroy-scoped session (root exec into any container)', async () => {
+    const h = harness();
+    h.manager.start();
+    const preSpawns = vi.mocked(pty.spawn).mock.calls.length;
+    h.bind();
+    h.socket.data.user = { user: 'token:ops', expires: new Date(), scopes: ['destroy'] };
+
+    await h.handlers.get('join')!({ id: 'container:local:anything' });
+
+    expect(vi.mocked(pty.spawn).mock.calls.length).toBe(preSpawns);
+    expect(h.rooms).toEqual([]);
+    h.manager.stop();
+  });
+
+  it('refuses input from an under-scoped socket, so it cannot drive an existing PTY', async () => {
+    const h = harness();
+    h.manager.start();
+    h.bind();
+    // An exec-scoped socket opens the session first…
+    h.socket.data.user = { user: 'admin', expires: new Date(), scopes: ['exec'] };
+    await h.handlers.get('join')!({ id: 'host' });
+    const proc = state.spawned[state.spawned.length - 1];
+    proc.write.mockClear();
+
+    // …then the same socket is downgraded to a read-only bridged session.
+    h.socket.data.user = { user: 'token:ro', expires: new Date(), scopes: ['read'] };
+    h.handlers.get('input')!({ id: 'host', data: 'rm -rf /\n' });
+    h.handlers.get('resize')!({ id: 'host', cols: 10, rows: 10 });
+
+    expect(proc.write).not.toHaveBeenCalled();
+    expect(proc.resize).not.toHaveBeenCalled();
+    h.manager.stop();
+  });
+
+  it('still works for a session that carries exec — join spawns, input writes', async () => {
+    const h = harness();
+    h.manager.start();
+    h.bind();
+    h.socket.data.user = { user: 'token:shell', expires: new Date(), scopes: ['read', 'exec'] };
+
+    await h.handlers.get('join')!({ id: 'host', cols: 100, rows: 40 });
+
+    expect(h.rooms).toEqual(['host']);
+    expect(h.emitted.some(e => e.event === 'history')).toBe(true);
+    const proc = state.spawned[state.spawned.length - 1];
+    h.handlers.get('input')!({ id: 'host', data: 'id\n' });
+    expect(proc.write).toHaveBeenCalledWith('id\n');
+    h.manager.stop();
+  });
+
+  it('still works for a scope-less password-login cookie (back-compat)', async () => {
+    const h = harness();
+    h.manager.start();
+    h.bind();
+    h.socket.data.user = { user: 'admin', expires: new Date() };
+
+    await h.handlers.get('join')!({ id: 'host' });
+
+    expect(h.rooms).toEqual(['host']);
+    expect(h.emitted.some(e => e.event === 'history')).toBe(true);
+    h.manager.stop();
   });
 });

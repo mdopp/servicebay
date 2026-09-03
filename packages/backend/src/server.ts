@@ -350,6 +350,19 @@ app.prepare().then(() => {
   // `podman ps` rather than from an in-process session that could be stranded.
 
   // Socket.IO auth: every connection must carry a valid session cookie.
+  //
+  // This admits any authenticated session ON PURPOSE and is NOT the whole gate
+  // (#2769). One Socket.IO connection multiplexes logs, install progress,
+  // resource broadcasts AND terminals, so a scope check here would be either
+  // too strict (a `read` token could not watch logs) or — as it was before
+  // #2769 — too loose: nothing downstream looked at `session.scopes` either, so
+  // a cookie bridged from a `read`-only token could `join('host')` and receive a
+  // live host shell. The shell-grade check therefore lives per-verb next to the
+  // capability it guards: `terminalScopeRefusal` in `lib/terminal/sessionManager.ts`
+  // holds `join`/`input`/`resize` to `exec`. Any FUTURE privileged socket event
+  // owes its own check in the same place — do not assume this middleware made
+  // one for you. The session (scopes included) is stashed on `socket.data.user`
+  // for exactly that purpose.
   io.use(async (socket, next) => {
     const session = await getSessionFromCookieHeader(socket.handshake.headers.cookie);
     if (!session) {

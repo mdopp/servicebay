@@ -5,6 +5,8 @@ import fs from 'fs';
 import { listNodes } from '../nodes';
 import { logger } from '../logger';
 import { managedInterval, type ManagedInterval } from '../runtime/timers';
+import { scopeSatisfiedBy, type ApiScope } from '../auth/apiScope';
+import type { SessionPayload } from '../auth/session';
 
 interface PtySession {
   process: pty.IPty;
@@ -25,6 +27,41 @@ interface PtySpec {
 
 const PTY_INACTIVITY_MS = 1000 * 60 * 5;
 const PTY_SWEEP_INTERVAL_MS = 60_000;
+
+/**
+ * The scope a socket must hold to reach a terminal (#2769).
+ *
+ * `join('host')` spawns a live shell on the box and `join('container:<node>:<id>')`
+ * execs into a container as root — unrestricted shell either way, which is
+ * exactly what `exec` names. It is deliberately the same scope `exec_command` /
+ * `container_exec` require over MCP (`lib/mcp/toolPolicy.ts`), and `exec` is
+ * never implied by another scope (#2623), so holding `destroy` does not reach
+ * here any more than it reaches those tools.
+ */
+export const TERMINAL_SCOPE: ApiScope = 'exec';
+
+/**
+ * Whether a socket's session may drive a terminal — null to proceed, else the
+ * reason to show the caller.
+ *
+ * `io.use` in `server.ts` cannot make this decision: the same Socket.IO
+ * connection carries logs, install progress and resource broadcasts, so it must
+ * admit every authenticated session. Before #2769 nothing downstream looked at
+ * `session.scopes` either, so a cookie bridged from a `read`-only token via
+ * `POST /api/auth/session-from-token` could `join('host')` and receive a full
+ * interactive host shell — the `exec` gate every MCP tool enforces, laundered
+ * away by a round-trip through the bridge.
+ *
+ * Same shape as `cookieScopeRefusal` in `lib/api/requireSession.ts` (#2768),
+ * back-compat rule included: an omitted `scopes` means "all" (password login /
+ * internal), a present `scopes` is held to itself.
+ */
+export function terminalScopeRefusal(session: SessionPayload | undefined): string | null {
+  if (!session) return 'not authenticated';
+  if (!session.scopes) return null;
+  if (scopeSatisfiedBy(session.scopes, TERMINAL_SCOPE)) return null;
+  return `the '${TERMINAL_SCOPE}' scope is required`;
+}
 
 export interface SessionManagerOptions {
   io: Server;
@@ -76,6 +113,21 @@ export class TerminalSessionManager {
   get size(): number { return this.sessions.size; }
 
   private bind(socket: Socket) {
+    // Every terminal verb is gated, not just `join`: `input` writes into an
+    // already-spawned PTY and `resize` reaches the same process, so a socket
+    // that lost (or never had) `exec` must be refused on all three.
+    const refuse = (verb: string, id: string): boolean => {
+      const user = (socket.data as { user?: SessionPayload }).user;
+      const reason = terminalScopeRefusal(user);
+      if (!reason) return false;
+      logger.warn(
+        'Server',
+        `Refused terminal ${verb} for "${id}" from ${user?.user ?? 'unauthenticated socket'}: ${reason}`,
+      );
+      socket.emit('output', `\r\n\x1b[31m>>> Terminal access denied: ${reason}.\x1b[0m\r\n`);
+      return true;
+    };
+
     socket.on('join', async (payload: string | { id: string; cols?: number; rows?: number }) => {
       let id: string;
       let cols = 80;
@@ -87,6 +139,10 @@ export class TerminalSessionManager {
         cols = payload.cols || 80;
         rows = payload.rows || 30;
       }
+      // Ahead of `socket.join(id)` on purpose — the room itself is the leak:
+      // membership streams every `output` frame of a PTY that may already be
+      // running, so an under-scoped socket must never enter it.
+      if (refuse('join', id)) return;
       logger.info('Server', `Client joining terminal ${id} with dims ${cols}x${rows}`);
       socket.join(id);
       try {
@@ -99,6 +155,7 @@ export class TerminalSessionManager {
     });
 
     socket.on('input', ({ id, data }: { id: string; data: string }) => {
+      if (refuse('input', id)) return;
       const session = this.sessions.get(id);
       if (session) {
         session.process.write(data);
@@ -107,6 +164,7 @@ export class TerminalSessionManager {
     });
 
     socket.on('resize', ({ id, cols, rows }: { id: string; cols: number; rows: number }) => {
+      if (refuse('resize', id)) return;
       const session = this.sessions.get(id);
       if (session) {
         session.process.resize(cols, rows);
