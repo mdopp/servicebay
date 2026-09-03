@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Clock, KeyRound } from 'lucide-react';
+import { fetchAccessRequestStatus, type AccessRequestStatus } from '@servicebay/api-client';
 
 /**
  * State-aware CTA on /portal for visitors who submitted an access
@@ -31,11 +32,6 @@ interface PortalAccessRequestRecord {
   submittedAt: string;
 }
 
-type StatusResponse =
-  | { status: 'not-found' }
-  | { status: 'pending'; firstName?: string; requestedAt?: string }
-  | { status: 'resolved'; firstName?: string; username?: string; resolvedAt?: string; authUrl?: string | null };
-
 const STORAGE_KEY = 'sb.portal.lastAccessRequest';
 
 const noopSubscribe = () => () => {};
@@ -61,22 +57,19 @@ function clearStoredRequest(): void {
 
 export default function AccessRequestStatusCTA({ fallback }: { fallback: React.ReactNode }) {
   const stored = useSyncExternalStore(noopSubscribe, readStoredRequest, () => null);
-  const [fetched, setFetched] = useState<StatusResponse | null>(null);
+  const [fetched, setFetched] = useState<AccessRequestStatus | null>(null);
 
   useEffect(() => {
     if (!stored) return;
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(`/api/system/access-requests/${encodeURIComponent(stored.id)}/status`, {
-          cache: 'no-store',
-        });
-        const data = res.ok
-          ? ((await res.json()) as StatusResponse)
-          : ({ status: 'not-found' } as StatusResponse);
+        const data = await fetchAccessRequestStatus(stored.id);
         if (!cancelled) setFetched(data);
         if (data.status === 'not-found') clearStoredRequest();
       } catch {
+        // Any failure (non-2xx, network, or schema mismatch) falls back to
+        // the same "not-found" state the route's own not-found replies use.
         if (!cancelled) setFetched({ status: 'not-found' });
       }
     })();

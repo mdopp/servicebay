@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ShieldAlert, ShieldCheck } from 'lucide-react';
+import { fetchApprovals, decideApproval, type ApprovalRequest } from '@servicebay/api-client';
 import { Button, Card } from '@/components/ui';
 
 /**
@@ -27,16 +28,11 @@ import { Button, Card } from '@/components/ui';
  */
 
 /**
- * Mirrors the backend `ApprovalRequest` (see `lib/approvals`, #1843) — only the
+ * The api-client's `ApprovalRequest` (see `lib/approvals`, #1843) — only the
  * fields these two surfaces read. An approval is an *MCP* approval when it
  * carries an `on_approve.mcp` action, i.e. approving it re-dispatches the tool.
  */
-export interface ApprovalRecord {
-  id: string;
-  status: 'pending' | 'approved' | 'rejected';
-  payload?: Record<string, unknown> | null;
-  on_approve?: { mcp?: { toolName: string; args: Record<string, unknown> } } | null;
-}
+export type ApprovalRecord = ApprovalRequest;
 
 export interface PendingApproval {
   pendingId: string;
@@ -114,11 +110,7 @@ export function usePendingApprovals() {
   const failures = useRef(0);
 
   const load = useCallback((reportNow = false) => {
-    fetch('/api/approvals')
-      .then(async r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return (await r.json()) as { approvals?: ApprovalRecord[] };
-      })
+    fetchApprovals()
       .then(data => {
         failures.current = 0;
         setPollError(null);
@@ -139,11 +131,7 @@ export function usePendingApprovals() {
     setBusyId(id);
     setError(null);
     try {
-      const res = await fetch(`/api/approvals/${encodeURIComponent(id)}/${decision}`, { method: 'POST' });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? `HTTP ${res.status}`);
-      }
+      await decideApproval(id, decision);
       load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

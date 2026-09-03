@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { ChevronRight } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { fetchPortalAsset, TypedFetchError } from '@servicebay/api-client';
 import { Card, Button } from '@/components/ui';
 import type { PortalCard } from '@/lib/portal/services';
 import type { AppPlatform, PortalAction, PortalIconName, SetupAssetKind } from '@/lib/portal/userGuide';
@@ -756,12 +757,7 @@ function DeepLinkButton({
   const onClick = async () => {
     setError(null);
     try {
-      const res = await fetch(`/api/portal/asset/${card.name}/${kind}?subdomain_var=${encodeURIComponent(card.subdomainVar)}`);
-      if (!res.ok) {
-        setError(assetFetchError(res.status, `Couldn't load the link (HTTP ${res.status}).`));
-        return;
-      }
-      const data = await res.json() as { url?: string };
+      const data = await fetchPortalAsset(card.name, kind, card.subdomainVar);
       if (typeof data.url !== 'string') {
         setError('No URL returned.');
         return;
@@ -771,7 +767,11 @@ function DeepLinkButton({
       // open this URL" prompt; we add a small fallback note below.
       window.location.href = data.url;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (e instanceof TypedFetchError && typeof e.status === 'number') {
+        setError(assetFetchError(e.status, `Couldn't load the link (HTTP ${e.status}).`));
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     }
   };
   return (
@@ -902,22 +902,21 @@ function SyncthingQrButton({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/portal/asset/${card.name}/syncthing_qr?subdomain_var=${encodeURIComponent(card.subdomainVar)}`);
-      if (!res.ok) {
-        setError(assetFetchError(
-          res.status,
-          `Couldn't read the device id (HTTP ${res.status}). The Syncthing container might not be running yet — try again in a minute.`,
-        ));
-        return;
-      }
-      const data = await res.json() as { deviceId?: string };
+      const data = await fetchPortalAsset(card.name, 'syncthing_qr', card.subdomainVar);
       if (typeof data.deviceId !== 'string') {
         setError('No device id returned.');
         return;
       }
       setDeviceId(data.deviceId);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (e instanceof TypedFetchError && typeof e.status === 'number') {
+        setError(assetFetchError(
+          e.status,
+          `Couldn't read the device id (HTTP ${e.status}). The Syncthing container might not be running yet — try again in a minute.`,
+        ));
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setLoading(false);
     }

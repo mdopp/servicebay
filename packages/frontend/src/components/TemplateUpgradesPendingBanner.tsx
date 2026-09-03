@@ -3,23 +3,15 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Info, Loader2, RefreshCw } from 'lucide-react';
 import { fetchTemplates, fetchReadme } from '@/app/actions';
-import type { Template } from '@servicebay/api-client';
+import {
+  fetchPendingTemplateUpgrades,
+  type Template,
+  type TemplateUpgradeSummary,
+  type PendingTemplateUpgradesResponse,
+} from '@servicebay/api-client';
 import InstallerModal from './InstallerModal';
 import UpdatesNotice from './UpdatesNotice';
 import { useToast } from '@/providers/ToastProvider';
-
-interface UpgradeSummary {
-  name: string;
-  installedVersion: number;
-  currentVersion: number;
-  hasBreakingChange: boolean;
-  sectionHeaders: string[];
-}
-
-interface PendingResponse {
-  pending: UpgradeSummary[];
-  hasBreakingChange: boolean;
-}
 
 const COLLAPSE_STORAGE_KEY = 'sb_template_upgrades_dismissed';
 
@@ -62,22 +54,21 @@ function loadCollapsed(): Set<string> {
 
 export default function TemplateUpgradesPendingBanner() {
   const { addToast } = useToast();
-  const [data, setData] = useState<PendingResponse | null>(null);
+  const [data, setData] = useState<PendingTemplateUpgradesResponse | null>(null);
   const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(loadCollapsed);
   const [loadingName, setLoadingName] = useState<string | null>(null);
   const [modalState, setModalState] = useState<{ template: Template; readme: string } | null>(null);
 
   useEffect(() => {
-    fetch('/api/system/templates/upgrades-pending')
-      .then(r => (r.ok ? r.json() : null))
-      .then((res: PendingResponse | null) => res && setData(res))
+    fetchPendingTemplateUpgrades()
+      .then(res => setData(res))
       .catch(() => undefined);
   }, []);
 
   const pending = data?.pending ?? [];
   if (pending.length === 0 && !modalState) return null;
 
-  const upgradeKey = (p: UpgradeSummary) => `${p.name}@${p.currentVersion}`;
+  const upgradeKey = (p: TemplateUpgradeSummary) => `${p.name}@${p.currentVersion}`;
   // Only a stack the operator has already folded away *in full* starts
   // collapsed — a newly-published upgrade re-expands the rows by itself.
   const startCollapsed = pending.length > 0 && pending.every(p => collapsedKeys.has(upgradeKey(p)));
@@ -118,9 +109,8 @@ export default function TemplateUpgradesPendingBanner() {
     setModalState(null);
     // Refresh the pending list — a successful re-deploy bumps the
     // installed schema version, so that row should drop off.
-    fetch('/api/system/templates/upgrades-pending')
-      .then(r => (r.ok ? r.json() : null))
-      .then((res: PendingResponse | null) => res && setData(res))
+    fetchPendingTemplateUpgrades()
+      .then(res => setData(res))
       .catch(() => undefined);
   };
 

@@ -51,7 +51,9 @@ describe('PendingApprovalsCard (#2203-followup)', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<PendingApprovalsCard />);
     expect(await screen.findByText('remove_proxy_route')).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledWith('/api/approvals');
+    // Goes through the typed api-client's `apiFetch` now, which always
+    // passes a (possibly undefined) init as the second `fetch` argument.
+    expect(fetchMock).toHaveBeenCalledWith('/api/approvals', undefined);
     expect(fetchMock.mock.calls.some(c => String(c[0]).includes('/api/system/mcp/approve'))).toBe(false);
   });
 

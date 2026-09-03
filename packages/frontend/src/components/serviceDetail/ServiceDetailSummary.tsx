@@ -13,7 +13,7 @@ import {
   AlertCircle,
   Loader2,
 } from 'lucide-react';
-import { logger, type Check, type ServiceViewModel } from '@servicebay/api-client';
+import { logger, runServiceAction, type Check, type ServiceViewModel } from '@servicebay/api-client';
 import type { RowStatus } from '@/components/HealthChecks';
 import { useToast } from '@/providers/ToastProvider';
 import { Card, SectionHeading, StatusDot, type StatusState } from '@/components/ui';
@@ -140,31 +140,23 @@ function useServiceRestart(service: ServiceViewModel) {
   const { addToast, updateToast } = useToast();
   const [restarting, setRestarting] = useState(false);
   const serviceName = service.id || service.name;
-  const nodeParam = service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : '';
+  const nodeName = service.nodeName && service.nodeName !== 'Local' ? service.nodeName : undefined;
 
   const handleRestart = useCallback(async () => {
     if (restarting) return;
     setRestarting(true);
     const toastId = addToast('loading', 'Restarting…', service.displayName, 0);
     try {
-      const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}/action${nodeParam}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'restart' }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        updateToast(toastId, 'error', 'Restart failed', data.error || `HTTP ${res.status}`);
-      } else {
-        updateToast(toastId, 'success', 'Restart initiated', service.displayName);
-      }
+      await runServiceAction(serviceName, 'restart', nodeName);
+      updateToast(toastId, 'success', 'Restart initiated', service.displayName);
     } catch (e) {
       logger.error('ServiceDetailSummary', 'restart failed', e);
-      updateToast(toastId, 'error', 'Restart failed', 'An unexpected error occurred.');
+      const detail = e instanceof Error ? e.message : 'An unexpected error occurred.';
+      updateToast(toastId, 'error', 'Restart failed', detail);
     } finally {
       setRestarting(false);
     }
-  }, [restarting, addToast, updateToast, service.displayName, serviceName, nodeParam]);
+  }, [restarting, addToast, updateToast, service.displayName, serviceName, nodeName]);
 
   return { restarting, handleRestart };
 }

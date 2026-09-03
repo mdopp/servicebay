@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { logger, type Check, type ServiceViewModel } from '@servicebay/api-client';
+import { getHealthChecks, logger, type Check, type ServiceViewModel } from '@servicebay/api-client';
 import { rowStatus, type RowStatus } from '@/components/HealthChecks';
 
 /** Strip the systemd unit suffix to get the bare service base name. */
@@ -140,9 +140,7 @@ export function useServiceHealth(service: Pick<ServiceViewModel, 'id' | 'name'>)
     const isStale = () => generationRef.current !== generation;
     setLoading(true);
     try {
-      const res = await fetch('/api/health/checks', { cache: 'no-store' });
-      if (!res.ok) throw new Error('Failed to load health checks');
-      const all: Check[] = await res.json();
+      const all = await getHealthChecks();
       if (isStale()) return;
       setChecks(all.filter(c => checkBelongsToService(c, baseName)));
       setBoxWideChecks(all.filter(isBoxWideCheck));

@@ -335,6 +335,29 @@ export function fetchSystemMode() {
 }
 
 // ---------------------------------------------------------------------------
+// API Methods - Current-user introspection
+// ---------------------------------------------------------------------------
+
+/** GET /api/auth/me — lenient: callers read a subset (`authenticated`,
+ *  `username`) and treat a fetch failure as "not signed in", never a throw. */
+export const CurrentUserSchema = z
+  .object({
+    authenticated: z.boolean(),
+    username: z.string().optional(),
+    displayName: z.string().optional(),
+    email: z.string().optional(),
+    groups: z.array(z.string()).optional(),
+    source: z.string().optional(),
+  })
+  .passthrough();
+export type CurrentUser = z.infer<typeof CurrentUserSchema>;
+
+/** GET /api/auth/me */
+export function fetchCurrentUser() {
+  return rawApi('/api/auth/me', CurrentUserSchema);
+}
+
+// ---------------------------------------------------------------------------
 // API Methods - Public Domain Migration
 // ---------------------------------------------------------------------------
 
@@ -469,6 +492,62 @@ export function approveAccessRequest(id: string) {
   return mutateRawApi(`/api/system/access-requests/${id}/approve`, ApproveAccessRequestResponseSchema, undefined);
 }
 
+// Public half of this route (#242 follow-up) — a family-LAN visitor
+// submitting the "Request access" form. `skipAuth: true` on the backend,
+// same as the admin methods above going through rawApi (the route shapes
+// its own body).
+export const SubmitAccessRequestResponseSchema = z
+  .object({
+    ok: z.boolean().optional(),
+    id: z.string(),
+  })
+  .passthrough();
+
+export type SubmitAccessRequestResponse = z.infer<typeof SubmitAccessRequestResponseSchema>;
+
+export interface SubmitAccessRequestInput {
+  firstName: string;
+  lastName: string;
+  username: string;
+  email: string;
+  message?: string;
+}
+
+/** POST /api/system/access-requests — public; the portal's Request-access form. */
+export function submitAccessRequest(input: SubmitAccessRequestInput) {
+  return mutateRawApi('/api/system/access-requests', SubmitAccessRequestResponseSchema, input);
+}
+
+export const AccessRequestStatusSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('not-found') }),
+  z.object({
+    status: z.literal('pending'),
+    firstName: z.string().optional(),
+    requestedAt: z.string().optional(),
+  }),
+  z.object({
+    status: z.literal('resolved'),
+    firstName: z.string().optional(),
+    username: z.string().optional(),
+    resolvedAt: z.string().optional(),
+    authUrl: z.string().nullable().optional(),
+  }),
+]);
+
+export type AccessRequestStatus = z.infer<typeof AccessRequestStatusSchema>;
+
+/**
+ * GET /api/system/access-requests/:id/status — public; the portal's own
+ * state-aware CTA polls this with the id it stashed in localStorage at
+ * submit time (#1001). Always 200 with a `status` discriminator — a
+ * `not-found` (bad id, cleared request) is a normal reply, not an error.
+ */
+export function fetchAccessRequestStatus(id: string) {
+  return rawApi(`/api/system/access-requests/${encodeURIComponent(id)}/status`, AccessRequestStatusSchema, {
+    cache: 'no-store',
+  });
+}
+
 /** POST /api/system/access-requests/:id/welcome — body unread; only success/failure matters. */
 export function resendWelcomeEmail(id: string) {
   return mutateRawApi(`/api/system/access-requests/${id}/welcome`, z.object({ ok: z.boolean().optional() }), undefined);
@@ -486,6 +565,42 @@ export function deleteAccessRequest(id: string) {
 /** GET /api/auth/lldap-url */
 export function fetchLldapUrl() {
   return rawApi('/api/auth/lldap-url', LldapUrlResponseSchema);
+}
+
+// `.catch(false)`, not a bare boolean: the login page swallows this fetch's
+// failure entirely (OIDC-unavailable is not an error state, just "show the
+// password form"), so a malformed/absent `enabled` field should degrade to
+// the same "off" default rather than fail the whole schema.
+export const OidcStatusSchema = z
+  .object({
+    enabled: z.boolean().catch(false),
+  })
+  .passthrough();
+
+export type OidcStatus = z.infer<typeof OidcStatusSchema>;
+
+/** GET /api/auth/oidc/status — public; always 200 (`{enabled}` or the
+ *  degraded `{enabled:false}` on a config-read error). */
+export function fetchOidcStatus() {
+  return rawApi('/api/auth/oidc/status', OidcStatusSchema);
+}
+
+export const LoginResponseSchema = z
+  .object({
+    success: z.boolean().optional(),
+  })
+  .passthrough();
+
+export type LoginResponse = z.infer<typeof LoginResponseSchema>;
+
+/**
+ * POST /api/auth/login — public (skipAuth), rate-limited. A failed login
+ * throws `TypedFetchError` carrying the server-authored `{ error }` text
+ * (invalid credentials, rate-limited, not-configured) via `rawApi`'s
+ * `{ error }` read — the caller renders `err.message` directly.
+ */
+export function login(username: string, password: string) {
+  return mutateRawApi('/api/auth/login', LoginResponseSchema, { username, password });
 }
 
 // ---------------------------------------------------------------------------
@@ -634,12 +749,33 @@ export function revokeApiToken(id: string) {
 // Approvals Schemas
 // ---------------------------------------------------------------------------
 
+// Mirrors the backend `ApprovalAction` (`lib/approvals`, #1843) — the side
+// effect an admin's approve/reject decision runs. `mcp` is what
+// `PendingApprovalsCard` filters the feed on (an MCP-proposed destructive
+// tool call); `.passthrough()` so a future action kind doesn't fail the
+// whole list for one row (lenient list read).
+export const ApprovalActionSchema = z
+  .object({
+    move: z.object({ src: z.string(), dst: z.string() }).optional(),
+    restart: z.string().optional(),
+    mcp: z.object({ toolName: z.string(), args: z.record(z.string(), z.unknown()) }).optional(),
+    mintToken: z.object({ tokenRequestId: z.string() }).optional(),
+  })
+  .passthrough();
+
+export type ApprovalAction = z.infer<typeof ApprovalActionSchema>;
+
 export const ApprovalRequestSchema = z.object({
   id: z.string(),
   service: z.string(),
   title: z.string(),
   description: z.string().nullable(),
   payload: z.record(z.string(), z.unknown()),
+  // Always present on the backend record (defaults to `{}`), but optional
+  // here too — a lenient list read must never fail the whole feed on one
+  // row missing a field it doesn't otherwise use.
+  on_approve: ApprovalActionSchema.optional(),
+  on_reject: ApprovalActionSchema.optional(),
   node: z.string(),
   created_at: z.string(),
   status: z.enum(['pending', 'approved', 'rejected']),
@@ -872,6 +1008,35 @@ export function fetchPortalSettings() {
 /** PUT /api/system/portal-settings */
 export function updatePortalSettings(settings: UpdatePortalSettingsRequest) {
   return mutateRawApi('/api/system/portal-settings', PortalSettingsSchema, settings, 'PUT');
+}
+
+// ---------------------------------------------------------------------------
+// Portal Setup-Asset Schema — GET /api/portal/asset/:service/:kind
+// ---------------------------------------------------------------------------
+
+/**
+ * The response shape depends on `kind` (server-side in
+ * `resolveSetupAsset`): `pwa_install` / `apk_download` /
+ * `audiobookshelf_deeplink` return `{ url }`; `syncthing_qr` returns
+ * `{ deviceId }`. Both optional here so one lenient schema covers every
+ * kind — each call site only reads the field its `kind` produces.
+ */
+export const PortalAssetSchema = z
+  .object({
+    url: z.string().optional(),
+    deviceId: z.string().optional(),
+  })
+  .passthrough();
+
+export type PortalAsset = z.infer<typeof PortalAssetSchema>;
+
+/** GET /api/portal/asset/:service/:kind?subdomain_var=… — public on the
+ *  family portal, session/SSO-gated in public mode (401/403 on that gate). */
+export function fetchPortalAsset(service: string, kind: string, subdomainVar: string) {
+  return rawApi(
+    `/api/portal/asset/${service}/${kind}?subdomain_var=${encodeURIComponent(subdomainVar)}`,
+    PortalAssetSchema,
+  );
 }
 
 // ---------------------------------------------------------------------------

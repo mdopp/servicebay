@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { CalendarClock } from 'lucide-react';
 import { Card } from '@/components/ui';
+import { fetchUpdateWindow } from '@servicebay/api-client';
 
 /**
  * "Your services are not auto-updating yet" nudge (#2396).
@@ -50,11 +51,9 @@ function useUpdateWindowState(): NudgeState {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/system/update-window');
-        if (!res.ok) return;
-        const data = (await res.json()) as { window?: unknown };
+        const data = await fetchUpdateWindow();
         if (cancelled) return;
-        setState(data?.window ? 'configured' : 'unconfigured');
+        setState(data.window ? 'configured' : 'unconfigured');
       } catch (error) {
         // Background read — stay silent rather than surfacing a transient
         // failure as "your services aren't updating".

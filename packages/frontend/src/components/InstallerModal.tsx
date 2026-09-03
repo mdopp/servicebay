@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Template } from '@servicebay/api-client';
 import { useStackInstall } from '@/hooks/useStackInstall';
-import { fetchNodes } from '@servicebay/api-client';
+import { fetchNodes, fetchServiceSummaries, fetchDeviceList } from '@servicebay/api-client';
 import { PodmanConnection } from '@servicebay/api-client';
 import { Layers, Folder, X } from 'lucide-react';
 import TemplateUpgradeBanner from './TemplateUpgradeBanner';
@@ -83,15 +83,12 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
       // nginx and auth as satisfiers.
       let existing = new Set<string>();
       try {
-        const res = await fetch('/api/services');
-        if (res.ok) {
-          const services: { name?: string }[] = await res.json();
-          existing = new Set(
-            services
-              .map(s => s.name?.toLowerCase())
-              .filter((n): n is string => !!n),
-          );
-        }
+        const services = await fetchServiceSummaries();
+        existing = new Set(
+          services
+            .map(s => s.name?.toLowerCase())
+            .filter((n): n is string => !!n),
+        );
       } catch { /* best-effort */ }
       if (cancelled) return;
 
@@ -132,11 +129,8 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     Promise.all(
       Array.from(paths).map(async (devicePath) => {
         try {
-          const res = await fetch(`/api/system/devices?node=${selectedNode}&path=${encodeURIComponent(devicePath)}`);
-          if (res.ok) {
-            const data = await res.json();
-            return { path: devicePath, devices: data.devices as string[] };
-          }
+          const data = await fetchDeviceList(selectedNode, devicePath);
+          return { path: devicePath, devices: data.devices };
         } catch { /* ignore */ }
         return { path: devicePath, devices: [] as string[] };
       }),
@@ -245,8 +239,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
                 canRefresh: !!selectedNode,
                 onRefresh: (devPath) => {
                   setLoadingDevices(true);
-                  fetch(`/api/system/devices?node=${selectedNode}&path=${encodeURIComponent(devPath)}`)
-                    .then(r => r.json())
+                  fetchDeviceList(selectedNode, devPath)
                     .then(data => {
                       setDeviceOptions(prev => ({ ...prev, [devPath]: data.devices || [] }));
                       setLoadingDevices(false);

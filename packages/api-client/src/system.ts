@@ -163,5 +163,38 @@ export const DeviceListSchema = z.object({ devices: z.array(z.string()) });
 
 /** GET /api/system/devices?node=…&path=… */
 export function fetchDeviceList(node: string, path: string) {
-  return rawApi(`/api/system/devices?node=${node}&path=${path}`, DeviceListSchema);
+  return rawApi(
+    `/api/system/devices?node=${encodeURIComponent(node)}&path=${encodeURIComponent(path)}`,
+    DeviceListSchema,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GET/DELETE /api/system/reinstall — drives the "Welcome back — services
+// restoring" banner (#337) after setup-raid restores Quadlet definitions
+// from the RAID backup. Lenient: the `active:false` shape and the
+// `active:true` shape share one schema with the extra fields optional.
+// ---------------------------------------------------------------------------
+
+export const ReinstallStatusSchema = z
+  .object({
+    active: z.boolean(),
+    completedAt: z.string().optional(),
+    minutesRemaining: z.number().optional(),
+  })
+  .passthrough();
+export type ReinstallStatus = z.infer<typeof ReinstallStatusSchema>;
+
+/** GET /api/system/reinstall */
+export function fetchReinstallStatus() {
+  return rawApi('/api/system/reinstall', ReinstallStatusSchema);
+}
+
+const ReinstallDismissResultSchema = z
+  .object({ ok: z.boolean().optional(), removed: z.boolean().optional() })
+  .passthrough();
+
+/** DELETE /api/system/reinstall — dismiss the restore banner. */
+export function dismissReinstallBanner() {
+  return mutateRawApi('/api/system/reinstall', ReinstallDismissResultSchema, undefined, 'DELETE');
 }

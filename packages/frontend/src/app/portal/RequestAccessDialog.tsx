@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { submitAccessRequest, TypedFetchError } from '@servicebay/api-client';
 import { Button, Input, Textarea } from '@/components/ui';
 
 /**
@@ -47,37 +48,28 @@ export default function RequestAccessDialog({ onClose }: { onClose: () => void }
       return;
     }
     try {
-      const res = await fetch('/api/system/access-requests', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          firstName: firstName.trim(),
-          lastName: lastName.trim(),
-          username: trimmedUsername,
-          email: email.trim(),
-          message: message.trim() || undefined,
-        }),
+      const data = await submitAccessRequest({
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        username: trimmedUsername,
+        email: email.trim(),
+        message: message.trim() || undefined,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(typeof data.error === 'string' ? data.error : `Submission failed (${res.status}).`);
-        return;
-      }
       // #1001 — persist the request id so the portal's state-aware CTA
       // can render "Your request is being reviewed" on subsequent
       // visits without a session. The status endpoint flips this to a
       // "Set your password" link once the admin approves.
-      if (typeof data.id === 'string') {
-        try {
-          window.localStorage.setItem(
-            'sb.portal.lastAccessRequest',
-            JSON.stringify({ id: data.id, submittedAt: new Date().toISOString() }),
-          );
-        } catch { /* quota / disabled storage — non-fatal */ }
-      }
+      try {
+        window.localStorage.setItem(
+          'sb.portal.lastAccessRequest',
+          JSON.stringify({ id: data.id, submittedAt: new Date().toISOString() }),
+        );
+      } catch { /* quota / disabled storage — non-fatal */ }
       setSubmitted(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Network error.');
+      // A non-2xx response's server-authored `{ error }` text (too many
+      // pending requests, bad body, …) survives as `TypedFetchError.message`.
+      setError(e instanceof TypedFetchError || e instanceof Error ? e.message : 'Network error.');
     } finally {
       setSubmitting(false);
     }

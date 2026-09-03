@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Shield, Download, Server, Check, RefreshCw, ExternalLink } from 'lucide-react';
-import { logger } from '@servicebay/api-client';
+import { logger, fetchNginxStatus, installNginx } from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
 
 export default function ReverseProxyConfig() {
@@ -16,8 +16,7 @@ export default function ReverseProxyConfig() {
     const checkStatus = async () => {
         setLoading(true);
         try {
-            const res = await fetch('/api/system/nginx/status');
-            const data = await res.json();
+            const data = await fetchNginxStatus();
             setStatus(data.installed ? 'installed' : 'not-installed');
             if (data.node) setNginxNode(data.node);
             if (data.adminPort) setAdminPort(data.adminPort);
@@ -37,8 +36,7 @@ export default function ReverseProxyConfig() {
     const handleInstall = async () => {
         setInstalling(true);
         try {
-            const res = await fetch('/api/system/nginx/install', { method: 'POST' });
-            if (!res.ok) throw new Error('Installation failed');
+            await installNginx();
 
             addToast('success', 'Nginx installed successfully');
             checkStatus();

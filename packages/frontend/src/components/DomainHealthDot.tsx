@@ -17,6 +17,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { getHealthChecks } from '@servicebay/api-client';
 
 interface DomainCheck {
   id: string;
@@ -42,9 +43,7 @@ async function fetchDomainChecks(): Promise<Map<string, DomainCheck>> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
     try {
-      const res = await fetch('/api/health/checks', { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as DomainCheck[];
+      const data = await getHealthChecks();
       const next = new Map<string, DomainCheck>();
       for (const c of data) {
         if (c.type === 'domain') next.set(c.target, c);

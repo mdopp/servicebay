@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import type { DigitalTwinSnapshot } from '@/providers/DigitalTwinProvider';
-import type { NetworkGraph } from '@servicebay/api-client';
+import { fetchNetworkGraph, type NetworkGraph } from '@servicebay/api-client';
 
 interface UseTopologyDataOptions {
   /** Called when a refresh fails — typically surfaces an error toast. */
@@ -71,11 +71,7 @@ export function useTopologyData(options: UseTopologyDataOptions = {}): UseTopolo
     // when the fetched topology actually changed (a re-layout), never for
     // a background status/metric merge.
     try {
-      const res = await fetch('/api/network/graph');
-      if (!res.ok) {
-        throw new Error('Failed to fetch network graph');
-      }
-      const data = await res.json();
+      const data = await fetchNetworkGraph();
       setRawData(data);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Unable to reload network map';

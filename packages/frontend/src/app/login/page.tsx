@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import ServiceBayLogo from '@/components/ServiceBayLogo';
 import { Code, ArrowRight, Loader2, Shield, AlertTriangle } from 'lucide-react';
+import { fetchOidcStatus, login as loginRequest, TypedFetchError } from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
 import pkg from '../../../package.json';
 
@@ -38,8 +39,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     // Check if OIDC is available
-    fetch('/api/auth/oidc/status')
-      .then(res => res.json())
+    fetchOidcStatus()
       .then(data => setOidcEnabled(data.enabled))
       .catch(() => {});
 
@@ -55,22 +55,22 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
-
-      const data = await res.json();
-
-      if (res.ok) {
-        router.push('/services');
-        router.refresh();
+      // Goes through the typed api-client (apiFetch under the hood), which
+      // is safe here even on a failed login: `/login` is one of apiFetch's
+      // ANONYMOUS_PATHS, so a 401 response never triggers its 401 → /login
+      // redirect while we're already on this page.
+      await loginRequest(username, password);
+      router.push('/services');
+      router.refresh();
+    } catch (e) {
+      if (e instanceof TypedFetchError) {
+        // A real HTTP response came back (invalid credentials, rate-limited,
+        // not-configured) — `TypedFetchError`'s message is the server's own
+        // `{ error }` text (see rawApi's rawErrorMessage).
+        addToast('error', 'Login failed', e.message || 'Invalid credentials');
       } else {
-        addToast('error', 'Login failed', data.error || 'Invalid credentials');
+        addToast('error', 'Login error', 'An unexpected error occurred');
       }
-    } catch {
-      addToast('error', 'Login error', 'An unexpected error occurred');
     } finally {
       setLoading(false);
     }
