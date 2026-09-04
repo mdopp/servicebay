@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { Button } from '@/components/ui';
 
 /**
  * Resizable side drawer (#804 — foundation).
@@ -89,14 +90,14 @@ export default function WorkspaceDrawer({
       >
         <div className="flex items-start justify-between px-6 py-4 border-b border-border bg-surface-2">
           <div className="min-w-0">{header}</div>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             onClick={onClose}
-            className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface-2 shrink-0"
+            className="h-auto w-auto p-2 rounded-full shrink-0"
             aria-label={closeAriaLabel}
           >
             <X size={20} />
-          </button>
+          </Button>
         </div>
         <div className="flex-1 overflow-hidden">{children}</div>
       </div>
