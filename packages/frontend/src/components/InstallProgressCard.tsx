@@ -2,6 +2,7 @@
 
 import { Loader2, KeyRound } from 'lucide-react';
 import { useInstallMonitor, type InstallMonitorState } from '@/hooks/useInstallMonitor';
+import { Button } from '@/components/ui';
 
 /**
  * Live install-progress card for the Home dashboard (#A). When an
@@ -101,13 +102,12 @@ export function InstallProgressCardView({
           <p className="text-xs text-status-warn leading-relaxed">
             Waiting for reverse-proxy credentials. Skip to continue with auto-generated ones — you can set them later in Settings.
           </p>
-          <button
-            type="button"
+          <Button
             onClick={onSkipCredentials}
-            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-status-warn hover:bg-status-warn/90 text-on-accent transition-colors"
+            className="h-auto shrink-0 gap-1.5 rounded-lg bg-status-warn px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-status-warn/90"
           >
             <KeyRound size={13} /> Skip credentials
-          </button>
+          </Button>
         </div>
       )}
 

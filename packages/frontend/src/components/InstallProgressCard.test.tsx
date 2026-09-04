@@ -43,6 +43,7 @@ describe('InstallProgressCardView', () => {
       />,
     );
     const btn = screen.getByText(/skip credentials/i).closest('button')!;
+    expect(btn.getAttribute('data-variant')).toBe('primary');
     fireEvent.click(btn);
     expect(onSkip).toHaveBeenCalledOnce();
   });
