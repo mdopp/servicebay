@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { AlertTriangle, Check, History, Loader2, Pencil, RotateCcw, X } from 'lucide-react';
-import { Badge, Button, Card } from '@/components/ui';
+import { Badge, Button, Card, Input, Textarea } from '@/components/ui';
 import { stripFrontmatter, validateProposal } from './validation';
 import type { AssistApproval, AssistSummary, HistoryEntry } from './types';
 import type { useKnowledge } from './useKnowledge';
@@ -161,7 +161,7 @@ function ProposalEditor({
 
   return (
     <div className="space-y-3">
-      <textarea
+      <Textarea
         value={body}
         onChange={e => setBody(e.target.value)}
         spellCheck={false}
@@ -171,7 +171,7 @@ function ProposalEditor({
         placeholder="---&#10;title: …&#10;whenToUse: …&#10;kind: guide&#10;---&#10;body…"
       />
       {!validation.ok && <ValidationBanner error={validation.error} />}
-      <input
+      <Input
         type="text"
         value={message}
         onChange={e => setMessage(e.target.value)}
