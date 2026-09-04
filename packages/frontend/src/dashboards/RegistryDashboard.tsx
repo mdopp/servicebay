@@ -7,6 +7,7 @@ import RegistryBrowser from '@/components/RegistryBrowser';
 import { Loader2, RefreshCw, DownloadCloud, AlertTriangle } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
+import { Button } from '@/components/ui';
 
 /** Mirrors the backend `RegistrySyncRecord` fields this page renders (#2610). */
 interface StalledRegistry {
@@ -87,21 +88,23 @@ export default function RegistryDashboard({ variant = 'page' }: RegistryDashboar
 
   const actionButtons = (
     <div className="flex items-center gap-2">
-        <button
+        <Button
             onClick={handleSync}
             disabled={syncing}
-            className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-on-accent bg-accent rounded hover:bg-accent-strong shadow-sm transition-colors disabled:opacity-50"
+            variant="primary"
+            className="flex items-center gap-2"
         >
             <DownloadCloud size={16} className={syncing ? 'animate-pulse' : ''} />
             {syncing ? 'Syncing...' : 'Sync Registries'}
-        </button>
-        <button
+        </Button>
+        <Button
             onClick={refresh}
-            className="p-2 text-text bg-surface border border-border rounded hover:bg-surface-2 shadow-sm transition-colors"
+            variant="ghost"
+            className="p-2"
             title="Refresh"
         >
             <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-        </button>
+        </Button>
     </div>
   );
 

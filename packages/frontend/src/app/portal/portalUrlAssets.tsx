@@ -21,7 +21,7 @@
 import { useState } from 'react';
 import { QrCode } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Card } from '@/components/ui';
+import { Card, Button } from '@/components/ui';
 
 type IconComponent = typeof QrCode;
 
@@ -57,9 +57,9 @@ export function PwaInstallButton({
   return (
     <>
       <div>
-        <button onClick={() => setOpen(true)} className={LINK_BUTTON}>
+        <Button onClick={() => setOpen(true)} className={LINK_BUTTON}>
           <Icon size={14} /> {label}
-        </button>
+        </Button>
         {description && (
           <p className="text-[11px] text-text-subtle mt-space-1 leading-snug text-center">{description}</p>
         )}
@@ -104,9 +104,9 @@ export function ApkDownloadButton({
         <a href={url} target="_blank" rel="noopener noreferrer" className={LINK_BUTTON}>
           <Icon size={14} /> {label}
         </a>
-        <button onClick={() => setOpen(true)} className={SECONDARY_BUTTON}>
+        <Button onClick={() => setOpen(true)} className={SECONDARY_BUTTON}>
           <QrCode size={14} /> Scan QR to phone
-        </button>
+        </Button>
         {description && (
           <p className="text-[11px] text-text-subtle mt-space-1 leading-snug text-center">{description}</p>
         )}

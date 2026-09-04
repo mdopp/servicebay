@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useToast } from '@/providers/ToastProvider';
 import { Server, Save } from 'lucide-react';
-import { Card, Button, Field } from '@/components/ui';
+import { Card, Button, Field, Input } from '@/components/ui';
 
 const inputCls =
     'w-full px-space-3 py-space-2 rounded-card border border-border bg-surface-2 text-text ' +
@@ -49,7 +49,7 @@ export default function ManualServiceForm() {
                     <Card padding="lg" className="space-y-6">
                         <Field label="Service Name">
                             {(props) => (
-                                <input
+                                <Input
                                     {...props}
                                     type="text"
                                     value={form.name}
@@ -62,7 +62,7 @@ export default function ManualServiceForm() {
 
                         <Field label="Docker Image">
                             {(props) => (
-                                <input
+                                <Input
                                     {...props}
                                     type="text"
                                     value={form.image}
