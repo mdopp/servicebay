@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Loader2, Trash2 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { initiateFactoryReset } from '@servicebay/api-client';
+import { Button, Input } from '@/components/ui';
 
 /**
  * Factory Reset card (#623). The migration entry point for moving an
@@ -73,7 +74,7 @@ export default function FactoryResetSection() {
           <label className="block text-sm font-medium text-text">
             Type <span className="font-mono font-bold text-status-fail">{REQUIRED_CONFIRM}</span> to confirm:
           </label>
-          <input
+          <Input
             type="text"
             value={confirmText}
             onChange={e => setConfirmText(e.target.value)}
@@ -85,14 +86,15 @@ export default function FactoryResetSection() {
           />
         </div>
 
-        <button
+        <Button
           onClick={handleFactoryReset}
           disabled={!matches || running}
-          className="w-full sm:w-auto px-4 py-2 bg-status-fail text-on-accent rounded-lg hover:bg-status-fail/90 transition-colors shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+          variant="danger"
+          className="w-full sm:w-auto shadow-sm"
         >
           {running ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
           {running ? 'Resetting…' : 'Factory reset this server'}
-        </button>
+        </Button>
 
         {result && (
           <div className="mt-4 p-4 bg-status-ok/10 border border-status-ok rounded-lg text-sm text-text space-y-1">
