@@ -12,6 +12,7 @@ import { useSocket } from '@/hooks/useSocket';
 import SectionLoading from '@/components/SectionLoading';
 import { PodmanConnection } from '@servicebay/api-client';
 import { Select, SelectOption } from '@/components/Select';
+import { Button } from '@/components/ui';
 
 interface UpdateInfo {
     count: number;
@@ -231,13 +232,14 @@ export function SystemInfoContent() {
                             <div className="text-xs text-text-muted">System packages</div>
                         </div>
                          {updates && updates.count > 0 && (
-                            <button 
+                            <Button
+                                variant="ghost"
                                 onClick={handleCopyCommand}
-                                className="p-1.5 hover:bg-surface-2 rounded transition text-text-muted hover:text-text"
+                                className="h-auto p-1.5 hover:bg-surface-2 rounded transition text-text-muted hover:text-text"
                                 title="Copy update command"
                             >
                                 {copied ? <Check size={16} className="text-status-ok"/> : <Copy size={16}/>}
-                            </button>
+                            </Button>
                         )}
                     </div>
                 </div>

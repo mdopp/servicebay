@@ -13,9 +13,10 @@
  * those are mocked to feed a deterministic resources snapshot.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 const twinRef: { current: unknown } = { current: null };
+const updatesRef: { current: { count: number; list: string[] } } = { current: { count: 0, list: [] } };
 
 vi.mock('@/hooks/useDigitalTwin', () => ({
   useDigitalTwin: () => ({ data: twinRef.current }),
@@ -26,7 +27,7 @@ vi.mock('@/hooks/useSocket', () => ({
 vi.mock('@servicebay/api-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@servicebay/api-client')>()),
   fetchNodes: vi.fn(async () => []),
-  getSystemUpdates: vi.fn(async () => ({ count: 0, list: [] })),
+  getSystemUpdates: vi.fn(async () => updatesRef.current),
 }));
 vi.mock('@/providers/ToastProvider', () => ({
   useToast: () => ({ addToast: vi.fn() }),
@@ -74,6 +75,7 @@ function cardFor(headingText: string): HTMLElement {
 describe('SystemInfoContent layout (#1706/#1707)', () => {
   beforeEach(() => {
     twinRef.current = null;
+    updatesRef.current = { count: 0, list: [] };
   });
 
   it('renders ONE Network card with a folded-in DNS resolvers sub-section, no standalone DNS card', () => {
@@ -111,5 +113,32 @@ describe('SystemInfoContent layout (#1706/#1707)', () => {
     const networkCard = cardFor('Network Interfaces');
     expect(graphicsCard.className).not.toContain('md:col-span-2');
     expect(networkCard.className).not.toContain('md:col-span-2');
+  });
+
+  // sb/no-raw-ui-primitive sweep: the "Copy update command" control now
+  // renders through the shared Button primitive (@/components/ui) instead of
+  // a raw <button>. Assert it's a real button (data-variant) that still
+  // copies the update command and flips its icon/label.
+  it('renders the copy-update-command control as the Button primitive and copies the command', async () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+    updatesRef.current = { count: 3, list: ['pkg-a', 'pkg-b', 'pkg-c'] };
+    twinRef.current = makeTwin(['192.168.178.1']);
+
+    render(<SystemInfoContent />);
+
+    const copyBtn = await screen.findByTitle('Copy update command');
+    expect(copyBtn.tagName).toBe('BUTTON');
+    expect(copyBtn.getAttribute('data-variant')).toBe('ghost');
+
+    fireEvent.click(copyBtn);
+    expect(writeText).toHaveBeenCalledWith('sudo apt update && sudo apt upgrade -y');
+    await waitFor(() => expect(screen.getByTitle('Copy update command').querySelector('svg')).toBeTruthy());
+
+    // @ts-expect-error -- test-only cleanup of the defineProperty stub above
+    delete navigator.clipboard;
   });
 });
