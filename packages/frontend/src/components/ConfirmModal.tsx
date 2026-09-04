@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { Button, Input } from '@/components/ui';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -105,7 +106,7 @@ export default function ConfirmModal({
                   <label className="block text-xs text-text-subtle mb-1">
                     Type <span className="font-mono">{resourceName}</span> to confirm
                   </label>
-                  <input
+                  <Input
                     type="text"
                     value={typed}
                     onChange={(e) => setTyped(e.target.value)}
@@ -120,28 +121,25 @@ export default function ConfirmModal({
         </div>
 
         <div className="bg-surface-muted px-6 py-4 flex justify-end gap-3 border-t border-border">
-          <button
+          <Button
             ref={cancelButtonRef}
             onClick={handleCancel}
             disabled={isLoading}
-            className="px-4 py-2 text-text-muted hover:bg-surface-2 rounded-md transition-colors font-medium text-sm focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50"
+            variant="secondary"
           >
             {cancelText}
-          </button>
-          <button
+          </Button>
+          <Button
             ref={confirmButtonRef}
             onClick={handleConfirm}
             disabled={!canConfirm}
             aria-label={confirmText}
-            className={`px-4 py-2 text-on-accent rounded-md transition-colors font-medium text-sm shadow-sm flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-1 ${
-              isDestructive
-                ? 'bg-status-fail hover:bg-status-fail/80 focus:ring-status-fail'
-                : 'bg-accent-strong hover:bg-accent-strong/80 focus:ring-accent'
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
+            variant={isDestructive ? 'danger' : 'primary'}
+            className="flex items-center gap-2"
           >
             {isLoading && <Loader2 size={14} className="animate-spin" />}
             {confirmText}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
