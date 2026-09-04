@@ -8,6 +8,7 @@ import { TerminalRef } from '@/components/Terminal';
 import { fetchNodes } from '@servicebay/api-client';
 import { PodmanConnection } from '@servicebay/api-client';
 import { Select, SelectOption } from '@/components/Select';
+import { Button } from '@/components/ui';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 const Terminal = dynamic(() => import('@/components/Terminal'), { 
@@ -158,20 +159,22 @@ export default function TerminalDashboard() {
                             placeholder="Select node"
                             compact
                         />
-                        <button
+                        <Button
                             onClick={() => terminalRef.current?.clear()}
-                            className="p-2 text-text bg-surface-2 border border-border rounded hover:bg-surface shadow-sm transition-colors"
+                            variant="ghost"
+                            className="p-2"
                             title="Clear Terminal"
                         >
                             <Eraser size={18} />
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                             onClick={() => terminalRef.current?.reconnect()}
-                            className="p-2 text-text bg-surface-2 border border-border rounded hover:bg-surface shadow-sm transition-colors"
+                            variant="ghost"
+                            className="p-2"
                             title="Reconnect"
                         >
                             <RefreshCw size={18} />
-                        </button>
+                        </Button>
                     </div>
                 }
       />
