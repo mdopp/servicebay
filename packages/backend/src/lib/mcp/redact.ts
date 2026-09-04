@@ -18,7 +18,12 @@
  * than under-redact, but we also don't want to break diff readability
  * for unrelated values.
  *
- * Two passes:
+ * Three passes:
+ *
+ * 0. **Quadlet / systemd unit form** (#2792) — INI-shaped, not YAML:
+ *    `Environment=KEY=VALUE` and `PodmanArgs=… --env KEY=VALUE`. A
+ *    `.container`-kind service IS its unit file, so this is the only
+ *    shape its secrets ever take and the YAML pass below sees none of it.
  *
  * 1. **Named env-var pairs** — kube YAML form. Match `name: SOMETHING`
  *    followed by `value: X` (across one line or two), where SOMETHING
@@ -78,6 +83,94 @@ export function redactKubeYaml(text: string): string {
   });
 
   return out;
+}
+
+/**
+ * One shell-ish token: a bare run of non-space/non-quote characters, or a
+ * quoted run, or any concatenation of those (`KEY="a b"` is ONE token).
+ * Used with `.replace()` so the surrounding whitespace is preserved verbatim.
+ */
+const ASSIGNMENT_TOKEN = /(?:[^\s"']+|"[^"]*"|'[^']*')+/g;
+
+/** `FOO_PASSWORD` / `ACCOUNT_samba` / `clientSecret` — the union of the kube
+ *  pass's convention regex and the structural word matcher `isSecretKey`
+ *  already applies to `get_config` and the MCP audit log. One predicate, so a
+ *  name that is secret in YAML is secret in a unit file too (#2792). */
+function isSecretEnvName(name: string): boolean {
+  return SENSITIVE_NAME.test(name) || isSecretKey(name);
+}
+
+/**
+ * Redact one `KEY=VALUE` token, preserving whatever quoting it arrived with:
+ * `"KEY=v"`, `KEY="v"` and `KEY=v` all keep their shape. Returns the token
+ * unchanged when it is not an assignment, when the name is not secret-shaped,
+ * or when the value is empty (an empty value carries nothing to leak, and
+ * masking it would falsely suggest a secret is set).
+ */
+function redactAssignmentToken(token: string): string {
+  const outerQuote = token.length >= 2 && (token[0] === '"' || token[0] === "'") && token.at(-1) === token[0]
+    ? token[0]
+    : '';
+  const inner = outerQuote ? token.slice(1, -1) : token;
+  const m = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(inner);
+  if (!m) return token;
+  const [, name, rawValue] = m;
+  if (!isSecretEnvName(name) || rawValue === '') return token;
+  const valueQuote = rawValue.length >= 2
+    && (rawValue[0] === '"' || rawValue[0] === "'")
+    && rawValue.at(-1) === rawValue[0]
+    ? rawValue[0]
+    : '';
+  return `${outerQuote}${name}=${valueQuote}${REDACTED}${valueQuote}${outerQuote}`;
+}
+
+/**
+ * Redact secrets in a systemd/Quadlet unit body (#2792).
+ *
+ * A `.container`-kind service has no pod spec — the unit file *is* the
+ * artifact, so `get_service_files` hands back the `[Container]` section with
+ * its `Environment=` lines inline. `redactKubeYaml` only understands the YAML
+ * `name:`/`value:` shape, so those lines went out in plaintext.
+ *
+ *   Environment=SERVICEBAY_PASSWORD=hunter2   → Environment=SERVICEBAY_PASSWORD=<redacted>
+ *   Environment="SB_TOKEN=a b" TZ=Europe/Berlin
+ *                                            → Environment="SB_TOKEN=<redacted>" TZ=Europe/Berlin
+ *   PodmanArgs=--env API_KEY=abc --label a=b  → PodmanArgs=--env API_KEY=<redacted> --label a=b
+ *
+ * Deliberately NOT redacted: a Quadlet `Secret=<name>[,opt=…]` line, whose
+ * payload is a *reference* to a podman secret, never a literal — the value
+ * lives in podman's secret store and is not in the file. Masking the reference
+ * would only cost an operator the ability to see which secret is wired up (and
+ * would break the `get_service_files` → `update_service_yaml` round-trip for a
+ * field that leaks nothing).
+ *
+ * Safe to run over kube YAML as well: YAML carries no `Environment=` directive
+ * and no bare `--env KEY=VALUE`, so the pass is a no-op there.
+ */
+export function redactQuadletUnit(text: string): string {
+  if (!text) return text;
+
+  return text
+    .split('\n')
+    .map(line => {
+      // `Environment=` (systemd allows several assignments per line, quoted
+      // or not). Match the directive only at the head of the line so a value
+      // that merely mentions the word is left alone.
+      let out = line.replace(
+        /^([ \t]*Environment[ \t]*=)(.*)$/i,
+        (_m, prefix: string, rest: string) =>
+          prefix + rest.replace(ASSIGNMENT_TOKEN, redactAssignmentToken),
+      );
+      // `--env KEY=V`, `--env=KEY=V`, `-e KEY=V` — as passed through
+      // `PodmanArgs=` or `Exec=`. `--env-file=` does not match (no `=`/space
+      // straight after `--env`), and it names a path, not a value.
+      out = out.replace(
+        /(--env[=\s]+|(?:^|\s)-e\s+)((?:[^\s"']+|"[^"]*"|'[^']*')+)/g,
+        (_m, prefix: string, token: string) => prefix + redactAssignmentToken(token),
+      );
+      return out;
+    })
+    .join('\n');
 }
 
 /**
@@ -270,16 +363,53 @@ export function isSecretKey(key: string): boolean {
 
 /** Redact a `getServiceFiles` payload — touches yamlContent +
  *  serviceContent (which can echo the env-vars too via systemctl
- *  cat output), plus the rendered kube file. Path fields stay as-is. */
+ *  cat output), plus the rendered kube file. Path fields stay as-is.
+ *
+ *  Every field gets BOTH passes, because which one carries the secret depends
+ *  on the service's quadlet kind: a `.kube` service puts its env in the YAML
+ *  pod spec (`yamlContent`), while a `.container` service has no pod spec at
+ *  all and puts it in the unit body (`kubeContent`) as `Environment=` lines
+ *  (#2792). `serviceContent` is generator/`systemctl cat` output — unit-shaped
+ *  either way. Each pass is a no-op on the shape it does not own. */
 export function redactServiceFiles<T extends {
   kubeContent?: string;
   yamlContent?: string;
   serviceContent?: string;
 }>(files: T): T {
+  const redact = (text: string): string => redactQuadletUnit(redactKubeYaml(text));
   return {
     ...files,
-    kubeContent: redactKubeYaml(files.kubeContent ?? ''),
-    yamlContent: redactKubeYaml(files.yamlContent ?? ''),
-    serviceContent: redactKubeYaml(files.serviceContent ?? ''),
+    kubeContent: redact(files.kubeContent ?? ''),
+    yamlContent: redact(files.yamlContent ?? ''),
+    serviceContent: redact(files.serviceContent ?? ''),
   };
+}
+
+/**
+ * Redact the parsed env-var maps an unmanaged-bundle scan carries (#2792).
+ *
+ * `get_unmanaged_bundles` reads legacy compose/systemd units off the box and
+ * hands back `serviceTemplates[].environment` — a `Record<name, value>` of the
+ * values it found, i.e. the same secrets in a different container. Everything
+ * else on a bundle is shape (ids, images, ports, paths), so this is the only
+ * field that needs masking. Same name predicate as the unit pass, so a name
+ * that is secret in a `.container` file is secret here too.
+ */
+export function redactBundleEnvironments<T extends {
+  serviceTemplates?: { environment?: Record<string, string> }[];
+}>(bundles: T[]): T[] {
+  return bundles.map(bundle => {
+    if (!bundle.serviceTemplates?.length) return bundle;
+    return {
+      ...bundle,
+      serviceTemplates: bundle.serviceTemplates.map(template => {
+        if (!template.environment) return template;
+        const environment: Record<string, string> = {};
+        for (const [name, value] of Object.entries(template.environment)) {
+          environment[name] = isSecretEnvName(name) && value !== '' ? REDACTED : value;
+        }
+        return { ...template, environment };
+      }),
+    };
+  });
 }

@@ -19,7 +19,7 @@ import { ServiceName, TrashId, QuadletFileName, HostFilePath } from '@/lib/api/s
 import { checkExtraFileScope, DEFAULT_TEMPLATE_DATA_DIR } from '@/lib/services/deployRequest';
 import { getConfig } from '@/lib/config';
 import { ServiceManager } from '@/lib/services/ServiceManager';
-import { redactServiceFiles } from '../redact';
+import { redactBundleEnvironments, redactServiceFiles } from '../redact';
 import { loadServiceVariables } from '@/lib/install/savedVariables';
 import { nodeParam, resolveNode, textResult, errorResult, type ToolRegistration } from './context';
 
@@ -315,7 +315,10 @@ export function registerServiceTools({ server }: ToolRegistration) {
     async ({ node }) => {
       const nodeName = await resolveNode(node);
       const bundles = getUnmanagedBundles(nodeName);
-      return textResult(bundles);
+      // A bundle's `serviceTemplates[].environment` is the env map parsed out
+      // of the legacy unit — the same secrets `get_service_files` masks, just
+      // already unpacked into a record (#2792).
+      return textResult(redactBundleEnvironments(bundles));
     },
   );
 }

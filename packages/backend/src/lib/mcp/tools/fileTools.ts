@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { AgentExecutor } from '@/lib/agent/executor';
 import { largestDirsUnderDataDir } from '@/lib/diagnose/probes/disk';
 import { jailPath, realPathInJail, JAIL_ROOT } from '../pathJail';
-import { redactLogText } from '../redact';
+import { redactLogText, redactQuadletUnit } from '../redact';
 import { nodeParam, resolveNode, textResult, errorResult, type ToolRegistration } from './context';
 
 /**
@@ -93,7 +93,15 @@ export function registerFileTools({ server }: ToolRegistration) {
         const bad = await assertReadableRegularFile(exec, jailed.path, reqPath, limit);
         if (bad) return errorResult(bad);
         const content = await exec.readFile(jailed.path);
-        return textResult({ path: jailed.path, bytes: content.length, content: redactLogText(content) });
+        // Both passes: `redactLogText` catches the free-form `password:`/
+        // `token=` shapes, `redactQuadletUnit` the systemd/Quadlet
+        // `Environment=KEY=VALUE` shape this jail is full of — the unit files
+        // under /etc/containers/systemd carry their secrets that way (#2792).
+        return textResult({
+          path: jailed.path,
+          bytes: content.length,
+          content: redactQuadletUnit(redactLogText(content)),
+        });
       } catch (err) {
         return errorResult(`Error reading file: ${err instanceof Error ? err.message : String(err)}`);
       }
