@@ -16,7 +16,7 @@ import {
 import { logger, runServiceAction, type Check, type ServiceViewModel } from '@servicebay/api-client';
 import type { RowStatus } from '@/components/HealthChecks';
 import { useToast } from '@/providers/ToastProvider';
-import { Card, SectionHeading, StatusDot, type StatusState } from '@/components/ui';
+import { Button, Card, SectionHeading, StatusDot, type StatusState } from '@/components/ui';
 import { useServiceHealth, overallHealth, serviceBaseName } from './serviceHealth';
 
 const DOT_META: Record<RowStatus, { state: StatusState; label: string; text: string }> = {
@@ -216,9 +216,14 @@ function SummaryActions({
             <ExternalLink size={14} /> Open
           </a>
         )}
-        <button type="button" onClick={onRestart} disabled={restarting} className={`${ACTION_CLS} disabled:opacity-60`}>
+        <Button
+          variant="secondary"
+          onClick={onRestart}
+          disabled={restarting}
+          className={`h-auto ${ACTION_CLS} disabled:opacity-60`}
+        >
           {restarting ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />} Restart
-        </button>
+        </Button>
         {/* Always a real link (right-click / new-tab still work, and the href is
             the cross-page route to the log view). When the host page owns a log
             view, the click is handled in place instead of navigating. */}

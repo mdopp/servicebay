@@ -12,7 +12,7 @@
  * version", and the ordinary `:latest`-on-the-release state must be unchanged.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import ServiceBayUpdateCard from './ServiceBayUpdateCard';
 import { ToastProvider } from '@/providers/ToastProvider';
 
@@ -46,6 +46,30 @@ function stubUpdateStatus(status: unknown) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => ({ ok: true, json: async () => status })) as unknown as typeof fetch,
+  );
+}
+
+/** Like `stubUpdateStatus`, but a POST `configure` action echoes the
+ *  requested `enabled` value back in `config` — so the auto-update toggle
+ *  test below can observe a real flip instead of the GET snapshot. */
+function stubUpdateFlow(initial: { config: { autoUpdate: { enabled: boolean; schedule: string } } }) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST' && typeof init.body === 'string') {
+        const parsed = JSON.parse(init.body) as { action?: string; autoUpdate?: { enabled: boolean } };
+        if (parsed.action === 'configure' && parsed.autoUpdate) {
+          return {
+            ok: true,
+            json: async () => ({
+              success: true,
+              config: { autoUpdate: { enabled: parsed.autoUpdate!.enabled, schedule: '' } },
+            }),
+          };
+        }
+      }
+      return { ok: true, json: async () => initial };
+    }) as unknown as typeof fetch,
   );
 }
 
@@ -105,5 +129,25 @@ describe('ServiceBayUpdateCard — release channel + running build (#2708)', () 
 
     await waitFor(() => expect(screen.getByText('5.22.2')).toBeDefined());
     expect(screen.getByText(/You are on the latest version/i)).toBeDefined();
+  });
+
+  // sb/no-raw-ui-primitive sweep: the auto-update toggle now renders through
+  // the shared Input primitive (@/components/ui) instead of a raw
+  // <input type="checkbox">. Assert it's a real checkbox input reflecting
+  // config state, and that clicking it still round-trips through
+  // configureAutoUpdate and flips the displayed state.
+  it('renders the auto-update toggle as a ui Input checkbox and flips it on click', async () => {
+    stubUpdateFlow(ON_RELEASE);
+    renderCard();
+
+    await waitFor(() => expect(screen.getByText('5.22.2')).toBeDefined());
+
+    const toggle = screen.getByRole('checkbox') as HTMLInputElement;
+    expect(toggle.tagName).toBe('INPUT');
+    expect(toggle.checked).toBe(false);
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(toggle.checked).toBe(true));
   });
 });

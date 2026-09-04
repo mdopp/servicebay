@@ -8,7 +8,7 @@
  * sections for the rest) using the same Card surface as /services — and all
  * container data (name, image, status) is preserved.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const twinRef: { current: unknown } = { current: null };
@@ -94,5 +94,37 @@ describe('ContainersDashboard grouping optic (#2095)', () => {
     expect(screen.getByText('immich-server')).toBeDefined();
     expect(screen.getByText('immich:v1')).toBeDefined();
     expect(screen.getByText('nginx:latest')).toBeDefined();
+  });
+
+  // sb/no-raw-ui-primitive sweep: the "Show infrastructure containers" toggle
+  // now renders through the shared Input primitive (@/components/ui) instead
+  // of a raw <input type="checkbox">. Assert it's a real checkbox input that
+  // still drives the isInfra filter (hidden until checked).
+  it('renders the infra-containers toggle as a ui Input checkbox and reveals infra containers on click', async () => {
+    twinRef.current = {
+      nodes: {
+        Local: {
+          services: [{ name: 'nginx.service', associatedContainerIds: ['nginx-c'] }],
+          containers: [
+            { id: 'nginx-c', names: ['/nginx'], image: 'nginx:latest', state: 'running', status: 'Up', created: 0, ports: [] },
+            { id: 'infra-c', names: ['/infra'], image: 'infra:latest', state: 'running', status: 'Up', created: 0, ports: [], isInfra: true },
+          ],
+          unmanagedBundles: [],
+        },
+      },
+    };
+    render(<ContainersDashboard />);
+
+    await screen.findByTestId('containers-stack-groups');
+    expect(screen.queryByText('infra:latest')).toBeNull();
+
+    const toggle = screen.getByRole('checkbox', { name: /show infrastructure containers/i }) as HTMLInputElement;
+    expect(toggle.tagName).toBe('INPUT');
+    expect(toggle.checked).toBe(false);
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(screen.getByText('infra:latest')).toBeDefined());
+    expect(toggle.checked).toBe(true);
   });
 });

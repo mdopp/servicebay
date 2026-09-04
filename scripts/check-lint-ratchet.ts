@@ -1,11 +1,15 @@
 /**
- * Monotonic lint ratchet for the two staged design-system rules (#2430).
+ * Monotonic lint ratchet for staged design-system rules (#2430).
  *
- * `sb/no-raw-color-literal` and `sb/no-raw-ui-primitive` ship at `warn` with a
- * documented "burn down, then flip to error" plan (#2353). Warnings don't fail
- * anything, so the burn-down flatlined: zero net change over 36 commits, and
- * the only file-level movement was violations being *moved* (a component
- * extracted, the same eight primitives reappearing verbatim in the new file).
+ * A newly-staged rule ships at `warn` with a documented "burn down, then flip
+ * to error" plan instead of a one-shot fix (#2353's `sb/no-raw-color-literal`
+ * and `sb/no-raw-ui-primitive`, #2736's `sb/no-raw-api-fetch` — all three have
+ * since burned down to 0 and flipped to `error`; `RATCHETED_RULES` below is
+ * currently empty until the next one is staged). Warnings alone don't fail
+ * anything, so a plan that stays prose flatlines (measured: zero net change
+ * over 36 commits on the original two, with violations only *moved* — a
+ * component extracted, the same eight primitives reappearing verbatim in the
+ * new file).
  *
  * This gate makes the plan structural instead of advisory: the violation count
  * for each rule may only ever go DOWN. CI fails when a commit raises either
@@ -51,15 +55,21 @@ const BASELINE_FILE = path.join(REPO_ROOT, '.eslint-ratchet-baseline.json');
  * `sb/no-raw-color-literal` left the same way (#2353 colour-token migration
  * complete): its baseline hit 0, so it is now a hard `error` in
  * eslint.config.mjs.
+ *
+ * `sb/no-raw-ui-primitive` left the same way (#2353 <button>/<table>/<input>
+ * migration complete via the lint-sweep units): its baseline hit 0, so it is
+ * now a hard `error` in eslint.config.mjs.
+ *
+ * RATCHETED_RULES is empty for now — the next staged rule joins here the same
+ * way (warn + baseline entry) when one is introduced.
  */
-const RATCHETED_RULES = [
-    'sb/no-raw-ui-primitive',
-] as const;
+const RATCHETED_RULES: readonly string[] = [] as const;
 
 /**
- * All three rules are scoped to `packages/frontend/src/**` in eslint.config.mjs,
- * so linting that tree measures every violation there is while costing ~20s
- * instead of a full-repo run. Widen this if the rules' `files:` scope widens.
+ * Every rule that has staged through this gate so far is scoped to
+ * `packages/frontend/src/**` in eslint.config.mjs, so linting that tree
+ * measures every violation there is while costing ~20s instead of a
+ * full-repo run. Widen this if a future staged rule's `files:` scope widens.
  */
 const LINT_TARGETS = ['packages/frontend/src'];
 

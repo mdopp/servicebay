@@ -42,6 +42,7 @@ import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import type { DiagnoseProbe } from './DiagnoseProbeList';
 import { Loader2, Monitor, CheckCircle, ArrowRight, Minimize2, AlertTriangle, Layers } from 'lucide-react';
 import { Button } from './wizard/WizardUI';
+import { Button as UIButton } from '@/components/ui';
 import { WelcomeStep } from './wizard/steps/WelcomeStep';
 import { NetworkStep } from './wizard/steps/NetworkStep';
 import { EmailStep } from './wizard/steps/EmailStep';
@@ -1396,13 +1397,14 @@ export default function OnboardingWizard() {
                 </p>
               </div>
             </div>
-            <button
-                type="button"
+            <UIButton
+                variant="ghost"
                 onClick={() => setIsOpen(false)}
-                className="p-3 text-subtle hover:text-white hover:bg-white/10 rounded-2xl transition-all duration-300 border border-transparent hover:border-white/10"
+                aria-label="Minimize setup wizard"
+                className="h-auto w-auto p-3 text-subtle hover:text-white hover:bg-white/10 rounded-2xl transition-all duration-300 border border-transparent hover:border-white/10"
               >
                 <Minimize2 size={24} />
-            </button>
+            </UIButton>
           </header>
 
           <main className="flex-1 overflow-y-auto px-6 sm:px-8 md:px-12 pb-8 md:pb-12 scrollbar-thin">

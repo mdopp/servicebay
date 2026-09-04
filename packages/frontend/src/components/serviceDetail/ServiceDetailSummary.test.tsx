@@ -154,6 +154,16 @@ describe('ServiceDetailSummary', () => {
     expect(section.querySelector('button')).not.toBeNull();
   });
 
+  it('renders Restart as the Button primitive (data-variant)', async () => {
+    global.fetch = mockChecks([]);
+    renderSummary(<ServiceDetailSummary service={svc()} />);
+    await waitFor(() => expect(screen.getByText('No health checks for this service.')).toBeDefined());
+
+    const restart = screen.getByText('Restart').closest('button')!;
+    expect(restart.tagName).toBe('BUTTON');
+    expect(restart.getAttribute('data-variant')).toBe('secondary');
+  });
+
   it('Restart POSTs the service action and reports success', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();

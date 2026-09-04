@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import DashboardHydrationGate, { type HydrationPhase } from '@/components/DashboardHydrationGate';
-import { Search, SEARCH_SLOT_CLASS } from '@/components/ui';
+import { Input, Search, SEARCH_SLOT_CLASS } from '@/components/ui';
 import PageHeader from '@/components/PageHeader';
 import ContainerList, { type ContainerListItem } from '@/components/ContainerList';
 import { logger, type ServiceBundle } from '@servicebay/api-client';
@@ -135,7 +135,7 @@ export default function ContainersDashboard() {
                                 className={SEARCH_SLOT_CLASS}
                             />
                             <label className="flex items-center gap-2 text-sm text-text-muted select-none">
-                                <input
+                                <Input
                                     type="checkbox"
                                     checked={showInfra}
                                     onChange={(e) => setShowInfra(e.target.checked)}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Info, Loader2, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui';
 import { fetchTemplates, fetchReadme } from '@/app/actions';
 import {
   fetchPendingTemplateUpgrades,
@@ -164,20 +165,20 @@ export default function TemplateUpgradesPendingBanner() {
                     breaking
                   </span>
                 )}
-                <button
+                <Button
+                  size="sm"
                   onClick={() => openInstaller(p.name)}
                   disabled={loadingName === p.name}
-                  className={`ml-auto inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded text-on-accent disabled:opacity-50 ${
+                  className={`h-auto ml-auto inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded text-on-accent disabled:opacity-50 ${
                     p.hasBreakingChange
                       ? 'bg-status-warn hover:bg-status-warn/80'
                       : 'bg-status-info hover:bg-status-info/80'
                   }`}
-                  type="button"
                   title={p.hasBreakingChange ? 'Review changelog + acknowledge breaking changes, then re-deploy' : 'Re-deploy this service'}
                 >
                   {loadingName === p.name ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                   {p.hasBreakingChange ? 'Review & update' : 'Update & restart'}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
