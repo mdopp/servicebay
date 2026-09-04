@@ -168,15 +168,22 @@ layout duplicating `workAsyncStorage` so `getStore()` returns
 **Environment baked into image:**
 
 ```
-NODE_ENV=production    PORT=3000    HOSTNAME=0.0.0.0
-HOST_SSH=host.containers.internal   SSH_KEY_PATH=/root/.ssh/id_rsa
+NODE_ENV=production    PORT=3000    HOSTNAME=0.0.0.0    HOME=/home/nextjs
+HOST_SSH=host.containers.internal   SSH_KEY_PATH=/app/data/ssh/id_rsa
 ```
 
-Container runs as root internally (`USER root`, reasoned in the Dockerfile,
-#2722). The quadlet sets no `UserNS=`: under rootless podman the container's
-uid 0 already *is* the host user that runs it (`core`), which owns the
-bind-mounted podman socket, `/app/data` and the host SSH key. Running the image
-unprivileged therefore needs a quadlet + host-ownership change too — #2749.
+Container runs **unprivileged** as `nextjs` (uid 1001, gid 1001 `nodejs`) —
+`USER nextjs`, reasoned in the Dockerfile, #2789. Under rootless podman the
+container's uid 0 *is* the host user that runs the quadlet (`core`), which owns
+the bind-mounted podman socket, `/app/data` and the host SSH key — so dropping
+privilege only works together with a mapping that puts uid 1001 back onto
+`core`. That mapping is `UserNS=keep-id:uid=1001,gid=1001` on
+`servicebay.container`, and it is **not** in the butane template: the reconciler
+`packages/backend/src/lib/quadletUserNs.ts` (#2788) derives it from the user the
+image declares, at boot and after a channel swap, and removes it again if a
+rollback puts a root image back. No host-side chown of `${DATA_ROOT}/servicebay`
+is needed — `keep-id` makes the `core`-owned files appear as `nextjs`-owned
+inside the container.
 
 For a leaner local dev image that re-uses the host build (avoids
 running webpack inside the container), see `Dockerfile.dev` and

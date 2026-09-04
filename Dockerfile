@@ -86,6 +86,12 @@ WORKDIR /app
 ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
 ENV PATH="/app/node_modules/.bin:$PATH"
+# An explicit, writable HOME. podman derives one from /etc/passwd, but several
+# call sites read process.env.HOME directly and fall back to /root when it is
+# unset, or point a child at it: ssh.ts creates $HOME/.ssh for ssh-copy-id's
+# mktemp and spawns the PTY with `cwd: process.env.HOME`; git and ssh write
+# config/known_hosts there. /root is unreadable to the runtime user.
+ENV HOME=/home/nextjs
 
 # Install SSH client, Python, and git.
 # - SSH/Python: Agent V4 runs commands on the host over SSH.
@@ -103,8 +109,30 @@ RUN apt-get update && \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-RUN groupadd --system --gid 1001 nodejs
-RUN useradd --system --uid 1001 nextjs
+# The unprivileged runtime user (#2789, the image half of #2749). uid 1001 /
+# gid 1001 — and `--gid nodejs` is load-bearing, not tidiness: without it
+# useradd gives nextjs its OWN primary group, and since gid 1001 is already
+# taken by nodejs it silently picks an arbitrary free system gid. The boot
+# reconciler packages/backend/src/lib/quadletUserNs.ts derives the box's
+# `UserNS=keep-id:uid=<uid>,gid=<gid>` from `id` run inside THIS image, so that
+# arbitrary gid would be what every box's quadlet ends up mapping.
+RUN groupadd --system --gid 1001 nodejs && \
+    useradd --system --uid 1001 --gid nodejs --home-dir /home/nextjs --create-home nextjs
+
+# Own /app BEFORE anything is copied into it, and give every COPY below
+# `--chown=nextjs:nodejs`. That is the "chown /app" half of #2749, deliberately
+# not spelled as a trailing `RUN chown -R nextjs:nodejs /app`: a recursive chown
+# after the copies rewrites the metadata of every file under node_modules/ and
+# .next/, and the layer that produces carries a second copy of ~1 GB of file
+# data into the published image for no behavioural difference. Here /app is
+# still empty, so the same ownership costs nothing.
+#
+# /app/data is pre-created because the logger opens `process.cwd()/data`
+# (packages/backend/src/lib/logger.ts) as one of its first acts; on the box that
+# path is a bind of ${DATA_ROOT}/servicebay, but a missing mkdir must not be the
+# thing that takes the process down when it isn't.
+RUN mkdir -p /app/data /app/packages/frontend /app/src/lib/agent/v4 && \
+    chown -R nextjs:nodejs /app /home/nextjs
 
 # Runtime dependencies (libc) are standard in debian
 
@@ -128,11 +156,11 @@ RUN useradd --system --uid 1001 nextjs
 # because we run our own custom server (server.ts) that wires Socket.IO, MCP, and
 # PTY sessions around `next()`. Standalone rearranges `.next/` in a way that
 # breaks `app.prepare()` from a custom-server entry point under Next 16.
-COPY --from=builder /app/packages/frontend/.next ./packages/frontend/.next
+COPY --from=builder --chown=nextjs:nodejs /app/packages/frontend/.next ./packages/frontend/.next
 
 # Copy templates and stacks
-COPY --from=builder /app/templates ./templates
-COPY --from=builder /app/stacks ./stacks
+COPY --from=builder --chown=nextjs:nodejs /app/templates ./templates
+COPY --from=builder --chown=nextjs:nodejs /app/stacks ./stacks
 # The task-assist catalog (#2146) is deliberately NOT copied here (#2701).
 #
 # Baking it in made a catalog entry an image artifact: a `docs(assists):` commit
@@ -157,13 +185,13 @@ COPY --from=builder /app/stacks ./stacks
 # route reads `process.cwd()/src/content/help/<id>.md`, so the files must
 # exist at that exact path inside the runner image. Without this copy,
 # every help fetch returns "Help content not found".
-COPY --from=builder /app/packages/frontend/src/content ./src/content
-COPY --from=builder /app/CHANGELOG.md ./CHANGELOG.md
+COPY --from=builder --chown=nextjs:nodejs /app/packages/frontend/src/content ./src/content
+COPY --from=builder --chown=nextjs:nodejs /app/CHANGELOG.md ./CHANGELOG.md
 
 # Copy the pre-bundled custom server (CJS, runs under plain node — no tsx).
 # server.ts and src/ are NOT shipped to the runtime; everything imported by
 # server.ts is folded into dist-server/server.cjs by scripts/build-server.mjs.
-COPY --from=builder /app/dist-server ./dist-server
+COPY --from=builder --chown=nextjs:nodejs /app/dist-server ./dist-server
 
 # Python agent + shell scripts streamed over SSH to each managed node.
 # Read at runtime by packages/backend/src/lib/agent/handler.ts with paths
@@ -174,12 +202,12 @@ COPY --from=builder /app/dist-server ./dist-server
 # #750 — never made it into the Docker image until now, which is why
 # `SSH agent startup failed: ENOENT … nginx_inspector.sh` shows up at
 # agent boot).
-COPY --from=builder /app/packages/backend/src/lib/agent/v4/agent.py ./src/lib/agent/v4/agent.py
-COPY --from=builder /app/packages/backend/src/lib/agent/v4/quadlet_parser.py ./src/lib/agent/v4/quadlet_parser.py
-COPY --from=builder /app/packages/backend/src/lib/agent/v4/scripts ./src/lib/agent/v4/scripts
+COPY --from=builder --chown=nextjs:nodejs /app/packages/backend/src/lib/agent/v4/agent.py ./src/lib/agent/v4/agent.py
+COPY --from=builder --chown=nextjs:nodejs /app/packages/backend/src/lib/agent/v4/quadlet_parser.py ./src/lib/agent/v4/quadlet_parser.py
+COPY --from=builder --chown=nextjs:nodejs /app/packages/backend/src/lib/agent/v4/scripts ./src/lib/agent/v4/scripts
 
 # Copy production node_modules (with built native modules)
-COPY --from=prod-deps /app/node_modules ./node_modules
+COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 # npm sometimes deoptimizes hoisting and leaves runtime deps under
 # packages/*/node_modules instead of the root (e.g. nodemailer + semver after
 # the ^9.0.3 bump in 6a37174e). The pre-bundled server (dist-server/server.cjs)
@@ -189,42 +217,60 @@ COPY --from=prod-deps /app/node_modules ./node_modules
 # without them, so the container crash-looped on boot with "Cannot find module
 # 'nodemailer'". Merge any workspace-scoped deps into root (no-clobber so
 # hoisted copies always win) regardless of npm's hoisting decision.
-COPY --from=prod-deps /app/packages ./packages-proddeps
-RUN for d in packages-proddeps/*/node_modules; do [ -d "$d" ] && cp -rn "$d/." node_modules/; done; rm -rf packages-proddeps
-COPY --from=builder /app/package.json ./package.json
+COPY --from=prod-deps --chown=nextjs:nodejs /app/packages ./packages-proddeps
+COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
 
-# Runtime user: root, deliberately — 2026-09-02, #2722.
+# Runtime user: unprivileged — 2026-09-04, #2789 (the image half of #2749).
 #
-# This used to be a bare commented-out `# USER nextjs` with no reason attached,
-# which reads like an oversight. It is not. Under rootless podman the container's
-# uid 0 maps to the HOST user that runs the quadlet (`core`, uid 1000 on the box);
-# every other container uid lands in that user's subuid range and owns nothing on
-# the host. Three things the app then cannot do — all three checked against the
-# running box, not assumed:
+# It used to be `USER root`, and the reason was never the image: under rootless
+# podman the container's uid 0 maps to the HOST user that runs the quadlet
+# (`core`, uid 1000 on the box), and every other container uid lands in that
+# user's subuid range and owns nothing on the host. Three things depend on that
+# mapping, all three checked against the running box rather than assumed:
 #
 #   1. The Podman control plane. The quadlet binds the host's rootless socket
 #      /run/user/1000/podman/podman.sock -> /run/podman/podman.sock and points
-#      CONTAINER_HOST at it. That socket is core-owned, mode 0660, so a subuid
-#      gets EACCES and ServiceBay can no longer list or deploy a single service.
+#      CONTAINER_HOST at it. That socket is core-owned, mode 0660.
 #   2. DATA_DIR. /app/data is a bind of ${DATA_ROOT}/servicebay (core-owned,
 #      SELinux :Z). Boot writes into it — see packages/backend/src/lib/dirs.ts
 #      plus the mkdir/write paths in secrets.ts and nodes.ts.
 #   3. The host SSH identity. nodes.json points Agent V4 at
 #      /app/data/ssh/id_rsa (ssh://core@127.0.0.1). ssh refuses a private key it
-#      does not own, so the agent — and with it every host-side command — dies.
+#      does not own.
 #
-# Same mapping, same reason as packages/{backup-worker,disk-import-worker}/Containerfile.
+# What replaces uid 0 is the quadlet's `UserNS=keep-id:uid=1001,gid=1001`, which
+# maps host `core` onto container uid 1001 — so all three stay reachable while
+# the container no longer holds uid 0. That line is NOT written by hand and is
+# not in the butane template: the reconciler
+# packages/backend/src/lib/quadletUserNs.ts (#2788, shipped one release ahead of
+# this change) derives it at boot and after a channel swap from the user THIS
+# image declares, and removes it again when a rollback puts a root image back.
+# The two halves therefore move independently in either direction.
 #
-# So `USER nextjs` is not an image-only flip: the quadlet must pin the mapping
-# (UserNS=keep-id:uid=...,gid=...) and the host-side ownership of
-# ${DATA_ROOT}/servicebay + podman-socket group access has to move with it, all
-# landed together. That is issue #2749. The nextjs/nodejs ids created above are
-# left in place so the image half stays a two-line change (`chown -R
-# nextjs:nodejs /app` + `USER nextjs`) once the host half is ready.
+# Consequences, in the order they bite:
+#   - uid/gid here must stay the pair `id` reports inside the image (1001/1001,
+#     pinned by the groupadd/useradd above). The reconciler copies them verbatim
+#     into the host's quadlet.
+#   - NO host-side chown is required on an existing box: keep-id makes the
+#     core-owned socket, DATA_DIR and ssh key appear as nextjs-owned inside. If
+#     keep-id ever stops being how this is mapped, that turns into a real
+#     host-ownership migration.
+#   - Every step needing privilege (apt-get, groupadd/useradd, the /app chown)
+#     is ABOVE this line. Nothing below it may need root.
 #
-# Guard: tests/backend/dockerfile_runtime_user.test.ts — root is allowed only
-# while this reasoning is here, and a commented-out `# USER ...` fails the suite.
-USER root
+# packages/{backup-worker,disk-import-worker}/Containerfile still run as root
+# and still carry the old reasoning: they are one-shot workers the HOST starts
+# with their own mounts, not this container, and they are tracked separately
+# under #2749.
+#
+# Guard: tests/backend/dockerfile_runtime_user.test.ts.
+USER nextjs
+
+# Runs AFTER the switch, as nextjs, on purpose: `cp` as root would drop
+# root-owned files into the otherwise nextjs-owned node_modules, and repairing
+# that with a `chown -R node_modules` would duplicate the whole tree into a new
+# layer. Both source and destination are already nextjs-owned here.
+RUN for d in packages-proddeps/*/node_modules; do [ -d "$d" ] && cp -rn "$d/." node_modules/; done; rm -rf packages-proddeps
 
 EXPOSE 3000
 
@@ -232,6 +278,11 @@ ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
 # Container mode defaults - agent will SSH to host
 ENV HOST_SSH="host.containers.internal"
-ENV SSH_KEY_PATH="/root/.ssh/id_rsa"
+# Fallback identity for the agent's containerized branch
+# (packages/backend/src/lib/agent/v4/agent.py). It read /root/.ssh/id_rsa, a
+# path the unprivileged runtime user cannot open and which never held a key in
+# this image anyway; the real one is DATA_DIR/ssh/id_rsa (dirs.ts SSH_DIR),
+# which is where nodes.json points and which keep-id makes readable.
+ENV SSH_KEY_PATH="/app/data/ssh/id_rsa"
 
 CMD ["node", "dist-server/server.cjs"]

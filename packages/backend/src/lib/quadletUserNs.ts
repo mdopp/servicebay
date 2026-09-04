@@ -7,25 +7,27 @@
  * (`tools/sb/internal/build/assets/fedora-coreos.bu`); on an existing box
  * nothing on the host ever rewrites it. Under rootless podman the container's
  * uid 0 maps to the host user that drives the quadlet (`core`, uid 1000), which
- * is why the image ships `USER root` today: the podman socket (0660 core),
- * `/app/data` (core-owned bind) and `/app/data/ssh/id_rsa` (0600 core) are all
- * reachable only through that mapping. The moment the image declares a
+ * is why the image shipped `USER root` for so long: the podman socket (0660
+ * core), `/app/data` (core-owned bind) and `/app/data/ssh/id_rsa` (0600 core)
+ * are all reachable only through that mapping. The moment the image declares a
  * non-root user the mapping has to move with it — `UserNS=keep-id:uid=N,gid=N`
  * puts container uid N back onto host `core` — and neither half can ship
  * without the other: a non-root image on a mapping-less quadlet lands in the
  * subuid range and loses podman + `/app/data` + the ssh key; a remapped quadlet
  * under a still-root image loses exactly the same three things.
  *
+ * This module shipped one release AHEAD of the image change (#2788 → #2789), so
+ * every box was already reconciling before the first non-root image arrived.
+ *
  * So the mapping is **derived, not hard-coded**: this module reads the user the
  * image declares and writes the quadlet to match, in both directions.
  *
- *   - image runs as root (today)  → no `UserNS=` line. If a previous non-root
- *     image left one behind, it is **removed** — that is what makes a rollback
- *     (`:dev` → `:latest`, a release revert) safe rather than a brick.
- *   - image declares uid N ≠ 0    → `UserNS=keep-id:uid=N,gid=M`.
- *
- * On today's still-root box this is a **no-op**: nothing is inspected into a
- * change, nothing is written, the file is not touched.
+ *   - image runs as root            → no `UserNS=` line. If a non-root image
+ *     left one behind, it is **removed** — that is what makes a rollback to a
+ *     pre-#2789 image (`:dev` → `:latest`, a release revert) safe rather than a
+ *     brick.
+ *   - image declares uid N ≠ 0       → `UserNS=keep-id:uid=N,gid=M`. Since
+ *     #2789 that is the normal case: the image declares `nextjs` (1001/1001).
  *
  * Idempotent by construction (ADR 0012's reconciler guardrails): it computes
  * the desired file, compares it to the file on disk, and writes only on a real
@@ -68,7 +70,7 @@ type UserNsOutcome =
   | 'no-quadlet'
   /** The image could not be inspected; the quadlet is left exactly as it is. */
   | 'unreadable-image'
-  /** Image runs as root and the quadlet carries no mapping — today's no-op. */
+  /** Image runs as root and the quadlet carries no mapping — the pre-#2789 no-op. */
   | 'root-noop'
   /** Image runs as root and a stale mapping from a non-root image was removed. */
   | 'root-cleared'

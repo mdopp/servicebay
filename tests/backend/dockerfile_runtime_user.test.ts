@@ -11,8 +11,14 @@
  *
  * A commented-out `USER` cannot say that, so this test forbids the shape and
  * demands the reasoning instead: run unprivileged, or state — dated, with the
- * issue that tracks the way out — why not. When `USER nextjs` finally lands
- * (#2749), the root branch simply stops applying and this test stays green.
+ * issue that tracks the way out — why not. `USER nextjs` landed in #2789, so
+ * the root branch no longer applies; it is kept because a rollback to root is a
+ * legitimate move and must come back with its reasoning attached.
+ *
+ * The second describe block below is the #2789 half: it pins the *shape* the
+ * unprivileged image has to keep, because nothing else in the repo can catch a
+ * regression here — the image is only built at release time, and a wrong uid or
+ * a root-owned /app surfaces as a dead box, not as a red test.
  */
 
 import * as fs from 'fs';
@@ -90,6 +96,79 @@ describe('Dockerfile runtime user (#2722)', () => {
       missing,
       'The `USER root` justification must name the host-side constraints that force it, ' +
         `so a later reader can retest them. Missing: ${missing.join(', ')}`,
+    ).toEqual([]);
+  });
+});
+
+describe('Dockerfile unprivileged runtime (#2789)', () => {
+  /** Lines of the runner stage only — the build stages legitimately run as root. */
+  function runnerStage(): string[] {
+    const all = lines();
+    const start = all.findIndex((l) => /^FROM\s+\S+\s+AS\s+runner\s*$/.test(l));
+    expect(start, 'no `FROM ... AS runner` stage in the Dockerfile').toBeGreaterThanOrEqual(0);
+    return all.slice(start);
+  }
+
+  it('runs as nextjs, not root', () => {
+    const active = lines().filter((l) => /^\s*USER\s+\S/.test(l));
+    expect(active.map((l) => l.trim())).toEqual(['USER nextjs']);
+  });
+
+  it('creates nextjs as uid 1001 with nodejs (gid 1001) as its PRIMARY group', () => {
+    // The quadlet reconciler (packages/backend/src/lib/quadletUserNs.ts) derives
+    // `UserNS=keep-id:uid=<uid>,gid=<gid>` from `id` run inside this image and
+    // writes it into every box's servicebay.container. Drop `--gid nodejs` and
+    // useradd invents a primary group with an arbitrary free system gid —
+    // silently, and only visible as a broken mapping on the box.
+    const stage = runnerStage().join('\n');
+
+    expect(stage, 'nodejs must be gid 1001').toMatch(/groupadd\s+--system\s+--gid\s+1001\s+nodejs\b/);
+    expect(
+      stage,
+      'nextjs must be uid 1001 with an explicit `--gid nodejs`, or the uid/gid pair ' +
+        'the #2788 reconciler bakes into the host quadlet is whatever useradd picked.',
+    ).toMatch(/useradd\s+--system\s+--uid\s+1001\s+--gid\s+nodejs\b/);
+  });
+
+  it('gives the runtime user ownership of everything copied into /app', () => {
+    // `chown -R /app` after the copies would work too, but duplicates ~1 GB of
+    // node_modules/.next into a new layer — so ownership rides the COPYs.
+    const unowned = runnerStage()
+      .filter((l) => /^COPY\s+--from=/.test(l))
+      .filter((l) => !/--chown=nextjs:nodejs\b/.test(l));
+
+    expect(
+      unowned,
+      'Every COPY into the runner stage must carry `--chown=nextjs:nodejs`; a ' +
+        'root-owned path under /app is unwritable to the runtime user.',
+    ).toEqual([]);
+  });
+
+  it('keeps every privileged build step above the USER switch', () => {
+    const stage = runnerStage();
+    const at = stage.findIndex((l) => /^\s*USER\s+\S/.test(l));
+    // Instructions only — a comment below the switch is free to *mention* chown.
+    const after = stage
+      .slice(at + 1)
+      .filter((l) => !/^\s*#/.test(l))
+      .join('\n');
+
+    const privileged = [/\bapt-get\b/, /\bgroupadd\b/, /\buseradd\b/, /\bchown\b/];
+    const found = privileged.filter((re) => re.test(after)).map((re) => String(re));
+
+    expect(
+      found,
+      'A step that needs root cannot sit below `USER nextjs` — it fails the image build.',
+    ).toEqual([]);
+  });
+
+  it('points no runtime path at /root', () => {
+    const rooty = runnerStage().filter((l) => /^\s*ENV\s/.test(l) && /(^|[=":\s])\/root\//.test(l));
+
+    expect(
+      rooty.map((l) => l.trim()),
+      '/root is unreadable to the unprivileged runtime user, so a default that ' +
+        'points there is a silent failure waiting for the first caller.',
     ).toEqual([]);
   });
 });
