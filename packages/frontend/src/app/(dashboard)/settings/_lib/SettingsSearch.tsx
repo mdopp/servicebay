@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search } from '@/components/ui';
+import { Button, Search } from '@/components/ui';
 import { searchSettings, type SearchHit } from './ia';
 
 /**
@@ -62,20 +62,21 @@ function SearchResults({
         <div className="px-4 py-3 text-sm text-text-muted">No settings match “{query}”.</div>
       ) : (
         hits.map((hit, i) => (
-          <button
+          <Button
             key={hit.href}
             type="button"
+            variant="ghost"
             onMouseEnter={() => onHover(i)}
             onClick={() => onPick(hit)}
-            className={`w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left text-sm transition-colors ${
+            className={`h-auto w-full justify-between rounded-none gap-3 px-4 py-2.5 text-left text-sm ${
               i === activeIndex
-                ? 'bg-accent/10 text-accent'
-                : 'text-text hover:bg-surface-2'
+                ? 'bg-accent/10 text-accent hover:bg-accent/10 hover:text-accent'
+                : 'text-text hover:bg-surface-2 hover:text-text'
             }`}
           >
             <span className="font-medium">{hit.entry.label}</span>
             <span className="text-xs text-text-subtle">{hit.group.label}</span>
-          </button>
+          </Button>
         ))
       )}
     </div>
