@@ -10,6 +10,7 @@ import ServiceBayLogo from '@/components/ServiceBayLogo';
 import { Code, ArrowRight, Loader2, Shield, AlertTriangle } from 'lucide-react';
 import { fetchOidcStatus, login as loginRequest, TypedFetchError } from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
+import { Button, Input } from '@/components/ui';
 import pkg from '../../../package.json';
 
 const OIDC_ERRORS: Record<string, string> = {
@@ -120,7 +121,7 @@ export default function LoginPage() {
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-text mb-1">Username</label>
-              <input
+              <Input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -133,7 +134,7 @@ export default function LoginPage() {
 
             <div>
               <label className="block text-sm font-medium text-text mb-1">Password</label>
-              <input
+              <Input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -152,13 +153,13 @@ export default function LoginPage() {
               )}
             </div>
 
-            <button
+            <Button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 px-4 bg-accent hover:bg-accent-strong text-on-accent font-medium rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+              className="w-full"
             >
               {loading ? <Loader2 size={20} className="animate-spin" /> : <>Login <ArrowRight size={18} /></>}
-            </button>
+            </Button>
           </form>
           <p className="text-center text-xs text-text-muted mt-4">
             {oidcEnabled
