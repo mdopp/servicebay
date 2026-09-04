@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 import LogLevelControl from './LogLevelControl';
 import { ToastProvider } from '../providers/ToastProvider';
@@ -45,5 +45,21 @@ describe('LogLevelControl — design-system tokens (#2100)', () => {
     renderControl();
     // getByLabelText resolves only if the <label> htmlFor wires to the select id.
     await waitFor(() => expect(screen.getByLabelText('Verbosity Level')).toBeTruthy());
+  });
+
+  it('renders the ui Select primitive and wires onChange to persist the new level', async () => {
+    renderControl();
+    const select = (await waitFor(() => screen.getByLabelText('Verbosity Level'))) as HTMLSelectElement;
+    expect(select.tagName).toBe('SELECT');
+    expect(select.disabled).toBe(false);
+
+    fireEvent.change(select, { target: { value: 'debug' } });
+    expect(select.value).toBe('debug');
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        '/api/settings/logLevel',
+        expect.objectContaining({ method: 'PUT' }),
+      );
+    });
   });
 });

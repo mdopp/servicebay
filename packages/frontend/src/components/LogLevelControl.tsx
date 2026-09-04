@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { Settings, AlertCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { humanizeError, typedFetch } from '@servicebay/api-client';
-import { Field } from '@/components/ui';
+import { Field, Select } from '@/components/ui';
 
 // Zod schemas for API responses
 const LogLevelResponseSchema = z.object({
@@ -108,7 +108,7 @@ export default function LogLevelControl() {
 
         <Field label="Verbosity Level">
           {({ id, ...aria }) => (
-            <select
+            <Select
               id={id}
               {...aria}
               value={logLevel}
@@ -120,7 +120,7 @@ export default function LogLevelControl() {
               <option value="info">Info - Normal operation messages (default)</option>
               <option value="warn">Warn - Warnings and errors only</option>
               <option value="error">Error - Errors only</option>
-            </select>
+            </Select>
           )}
         </Field>
       </div>
