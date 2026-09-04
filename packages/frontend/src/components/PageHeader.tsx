@@ -3,6 +3,7 @@
 import { ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import SectionHelp from './SectionHelp';
+import { Button } from '@/components/ui';
 
 interface PageHeaderProps {
   title: string;
@@ -27,14 +28,15 @@ export default function PageHeader({ title, children, actions, showBack = false,
     <div className="flex items-center gap-4 p-4 border-b border-border bg-surface">
       <div className="flex items-center gap-4 shrink-0">
         {showBack && (
-          <button
+          <Button
+            variant="ghost"
             onClick={handleBack}
-            className="p-2 hover:bg-surface-2 rounded-full transition-colors"
+            className="h-auto w-auto p-2 rounded-full"
             title="Go Back"
             aria-label="Go back"
           >
             <ArrowLeft size={24} className="text-text-muted" />
-          </button>
+          </Button>
         )}
         <h1 className="text-xl font-bold text-text">{title}</h1>
         {helpId && <SectionHelp helpId={helpId} />}

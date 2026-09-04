@@ -36,7 +36,10 @@ describe('PageHeader', () => {
       value: { length: 5 },
     });
     renderWithToast(<PageHeader title="Sub Page" showBack />);
-    fireEvent.click(screen.getByLabelText('Go back'));
+    const backButton = screen.getByLabelText('Go back');
+    expect(backButton.tagName).toBe('BUTTON');
+    expect(backButton.getAttribute('data-variant')).toBe('ghost');
+    fireEvent.click(backButton);
     expect(backMock).toHaveBeenCalled();
   });
 
