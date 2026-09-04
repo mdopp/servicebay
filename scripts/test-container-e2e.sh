@@ -57,11 +57,46 @@ EOF
 ok "data volume seeded"
 
 # -----------------------------------------------------------------------------
+# 1b. Derive the container's user-namespace mapping. This has to mirror
+#     packages/backend/src/lib/quadletUserNs.ts (#2788/#2789) exactly: on the
+#     real box, the reconciler puts `UserNS=keep-id:uid=N,gid=N` onto
+#     servicebay.container whenever the image's declared USER is non-root, so
+#     that container uid N lands back on the host user owning /app/data. Skip
+#     that mapping here and a non-root image (nextjs, 1001/1001) gets root's
+#     view of the runner-owned $DATA_DIR bind instead of its own — EACCES on
+#     /app/data/config.json, SqliteError, login 500 (the #2794 smoke break).
+#     Keep this logic in step with quadletUserNs.ts's readDeclaredImageUser().
+# -----------------------------------------------------------------------------
+USERNS_ARGS=()
+DECLARED_USER=$(podman image inspect "$IMAGE" --format '{{.Config.User}}' 2>/dev/null || true)
+DECLARED_USER="${DECLARED_USER//[$'\r\n']}"
+if [[ -n "$DECLARED_USER" && "$DECLARED_USER" != "root" && "$DECLARED_USER" != "root:root" ]]; then
+  if [[ "$DECLARED_USER" =~ ^([0-9]+)(:([0-9]+))?$ ]]; then
+    USERNS_UID="${BASH_REMATCH[1]}"
+    USERNS_GID="${BASH_REMATCH[3]:-$USERNS_UID}"
+  else
+    # A NAME (e.g. "nextjs") only resolves inside the image's own
+    # /etc/passwd — ask the image, same as quadletUserNs.ts does.
+    USERNS_UID=$(podman run --rm --entrypoint id "$IMAGE" -u 2>/dev/null || true)
+    USERNS_GID=$(podman run --rm --entrypoint id "$IMAGE" -g 2>/dev/null || true)
+  fi
+  if [[ "$USERNS_UID" =~ ^[0-9]+$ && "$USERNS_GID" =~ ^[0-9]+$ && "$USERNS_UID" -ne 0 ]]; then
+    USERNS_ARGS=(--userns "keep-id:uid=$USERNS_UID,gid=$USERNS_GID")
+    ok "image declares uid $USERNS_UID/gid $USERNS_GID — running with --userns keep-id:uid=$USERNS_UID,gid=$USERNS_GID"
+  else
+    echo "  ! could not resolve a non-root uid/gid for $IMAGE (declared \"$DECLARED_USER\"); running without --userns" >&2
+  fi
+else
+  ok "image runs as root — no --userns mapping needed"
+fi
+
+# -----------------------------------------------------------------------------
 # 2. Start container
 # -----------------------------------------------------------------------------
 echo "→ starting container from $IMAGE"
 podman stop "$CONTAINER" 2>/dev/null; podman rm "$CONTAINER" 2>/dev/null
 CID=$(podman run -d --name "$CONTAINER" --network host \
+  "${USERNS_ARGS[@]}" \
   -e PORT="$PORT" \
   -e AUTH_SECRET="$(openssl rand -hex 32)" \
   -e SERVICEBAY_USERNAME="$ADMIN_USER" \
