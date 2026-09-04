@@ -29,6 +29,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { RefreshCcw, X } from 'lucide-react';
 import { useSocket } from '@/hooks/useSocket';
+import { Button } from '@/components/ui';
 
 interface ServerIdentity {
   sessionId: string;
@@ -113,24 +114,23 @@ export default function ServerIdentityWatcher() {
       <span className="text-sm text-text">
         ServiceBay updated
       </span>
-      <button
-        type="button"
+      <Button
         onClick={() => window.location.reload()}
-        className="text-xs font-medium px-2.5 py-1 rounded-full bg-status-warn hover:opacity-80 text-white"
+        className="h-auto px-2.5 py-1 text-xs rounded-full bg-status-warn hover:bg-status-warn hover:opacity-80 text-white"
       >
         Reload
-      </button>
-      <button
-        type="button"
+      </Button>
+      <Button
+        variant="ghost"
         aria-label="Dismiss"
         onClick={() => {
           setDismissed(true);
           setPending(false);
         }}
-        className="text-status-warn hover:text-text"
+        className="h-auto p-0 text-status-warn hover:text-text hover:bg-transparent"
       >
         <X size={14} />
-      </button>
+      </Button>
     </div>
   );
 }
