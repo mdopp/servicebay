@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, Save } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
-import { Button } from '@/components/ui';
+import { Button, Input } from '@/components/ui';
 import { fetchPortalSettings, updatePortalSettings, TypedFetchError } from '@servicebay/api-client';
 
 /**
@@ -80,7 +80,7 @@ export default function PortalAccessSection() {
             New access requests are blocked once approved users plus pending requests reach this. Lower it for a small household (e.g. 5).
           </p>
           <div className="flex items-center gap-2">
-            <input
+            <Input
               id="max-users"
               type="number"
               min={1}
@@ -109,16 +109,17 @@ export default function PortalAccessSection() {
               Serve <span className="font-mono">/portal</span> to home-network clients only. Visitors from the public internet see a short notice instead of the service grid.
             </p>
           </div>
-          <button
+          <Button
+            type="button"
             role="switch"
             aria-checked={lanOnly}
             aria-label="LAN-only portal"
             onClick={() => onToggleLanOnly(!lanOnly)}
             disabled={busy === 'save'}
-            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-chip transition-colors disabled:opacity-50 ${lanOnly ? 'bg-accent' : 'bg-surface-muted border border-border'}`}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-chip transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${lanOnly ? 'bg-accent' : 'bg-surface-muted border border-border'}`}
           >
             <span className={`inline-block h-4 w-4 transform rounded-chip bg-white transition-transform ${lanOnly ? 'translate-x-6' : 'translate-x-1'}`} />
-          </button>
+          </Button>
         </div>
     </>
   );
