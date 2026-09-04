@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import ConnectDeviceSection from './ConnectDeviceSection';
+import { copyToClipboard } from '../clipboard';
 
 vi.mock('../clipboard', () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }));
 
@@ -42,6 +43,21 @@ describe('ConnectDeviceSection (#2251)', () => {
     expect(screen.getByTestId('pair-code').textContent).toBe('ABC234');
     // A countdown is present (either "Expires in m:ss" or the expired notice).
     expect(screen.getByTestId('pair-countdown').textContent).toMatch(/Expires in|expired/);
+  });
+
+  it('the copy control is a Button primitive that copies the code and flips its label', async () => {
+    mockPairFetch('ABC234');
+    render(<ConnectDeviceSection />);
+    fireEvent.click(screen.getByTestId('pair-generate'));
+    await waitFor(() => expect(screen.getByTestId('pair-panel')).toBeDefined());
+
+    const copyBtn = screen.getByRole('button', { name: 'Copy code' });
+    expect(copyBtn.tagName).toBe('BUTTON');
+    expect(copyBtn.getAttribute('data-variant')).toBe('ghost');
+
+    fireEvent.click(copyBtn);
+    expect(copyToClipboard).toHaveBeenCalledWith('ABC234');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Copied' })).toBeDefined());
   });
 
   it('surfaces an error when /napi/pair rejects (e.g. no admin session)', async () => {

@@ -217,10 +217,16 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
             <span>Live Logs</span>
             <div className="flex items-center gap-space-2">
               {logs && (
-                <button onClick={handleCopyLogs} className="flex items-center gap-1 px-space-2 py-1 rounded-card hover:bg-surface-2 transition-colors normal-case" title="Copy logs">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleCopyLogs}
+                  className="h-auto w-auto gap-1 px-space-2 py-1 normal-case"
+                  title="Copy logs"
+                >
                   {copied ? <Check size={12} className="text-status-ok" /> : <Copy size={12} />}
                   <span className="text-[10px]">{copied ? 'Copied' : 'Copy'}</span>
-                </button>
+                </Button>
               )}
               {logsLoading && <RefreshCw size={14} className="animate-spin" />}
             </div>

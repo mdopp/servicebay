@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import Link from 'next/link';
 import { useCoreHealth } from '@/hooks/useCoreHealth';
+import { Button } from '@/components/ui';
 
 /**
  * Core-stack health banner (#627 / Phase 3B, enriched in #635 /
@@ -84,14 +85,15 @@ export default function CoreHealthBanner() {
             Feature installs are gated on core health. Open <Link href="/diagnose" className="underline font-medium">Self-diagnose</Link> for the full recovery path.
           </p>
         </div>
-        <button
+        <Button
           type="button"
+          variant="ghost"
           aria-label="Dismiss"
           onClick={dismiss}
-          className="shrink-0 p-1 rounded text-status-fail hover:text-status-fail/80 hover:bg-status-fail/10"
+          className="h-auto w-auto shrink-0 p-1 text-status-fail hover:bg-status-fail/10 hover:text-status-fail/80"
         >
           <X size={14} />
-        </button>
+        </Button>
       </div>
     </div>
   );

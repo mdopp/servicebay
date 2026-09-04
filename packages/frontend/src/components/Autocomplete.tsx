@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Input } from '@/components/ui';
 
 interface AutocompleteProps {
   options: string[];
@@ -55,7 +56,7 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
   return (
     <div ref={wrapperRef} className={`relative ${className}`}>
       <div className="relative">
-        <input
+        <Input
           type="text"
           className={`w-full p-2 border rounded bg-surface-2 border-border ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
           placeholder={loading ? 'Loading...' : placeholder}

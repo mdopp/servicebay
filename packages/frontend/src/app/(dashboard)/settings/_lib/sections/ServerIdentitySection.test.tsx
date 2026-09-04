@@ -32,4 +32,14 @@ describe('ServerIdentitySection (#2100 settings migration)', () => {
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     expect(persistSettings).toHaveBeenCalled();
   });
+
+  it('the name field is the shared Input primitive and still calls setServerName on change', () => {
+    render(<ServerIdentitySection />);
+    const input = screen.getByRole('textbox');
+    expect(input.tagName).toBe('INPUT');
+    expect(input.getAttribute('placeholder')).toBe('e.g. HomeServer, NAS, Production');
+
+    fireEvent.change(input, { target: { value: 'NAS' } });
+    expect(setServerName).toHaveBeenCalledWith('NAS');
+  });
 });

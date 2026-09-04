@@ -6,6 +6,7 @@ import { fetchFileContent } from '@servicebay/api-client';
 import FileViewer from '@/components/FileViewer';
 import FocusTrap from '@/components/FocusTrap';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { Button } from '@/components/ui';
 
 interface FileViewerOverlayProps {
   isOpen: boolean;
@@ -109,14 +110,15 @@ export default function FileViewerOverlay({ isOpen, path, nodeName, onClose }: F
             </div>
             <span className="text-xs uppercase tracking-wide text-text-subtle">Node: {nodeLabel}</span>
           </div>
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={onClose}
-            className="rounded-full p-2 text-text-muted hover:text-text hover:bg-surface"
+            className="h-auto w-auto rounded-full p-2 text-text-muted hover:bg-surface hover:text-text"
             aria-label="Close file viewer"
           >
             <X size={18} />
-          </button>
+          </Button>
         </div>
         <div className="flex-1 overflow-hidden">
           {isLoading ? (

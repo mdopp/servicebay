@@ -87,14 +87,16 @@ function ApprovalCard({ request, busy, onApprove, onReject }: ApprovalCardProps)
   return (
     <Card padding="none" className="transition-colors">
       <div className="p-3 flex items-start gap-3">
-        <button
+        <Button
+          type="button"
+          variant="ghost"
           onClick={() => setIsOpen(!isOpen)}
           disabled={!hasPayload}
-          className="p-1 text-text-subtle hover:bg-surface-2 rounded-card transition-colors disabled:opacity-30 disabled:cursor-default"
+          className="h-auto w-auto p-1 text-text-subtle hover:bg-surface-2 hover:text-text-subtle disabled:opacity-30 disabled:cursor-default"
           title={hasPayload ? (isOpen ? 'Collapse details' : 'Show details') : 'No additional details'}
         >
           {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-        </button>
+        </Button>
         <ApprovalCardHeader request={request} />
         <div className="flex items-center gap-1 shrink-0">
           <Button

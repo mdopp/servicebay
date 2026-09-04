@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { UserPlus } from 'lucide-react';
+import { Button } from '@/components/ui';
 import RequestAccessDialog from './RequestAccessDialog';
 
 /**
@@ -20,13 +21,15 @@ export default function RequestAccessButton() {
   return (
     <>
       <div className="mt-space-7 text-center">
-        <button
+        <Button
+          type="button"
+          variant="ghost"
           onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-space-2 px-space-4 py-2.5 bg-surface border border-border hover:border-accent hover:text-accent text-sm font-medium text-text-muted rounded-full transition-colors"
+          className="h-auto inline-flex items-center gap-space-2 px-space-4 py-2.5 bg-surface border border-border hover:border-accent hover:bg-surface hover:text-accent text-sm font-medium text-text-muted rounded-full transition-colors"
         >
           <UserPlus size={16} />
           Don&apos;t have an account yet?
-        </button>
+        </Button>
       </div>
 
       {open && <RequestAccessDialog onClose={() => setOpen(false)} />}

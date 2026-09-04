@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 import ContainerLogsPanel from './ContainerLogsPanel';
 
@@ -60,5 +60,36 @@ describe('ContainerLogsPanel — design-system tokens (#2100)', () => {
     // The console body stays a fixed dark terminal surface, not a Card.
     expect(container.querySelector('.bg-surface-muted')).toBeTruthy();
     expect(container.querySelector('.font-mono')).toBeTruthy();
+  });
+
+  it('the copy-logs control is a Button primitive that copies visible logs and flips its label', async () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/logs/stream')) {
+          return new Response('log line 1\n', { status: 200 });
+        }
+        return new Response(JSON.stringify({ Config: { Env: [] } }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }),
+    );
+
+    renderPanel();
+    const copyBtn = await screen.findByTitle('Copy logs');
+    expect(copyBtn.tagName).toBe('BUTTON');
+    expect(copyBtn.getAttribute('data-variant')).toBe('ghost');
+
+    fireEvent.click(copyBtn);
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('log line 1'));
+    await waitFor(() => expect(screen.getByText('Copied')).toBeTruthy());
+
+    // @ts-expect-error -- test-only cleanup of the defineProperty stub above
+    delete navigator.clipboard;
   });
 });

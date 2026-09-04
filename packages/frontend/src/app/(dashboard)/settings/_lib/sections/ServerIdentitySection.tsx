@@ -1,6 +1,6 @@
 'use client';
 
-import { Button } from '@/components/ui';
+import { Button, Input } from '@/components/ui';
 import { useSettings } from '../SettingsContext';
 
 export default function ServerIdentitySection() {
@@ -8,7 +8,7 @@ export default function ServerIdentitySection() {
 
   return (
     <div className="flex items-center gap-space-3">
-      <input
+      <Input
         type="text"
         value={serverName}
         onChange={e => setServerName(e.target.value)}

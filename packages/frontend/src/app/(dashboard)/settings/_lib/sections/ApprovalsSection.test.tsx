@@ -55,4 +55,29 @@ describe('ApprovalsSection (#2100 settings migration)', () => {
       expect(fetchMock).toHaveBeenCalledWith('/api/approvals/a1/approve', { method: 'POST' }),
     );
   });
+
+  it('the details toggle is a Button primitive that expands the payload on click', async () => {
+    mockFetch([PENDING]);
+    render(<ApprovalsSection />);
+    await waitFor(() => expect(screen.getByText('Restart immich')).toBeDefined());
+
+    const toggle = screen.getByTitle('Show details');
+    expect(toggle.tagName).toBe('BUTTON');
+    expect(toggle.getAttribute('data-variant')).toBe('ghost');
+    expect((toggle as HTMLButtonElement).disabled).toBe(false);
+
+    expect(screen.queryByText(/"foo": "bar"/)).toBeNull();
+    fireEvent.click(toggle);
+    expect(screen.getByText(/"foo": "bar"/)).toBeDefined();
+    expect(screen.getByTitle('Collapse details')).toBe(toggle);
+  });
+
+  it('disables the details toggle when the request has no payload', async () => {
+    mockFetch([{ ...PENDING, payload: {} }]);
+    render(<ApprovalsSection />);
+    await waitFor(() => expect(screen.getByText('Restart immich')).toBeDefined());
+
+    const toggle = screen.getByTitle('No additional details');
+    expect((toggle as HTMLButtonElement).disabled).toBe(true);
+  });
 });

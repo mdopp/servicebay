@@ -153,14 +153,15 @@ function PairPanel({
             <span className="font-mono text-2xl tracking-[0.3em] text-text" data-testid="pair-code">
               {pair.code}
             </span>
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={onCopy}
               aria-label={copied ? 'Copied' : 'Copy code'}
-              className="text-text-subtle hover:text-text"
+              className="h-auto w-auto p-0 text-text-subtle hover:bg-transparent hover:text-text"
             >
               {copied ? <Check size={16} /> : <Copy size={16} />}
-            </button>
+            </Button>
           </div>
         </div>
         <div data-testid="pair-countdown">
