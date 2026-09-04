@@ -10,6 +10,7 @@ import { isNavActive } from '@/config/navigation';
 import { useInstallJob } from '@/hooks/useInstallJob';
 import { useNavigationEntries } from '@/hooks/useNavigationEntries';
 import { useToast } from '@/providers/ToastProvider';
+import { Button } from '@/components/ui';
 
 const FIRST_VISIT_KEY = 'sb.mobileHintShown.v1';
 
@@ -83,21 +84,22 @@ export function MobileTopBar() {
            x-scrollable row — it never clips an icon off the screen. */}
        <div className="flex items-center gap-3 min-w-0 overflow-x-auto no-scrollbar">
           {hasActiveInstall && (
-            <button
+            <Button
               onClick={() => router.push('/setup')}
               className="relative transition-colors text-accent hover:text-accent-strong shrink-0"
               aria-label="Resume setup"
               title="Resume setup"
+              variant="ghost"
             >
               <Wrench size={20} />
               <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-accent animate-pulse" />
-            </button>
+            </Button>
           )}
           {internalTopEntries.map(p => {
             const Icon = p.icon;
             const isActive = p.path ? isNavActive(pathname, p.path) : false;
             return (
-              <button
+              <Button
                 key={p.id}
                 data-testid={`nav-${p.id}`}
                 onClick={() => router.push(p.href)}
@@ -108,9 +110,10 @@ export function MobileTopBar() {
                 }`}
                 aria-label={p.name}
                 title={p.name}
+                variant="ghost"
               >
                 <Icon size={20} />
-              </button>
+              </Button>
             );
           })}
           {/* App-leaving links, fenced off by a rule so they don't read as one
@@ -179,7 +182,7 @@ export function MobileBottomBar() {
           const Icon = p.icon;
           const isActive = p.path ? isNavActive(pathname, p.path) : false;
           return (
-             <button
+             <Button
                 key={p.id}
                 data-testid={`nav-${p.id}`}
                 onClick={() => router.push(p.href)}
@@ -190,10 +193,11 @@ export function MobileBottomBar() {
                     ? 'text-accent bg-surface-2'
                     : 'text-text-muted hover:bg-surface-2'
                 }`}
+                variant="ghost"
              >
                 <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
                 <span className={`text-[9px] leading-none font-medium ${isActive ? '' : 'opacity-70'}`}>{p.shortLabel}</span>
-             </button>
+             </Button>
           )
        })}
     </nav>
