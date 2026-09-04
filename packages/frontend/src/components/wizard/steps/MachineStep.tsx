@@ -4,6 +4,7 @@
 import { Globe, HardDrive, Layers, CheckCircle, AlertTriangle, Loader2, Monitor } from 'lucide-react';
 import type { Template } from '@servicebay/api-client';
 import { Input, Button } from '../WizardUI';
+import { Input as UIInput } from '@/components/ui';
 
 type WizardStep = 'welcome' | 'network' | 'email' | 'install-confirm' | 'stacks' | 'finish';
 
@@ -112,7 +113,7 @@ export function MachineStep({
                                 : 'bg-surface-2 dark:bg-surface border-border dark:border-border opacity-60'
                             }`}
                         >
-                            <input
+                            <UIInput
                                 id="mode-public-input"
                                 type="radio"
                                 name="installMode"
@@ -138,7 +139,7 @@ export function MachineStep({
                                 : 'bg-surface-2 dark:bg-surface border-border dark:border-border opacity-60'
                             }`}
                         >
-                            <input
+                            <UIInput
                                 id="mode-lan-input"
                                 type="radio"
                                 name="installMode"

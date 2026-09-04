@@ -97,6 +97,15 @@ describe('ServerIdentityWatcher — calm update prompt (#2203)', () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
+  it('Reload button reloads immediately', () => {
+    render(<ServerIdentityWatcher />);
+    emitIdentity({ sessionId: 'A', setupCompleted: true });
+    emitIdentity({ sessionId: 'B', setupCompleted: true });
+
+    act(() => screen.getByText('Reload').click());
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it('setupCompleted → false forces an immediate reload (reinstall wizard)', () => {
     render(<ServerIdentityWatcher />);
     emitIdentity({ sessionId: 'A', setupCompleted: true });

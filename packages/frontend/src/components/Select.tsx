@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef, ReactNode } from 'react';
 import { ChevronDown, Search, Check } from 'lucide-react';
+import { Button, Input } from '@/components/ui';
 
 export interface SelectOption {
   label: string;
@@ -108,10 +109,10 @@ export function Select({
 
   return (
     <div ref={wrapperRef} className={`relative ${className}`}>
-      <button
-        type="button"
+      <Button
+        variant="secondary"
         onClick={() => !disabled && setIsOpen(open => !open)}
-        className={`w-full ${compact ? 'min-w-0' : 'min-w-[220px]'} px-3 py-2 border rounded-card bg-surface border-border flex items-center justify-between gap-2 transition focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed ${disabled ? 'cursor-not-allowed' : ''}`}
+        className={`w-full ${compact ? 'min-w-0' : 'min-w-[220px]'} h-auto px-3 py-2 justify-between gap-2 bg-surface hover:bg-surface ${disabled ? 'cursor-not-allowed' : ''}`}
         disabled={disabled}
       >
         {selectedOption ? (
@@ -123,7 +124,7 @@ export function Select({
           <span className="text-sm text-text-subtle">{placeholder}</span>
         )}
         <ChevronDown size={16} className="text-text-muted shrink-0" />
-      </button>
+      </Button>
 
       {isOpen && (
         <div className="absolute z-40 mt-2 w-full rounded-card border border-border bg-surface shadow-xl">
@@ -131,7 +132,7 @@ export function Select({
             <div className="p-3 border-b border-border">
               <div className="relative">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-subtle" />
-                <input
+                <Input
                   ref={searchRef}
                   type="text"
                   value={query}

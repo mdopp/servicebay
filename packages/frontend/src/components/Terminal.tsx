@@ -5,6 +5,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { io, Socket } from 'socket.io-client';
 import { Eraser, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui';
 import '@xterm/xterm/css/xterm.css';
 
 export interface TerminalRef {
@@ -196,20 +197,22 @@ const Terminal = forwardRef<TerminalRef, TerminalProps>(({ id = 'host', showCont
         <div className="flex justify-between items-center p-4 border-b border-surface-2 bg-surface">
             <h2 className="text-xl font-bold text-foreground px-2">Terminal {id !== 'host' ? `(${id})` : ''}</h2>
             <div className="flex gap-2">
-                <button
+                <Button
+                    variant="ghost"
                     onClick={handleClear}
-                    className="p-2 text-text-muted hover:text-foreground hover:bg-surface-2 rounded transition-colors"
+                    className="h-auto p-2 rounded"
                     title="Clear Terminal"
                 >
                     <Eraser size={20} />
-                </button>
-                <button
+                </Button>
+                <Button
+                    variant="ghost"
                     onClick={handleReconnect}
-                    className="p-2 text-text-muted hover:text-foreground hover:bg-surface-2 rounded transition-colors"
+                    className="h-auto p-2 rounded"
                     title="Reconnect"
                 >
                     <RefreshCw size={20} />
-                </button>
+                </Button>
             </div>
         </div>
       )}

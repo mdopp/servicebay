@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, type LucideIcon } from 'lucide-react';
-import { Card } from '@/components/ui';
+import { Button, Card } from '@/components/ui';
 import type { SettingTier } from './ia';
 
 /** Icon-chip tone — maps to a semantic token pair (bg/10 + text). */
@@ -124,18 +124,19 @@ export default function SettingDisclosure({
   return (
     <Card ref={ref} id={id} padding="none" className="w-full overflow-hidden scroll-mt-24">
       <div className={`flex items-center bg-surface-2 ${open ? 'border-b border-border' : ''}`}>
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => setOpen(o => !o)}
           aria-expanded={open}
-          className="flex-1 flex items-center gap-space-3 px-space-4 py-space-3 text-left hover:bg-surface-muted transition-colors"
+          className="h-auto flex-1 justify-start rounded-none gap-space-3 px-space-4 py-space-3 text-left hover:bg-surface-muted"
         >
           <span className="shrink-0 text-text-muted">
             {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
           </span>
           {chip}
           {heading}
-        </button>
+        </Button>
         {headerAccessory && <div className="shrink-0 pr-space-4">{headerAccessory}</div>}
       </div>
       {open && <div className={bodyClass}>{children}</div>}

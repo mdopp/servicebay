@@ -63,4 +63,14 @@ describe('SettingsSearch — design-system migration (#2100 ds-migrate-shell)', 
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(pushMock).toHaveBeenCalledWith('/settings/general#name');
   });
+
+  it('clicking a result navigates to its href (Button primitive swap)', () => {
+    render(<SettingsSearch />);
+    const input = screen.getByLabelText('Search settings');
+    fireEvent.change(input, { target: { value: 'a' } });
+    const resultButton = screen.getByText('Portal access').closest('button')!;
+    expect(resultButton.getAttribute('type')).toBe('button');
+    fireEvent.click(resultButton);
+    expect(pushMock).toHaveBeenCalledWith('/settings/access#portal');
+  });
 });

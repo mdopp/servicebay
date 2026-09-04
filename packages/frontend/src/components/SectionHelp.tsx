@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { CircleHelp, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { fetchHelpContent, TypedFetchError } from '@servicebay/api-client';
+import { Button } from '@/components/ui';
 
 interface SectionHelpProps {
   helpId: string;
@@ -43,15 +44,15 @@ export default function SectionHelp({ helpId, label, className, title = 'Section
 
   return (
     <>
-      <button
-        type="button"
+      <Button
+        variant="ghost"
         onClick={handleOpen}
         className={buttonClasses}
         title={label || title}
       >
         <Icon size={iconOnly ? 20 : 16} />
         {label && <span>{label}</span>}
-      </button>
+      </Button>
 
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:p-6 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
@@ -61,12 +62,13 @@ export default function SectionHelp({ helpId, label, className, title = 'Section
                 <Icon size={20} className="text-accent" />
                 {title}
               </h3>
-              <button
+              <Button
+                variant="ghost"
                 onClick={() => setIsOpen(false)}
-                className="p-1 hover:bg-surface-2 rounded-full transition-colors"
+                className="h-auto p-1 text-text-muted hover:text-text"
               >
                 <X size={20} />
-              </button>
+              </Button>
             </div>
             
             <div className="p-6 overflow-y-auto prose dark:prose-invert prose-sm max-w-none">
