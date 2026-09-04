@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Check, ChevronDown } from 'lucide-react';
+import { Button, Input } from '@/components/ui';
 
 interface MultiSelectProps {
   options: string[];
@@ -70,13 +71,13 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
         {value.map(v => (
           <span key={v} className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-accent/10 text-accent rounded">
             {v}
-            <button onMouseDown={(e) => removeValue(v, e)} className="hover:text-accent-strong">
+            <Button variant="ghost" onMouseDown={(e) => removeValue(v, e)} className="h-auto p-0 text-inherit hover:text-accent-strong">
                 <X size={12} />
-            </button>
+            </Button>
           </span>
         ))}
         
-        <input
+        <Input
           ref={inputRef}
           type="text"
           className="flex-1 min-w-[60px] bg-transparent outline-none text-sm text-text"
