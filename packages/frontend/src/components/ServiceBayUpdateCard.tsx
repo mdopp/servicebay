@@ -5,7 +5,7 @@ import { CheckCircle2, Clock, Download, GitBranch, Loader2, RefreshCw, XCircle }
 import ReactMarkdown from 'react-markdown';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
-import { Badge, Button, Card, StatusDot } from '@/components/ui';
+import { Badge, Button, Card, Input, StatusDot } from '@/components/ui';
 import { fetchAppUpdateStatus, triggerAppUpdate, configureAutoUpdate, type AppUpdateStatus } from '@servicebay/api-client';
 
 /** Short commit for display — the running build's only distinguishing mark
@@ -199,7 +199,7 @@ export default function ServiceBayUpdateCard() {
             </Button>
             <div className="h-4 w-px bg-border"></div>
             <label className="relative inline-flex cursor-pointer items-center" title="Enable Auto-Updates">
-              <input
+              <Input
                 type="checkbox"
                 className="peer sr-only"
                 checked={appUpdate.config.autoUpdate.enabled}
