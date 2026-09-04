@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.28.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.27.0...servicebay-v5.28.0) (2026-09-04)
+
+
+### Features
+
+* **runtime:** run the ServiceBay container as nextjs instead of root ([e4c400b](https://github.com/mdopp/servicebay/commit/e4c400bd0c7fd8ffb1663c9df2e053d9b3bd2913)), closes [#2789](https://github.com/mdopp/servicebay/issues/2789)
+
+
+### Bug Fixes
+
+* **mcp:** redact Quadlet Environment secrets in service-file reads ([0730bb8](https://github.com/mdopp/servicebay/commit/0730bb8b10d85fdf2761a06822e66912c3434c78)), closes [#2792](https://github.com/mdopp/servicebay/issues/2792)
+
 ## [5.27.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.5...servicebay-v5.27.0) (2026-09-03)
 
 
