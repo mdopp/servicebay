@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { X, CheckCircle, AlertCircle, Info, AlertTriangle, Loader2 } from 'lucide-react';
-import { Card } from '@/components/ui';
+import { Button, Card } from '@/components/ui';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning' | 'loading';
 
@@ -147,13 +147,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                   </p>
                 )}
               </div>
-              <button
+              <Button
+                variant="ghost"
                 onClick={() => removeToast(toast.id)}
-                className="shrink-0 text-text-subtle hover:text-text transition-colors"
+                className="h-auto w-auto shrink-0 p-0 text-text-subtle hover:bg-transparent"
                 aria-label="Dismiss notification"
               >
                 <X size={18} />
-              </button>
+              </Button>
             </Card>
           );
         })}
