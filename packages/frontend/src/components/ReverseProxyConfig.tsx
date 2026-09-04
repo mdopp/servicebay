@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Shield, Download, Server, Check, RefreshCw, ExternalLink } from 'lucide-react';
 import { logger, fetchNginxStatus, installNginx } from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
+import { Button } from '@/components/ui';
 
 export default function ReverseProxyConfig() {
     const [loading, setLoading] = useState(false);
@@ -54,13 +55,15 @@ export default function ReverseProxyConfig() {
                     <Shield className="text-status-ok" />
                     Reverse Proxy (Nginx Proxy Manager)
                 </h2>
-                <button
+                <Button
                     onClick={checkStatus}
                     disabled={loading}
-                    className="p-2 text-text-muted hover:bg-surface-2 rounded-lg transition-colors"
+                    variant="ghost"
+                    size="sm"
+                    className="p-2"
                 >
                     <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
-                </button>
+                </Button>
             </div>
 
             <div className="flex-1 p-6 overflow-y-auto bg-surface-2">
@@ -88,10 +91,11 @@ export default function ReverseProxyConfig() {
                                     Nginx Proxy Manager provides a web UI for managing reverse proxy hosts, SSL certificates, and redirections.
                                     ServiceBay can install it automatically.
                                 </p>
-                                <button
+                                <Button
                                     onClick={handleInstall}
                                     disabled={installing}
-                                    className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent rounded-lg transition-colors disabled:opacity-50"
+                                    variant="primary"
+                                    className="flex items-center gap-2"
                                 >
                                     {installing ? (
                                         <>
@@ -104,7 +108,7 @@ export default function ReverseProxyConfig() {
                                             Install Nginx
                                         </>
                                     )}
-                                </button>
+                                </Button>
                             </div>
                         )}
 
