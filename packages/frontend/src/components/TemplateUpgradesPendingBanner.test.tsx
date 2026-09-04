@@ -11,6 +11,8 @@ vi.mock('@/app/actions', () => ({
 }));
 vi.mock('./InstallerModal', () => ({ default: () => null }));
 
+import { fetchTemplates } from '@/app/actions';
+
 const originalMatchMedia = window.matchMedia;
 
 function setViewport(wide: boolean) {
@@ -117,5 +119,22 @@ describe('TemplateUpgradesPendingBanner (#2604)', () => {
 
     renderBanner();
     await waitFor(() => expect(screen.getByText('immich')).not.toBeNull());
+  });
+
+  // sb/no-raw-ui-primitive sweep: each row's "Update & restart" action now
+  // renders through the shared Button primitive (@/components/ui) instead
+  // of a raw <button>. Assert it's still a real BUTTON (tagName +
+  // data-variant) and that clicking it still drives the same
+  // openInstaller flow (fetchTemplates lookup by name).
+  it('renders the row action as a ui Button and still opens the installer flow on click', async () => {
+    renderBanner();
+    await screen.findByText(/2 template upgrades available/i);
+
+    const [firstButton] = screen.getAllByRole('button', { name: /Update & restart/i });
+    expect(firstButton.tagName).toBe('BUTTON');
+    expect(firstButton.getAttribute('data-variant')).toBe('primary');
+
+    fireEvent.click(firstButton);
+    await waitFor(() => expect(fetchTemplates).toHaveBeenCalled());
   });
 });
