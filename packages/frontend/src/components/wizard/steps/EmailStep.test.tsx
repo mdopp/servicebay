@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
@@ -11,8 +12,18 @@ vi.mock('@servicebay/api-client', async (importOriginal) => ({
   saveEmailConfig,
 }));
 
-function cfg(over: Record<string, unknown> = {}) {
-  return { host: '', port: 587, secure: false, user: '', pass: '', from: '', recipients: '', ...over } as never;
+interface TestEmailConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  from: string;
+  recipients: string;
+}
+
+function cfg(over: Partial<TestEmailConfig> = {}): TestEmailConfig {
+  return { host: '', port: 587, secure: false, user: '', pass: '', from: '', recipients: '', ...over };
 }
 
 describe('EmailStep — design-system tokens (#2100)', () => {
@@ -51,5 +62,20 @@ describe('EmailStep — design-system tokens (#2100)', () => {
   it('disables verify until host, user, and recipients are present', () => {
     render(<EmailStep emailConfig={cfg()} setEmailConfig={() => {}} />);
     expect((screen.getByText(/Verify SMTP/).closest('button') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('renders the SSL/TLS toggle as a real checkbox input and wires onChange (ui Input primitive)', () => {
+    function Harness() {
+      const [emailConfig, setEmailConfig] = useState<TestEmailConfig>(cfg({ secure: false }));
+      return <EmailStep emailConfig={emailConfig} setEmailConfig={setEmailConfig} />;
+    }
+    render(<Harness />);
+    const checkbox = screen.getByLabelText('Use SSL/TLS') as HTMLInputElement;
+    expect(checkbox.tagName).toBe('INPUT');
+    expect(checkbox.type).toBe('checkbox');
+    expect(checkbox.checked).toBe(false);
+
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
   });
 });

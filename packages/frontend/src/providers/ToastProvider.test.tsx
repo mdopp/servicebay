@@ -90,11 +90,14 @@ describe('ToastProvider', () => {
     expect(screen.getAllByRole('status')).toHaveLength(2);
   });
 
-  it('dismiss button removes the toast', () => {
+  it('dismiss button renders as the ui Button primitive and removes the toast', () => {
     renderWithProvider(<Harness />);
     act(() => { fireEvent.click(screen.getByText('add-success')); });
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    act(() => { fireEvent.click(screen.getByLabelText('Dismiss notification')); });
+    const dismissBtn = screen.getByLabelText('Dismiss notification');
+    expect(dismissBtn.tagName).toBe('BUTTON');
+    expect(dismissBtn.getAttribute('data-variant')).toBe('ghost');
+    act(() => { fireEvent.click(dismissBtn); });
     expect(screen.queryAllByRole('status')).toHaveLength(0);
   });
 

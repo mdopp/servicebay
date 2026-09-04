@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Mail, CheckCircle, AlertCircle, ShieldCheck, Loader2 } from 'lucide-react';
 import { Input, Button } from '../WizardUI';
-import { Card } from '@/components/ui';
+import { Card, Input as UIInput } from '@/components/ui';
 import { saveEmailConfig, sendTestEmail } from '@servicebay/api-client';
 
 interface EmailConfig {
@@ -95,7 +95,7 @@ export function EmailStep({ emailConfig, setEmailConfig }: EmailStepProps) {
                       />
                       <div className="pb-1.5">
                         <label className="flex items-center gap-3 p-2.5 rounded-card border border-border hover:bg-surface-2 cursor-pointer transition-colors">
-                            <input type="checkbox" checked={emailConfig.secure} onChange={e => setEmailConfig(c => ({...c, secure: e.target.checked}))} className="w-4 h-4 rounded border-border text-accent focus:ring-accent" />
+                            <UIInput type="checkbox" checked={emailConfig.secure} onChange={e => setEmailConfig(c => ({...c, secure: e.target.checked}))} className="w-4 h-4 rounded border-border text-accent focus:ring-accent" />
                             <span className="text-sm font-medium text-text-muted">Use SSL/TLS</span>
                         </label>
                       </div>

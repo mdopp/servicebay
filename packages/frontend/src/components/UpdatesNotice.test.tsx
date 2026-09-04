@@ -44,7 +44,10 @@ describe('UpdatesNotice (#2604)', () => {
     render(notice());
     expect(screen.getByText('2 updates available')).not.toBeNull();
     expect(screen.queryByText('detail-row')).toBeNull();
-    expect(screen.getByTestId('updates-notice-toggle').getAttribute('aria-expanded')).toBe('false');
+    const toggle = screen.getByTestId('updates-notice-toggle');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.tagName).toBe('BUTTON');
+    expect(toggle.getAttribute('data-variant')).toBe('ghost');
   });
 
   it('stays expanded on a desktop viewport (no phone fix at the desktop’s expense)', () => {

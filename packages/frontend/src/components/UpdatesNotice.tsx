@@ -2,7 +2,7 @@
 
 import { useId, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { cn } from '@/components/ui';
+import { Button, cn } from '@/components/ui';
 
 /**
  * Collapsible "something is waiting for you" notice (#2604).
@@ -85,14 +85,14 @@ export default function UpdatesNotice({
     <div className={cn('rounded-card border', className)} data-testid={testId}>
       <div className="flex flex-wrap items-center gap-space-2 p-space-3">
         {icon ? <span className="shrink-0">{icon}</span> : null}
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           onClick={toggle}
           aria-expanded={open}
           aria-controls={detailId}
           data-testid={`${testId}-toggle`}
           title={open ? 'Hide the details' : 'Show the details'}
-          className="flex min-w-0 flex-1 items-center gap-space-2 text-left text-sm font-semibold text-text"
+          className="h-auto min-w-0 flex-1 justify-start gap-space-2 rounded-none p-0 text-left text-sm font-semibold text-text hover:bg-transparent hover:text-text"
         >
           <span className="min-w-0">{title}</span>
           <ChevronDown
@@ -100,7 +100,7 @@ export default function UpdatesNotice({
             aria-hidden="true"
             className={cn('ml-auto shrink-0 text-text-muted transition-transform', open && 'rotate-180')}
           />
-        </button>
+        </Button>
         {action ? <div className="shrink-0">{action}</div> : null}
       </div>
       {open && (

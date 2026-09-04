@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, RefreshCw, X } from 'lucide-react';
+import { Button } from '@/components/ui';
 import {
   fetchReinstallStatus,
   dismissReinstallBanner,
@@ -140,15 +141,15 @@ export default function RestoreStatusBanner() {
             </p>
           )}
         </div>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           aria-label="Dismiss"
           disabled={dismissing}
           onClick={dismiss}
-          className="shrink-0 p-1 rounded text-text-subtle hover:text-text hover:bg-surface-2 disabled:opacity-50"
+          className="h-auto w-auto shrink-0 p-1 rounded text-text-subtle"
         >
           <X size={16} />
-        </button>
+        </Button>
       </div>
     </div>
   );
