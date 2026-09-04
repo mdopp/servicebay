@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { HistoryEntry, typedFetch, apiFetch } from '@servicebay/api-client';
 import { Loader2, RotateCcw, Clock } from 'lucide-react';
 import * as Diff from 'diff';
+import { Button } from '@/components/ui';
 
 // Zod schemas for API responses
 const HistoryListResponseSchema = z.array(z.object({
@@ -106,8 +107,8 @@ export default function HistoryViewer({ filename, currentContent, onRestore }: H
         ) : (
             <div className="space-y-1 pr-2">
                 {history.map(entry => (
-                    <button
-                        type="button"
+                    <Button
+                        variant="ghost"
                         key={entry.timestamp}
                         onClick={() => handleSelectVersion(entry.timestamp)}
                         className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
@@ -117,7 +118,7 @@ export default function HistoryViewer({ filename, currentContent, onRestore }: H
                         }`}
                     >
                         {entry.displayDate}
-                    </button>
+                    </Button>
                 ))}
             </div>
         )}
@@ -129,13 +130,13 @@ export default function HistoryViewer({ filename, currentContent, onRestore }: H
                     <h3 className="font-bold text-text">
                         Comparing: <span className="text-accent">{selectedVersion}</span> vs Current
                     </h3>
-                    <button
-                        type="button"
+                    <Button
+                        variant="primary"
                         onClick={() => onRestore(versionContent)}
-                        className="flex items-center gap-2 bg-status-warn hover:brightness-75 text-foreground px-3 py-1.5 rounded text-sm font-medium shadow-sm transition-colors"
+                        className="flex items-center gap-2"
                     >
                         <RotateCcw size={16} /> Restore this version
-                    </button>
+                    </Button>
                 </div>
                 <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-surface p-4 shadow-inner">
                     {loadingVersion ? <Loader2 className="animate-spin mx-auto" /> : renderDiff()}
