@@ -331,6 +331,32 @@ describe('OnboardingWizard', () => {
         });
     });
 
+    // sb/no-raw-ui-primitive sweep: the header's minimize control now
+    // renders through the shared Button primitive (@/components/ui)
+    // instead of a raw <button>. Assert it renders as that primitive
+    // (tagName + data-variant, matching the PageHeader precedent) and
+    // that clicking it still closes the wizard (setIsOpen(false)).
+    it('renders the header minimize control as a ui Button and closes the wizard on click', async () => {
+        (checkOnboardingStatus as any).mockResolvedValue(needsSetupStatus);
+
+        render(<OnboardingWizard />);
+
+        await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
+
+        const minimizeButton = await waitFor(() =>
+            screen.getByRole('button', { name: /Minimize setup wizard/i }),
+        ) as HTMLButtonElement;
+        expect(minimizeButton.tagName).toBe('BUTTON');
+        expect(minimizeButton.getAttribute('data-variant')).toBe('ghost');
+
+        fireEvent.click(minimizeButton);
+
+        await waitFor(() => {
+            expect(screen.queryByRole('button', { name: /Minimize setup wizard/i })).toBeNull();
+        });
+    });
+
     it('submits gateway config', async () => {
         (checkOnboardingStatus as any).mockResolvedValue(needsSetupStatus);
 
