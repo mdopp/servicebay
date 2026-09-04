@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { CheckCircle } from 'lucide-react';
+import { Button as UIButton, Input as UIInput } from '@/components/ui';
 
 interface ToggleProps {
     checked: boolean;
@@ -54,7 +55,7 @@ export function Input({ label, value, onChange, placeholder, type = 'text', hint
    return (
       <div className="space-y-1.5">
         <label className="block text-[11px] font-bold text-text-muted uppercase tracking-wider ml-1">{label}</label>
-        <input
+        <UIInput
             type={type}
             className={`w-full px-4 py-2.5 bg-surface-2 border rounded-xl focus:ring-2 focus:ring-accent outline-none text-sm transition-all shadow-sm text-text ${
                 error ? 'border-status-fail' : 'border-border focus:border-accent'
@@ -83,13 +84,14 @@ export function Button({ children, onClick, disabled, className, variant = 'prim
     };
 
     return (
-        <button
+        <UIButton
+            variant="ghost"
             onClick={onClick}
             disabled={disabled}
-            className={`px-6 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg active:scale-95 ${variants[variant]} ${className}`}
+            className={`h-auto px-6 py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg active:scale-95 ${variants[variant]} ${className}`}
             {...props}
         >
             {children}
-        </button>
+        </UIButton>
     )
 }
