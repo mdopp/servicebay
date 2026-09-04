@@ -205,13 +205,24 @@ describe('Template migration scripts — Docker image coverage (#2166)', () => {
     const text = fs.readFileSync(DOCKERFILE, 'utf-8');
     // The copy must be a *directory* copy (src ends in `templates`), not a
     // glob like `templates/*/template.yml` that would exclude migrations.
-    const dirCopy = /COPY\s+--from=\S+\s+\S*\/templates\s+\.\/templates\b/.test(text);
+    // Tolerate any number of extra `--option[=value]` flags between `--from=`
+    // and the source (e.g. `--chown=nextjs:nodejs`) — those don't narrow what
+    // gets copied, only who owns it.
+    const dirCopy = /COPY\s+--from=\S+(?:\s+--\S+)*\s+\S*\/templates\s+\.\/templates\b/.test(text);
     expect(
       dirCopy,
       'Dockerfile must copy the templates/ directory wholesale into the runner image ' +
-      '(`COPY --from=builder /app/templates ./templates`). A per-file glob risks dropping ' +
-      'migration scripts, which surfaces on the box as "migration chain incomplete".',
+      '(`COPY --from=builder /app/templates ./templates`, optionally with extra flags like ' +
+      '`--chown=...`). A per-file glob risks dropping migration scripts, which surfaces on ' +
+      'the box as "migration chain incomplete".',
     ).toBe(true);
+    // Negative check: the intent must still catch a narrowed, per-file glob
+    // copy — flags alone must not make this assertion vacuously true.
+    const dirCopyRe = /COPY\s+--from=\S+(?:\s+--\S+)*\s+\S*\/templates\s+\.\/templates\b/;
+    expect(
+      dirCopyRe.test('COPY --from=builder --chown=nextjs:nodejs /app/templates/*/template.yml ./templates'),
+      'sanity check: a per-file glob copy must not match the dir-copy pattern',
+    ).toBe(false);
   });
 
   it('every on-disk migration file lives under templates/ (so the dir copy covers it)', () => {

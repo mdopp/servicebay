@@ -136,6 +136,27 @@ describe('read_file (#1872)', () => {
     expect(readFile).not.toHaveBeenCalled();
     await client.close();
   });
+
+  // #2792 — the jail holds systemd/Quadlet unit files, whose secrets are
+  // INI-shaped (`Environment=KEY=VALUE`), not YAML. `redactLogText` alone
+  // covers password/token/secret keywords but not `*_KEY` or `ACCOUNT_*`.
+  it('redacts Quadlet Environment= secrets in the returned content', async () => {
+    readFile.mockResolvedValue([
+      '[Container]',
+      'Environment=PORT=5888',
+      'Environment=SERVICEBAY_PASSWORD=FGhl06NSRwfWbEQhs8vOfnB5yhxRmD9X',
+      'Environment=ROOM_KEY=room-key-here',
+      'Environment=ACCOUNT_samba=supersecretvalue',
+    ].join('\n'));
+    const { client } = await connectClient();
+    const res = await client.callTool({ name: 'read_file', arguments: { path: 'stacks/app/app.container' } });
+    const text = (res.content as { text: string }[])[0].text;
+    for (const secret of ['FGhl06NSRwfWbEQhs8vOfnB5yhxRmD9X', 'room-key-here', 'supersecretvalue']) {
+      expect(text, `${secret} must not reach the client`).not.toContain(secret);
+    }
+    expect(text).toContain('Environment=PORT=5888');
+    await client.close();
+  });
 });
 
 describe('list_dir (#1872)', () => {

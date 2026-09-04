@@ -19,6 +19,16 @@ vi.mock('@/lib/services/ServiceManager', () => ({
   },
 }));
 
+// #2792 — get_service_files also reads the saved-variable record (#2785).
+// Stub the config so that readback is deterministic and never touches disk.
+const getConfig = vi.fn(async () => ({
+  installedVariables: [
+    { service: 'servicebay', varName: 'SERVICEBAY_PASSWORD', kind: 'secret', value: '' },
+    { service: 'servicebay', varName: 'SERVICEBAY_PORT', kind: 'text', value: '5888', default: '8080' },
+  ],
+}));
+vi.mock('@/lib/config', () => ({ getConfig: () => getConfig() }));
+
 async function connectClient() {
   const { createMcpServer } = await import('./server');
   const server = createMcpServer();
@@ -114,6 +124,76 @@ describe('update_service_yaml — .container Quadlet routing (#1778)', () => {
     expect(res.isError).toBeFalsy();
     expect(deployKubeService).toHaveBeenCalledTimes(1);
     expect(deployContainerQuadlet).not.toHaveBeenCalled();
+    await client.close();
+  });
+});
+
+// #2792 — a `.container`-kind service IS its unit file, so `get_service_files`
+// hands the whole `[Container]` body back. `redactKubeYaml` only understood the
+// YAML pod-spec shape, so `Environment=SERVICEBAY_PASSWORD=<real value>` went
+// out to every MCP client in plaintext.
+const SERVICEBAY_UNIT = [
+  '[Unit]',
+  'Description=ServiceBay',
+  '',
+  '[Container]',
+  'Image=ghcr.io/mdopp/servicebay:latest',
+  'Environment=CONTAINER_HOST=unix:///run/podman/podman.sock',
+  'Environment=PORT=5888',
+  'Environment=SERVICEBAY_USERNAME=admin',
+  'Environment=SERVICEBAY_PASSWORD=FGhl06NSRwfWbEQhs8vOfnB5yhxRmD9X',
+  'Environment=SERVICEBAY_MCP_TOKEN=sb_livetokenvalue123',
+  'PodmanArgs=--env ROOM_KEY=room-key-here',
+  '',
+  '[Install]',
+  'WantedBy=default.target',
+].join('\n');
+
+describe('get_service_files — .container secrets are redacted (#2792)', () => {
+  beforeEach(() => {
+    getServiceFiles.mockReset();
+    getConfig.mockClear();
+  });
+
+  it('never returns a Quadlet Environment= secret value to an MCP client', async () => {
+    getServiceFiles.mockResolvedValue({
+      kubeContent: SERVICEBAY_UNIT,
+      yamlContent: '',
+      serviceContent: `# /etc/containers/systemd/servicebay.container\n${SERVICEBAY_UNIT}`,
+      quadletKind: 'container',
+      kubePath: '/etc/containers/systemd/servicebay.container',
+    });
+    const { client } = await connectClient();
+    const res = await client.callTool({ name: 'get_service_files', arguments: { node: 'local', name: 'servicebay' } });
+    expect(res.isError).toBeFalsy();
+    const payload = JSON.stringify(res.content);
+
+    // Secret-signature scan over the whole tool output — nothing leaks by any
+    // field, not just the one we happened to assert on.
+    for (const secret of ['FGhl06NSRwfWbEQhs8vOfnB5yhxRmD9X', 'sb_livetokenvalue123', 'room-key-here']) {
+      expect(payload, `${secret} must not reach the client`).not.toContain(secret);
+    }
+    expect(payload).toContain('SERVICEBAY_PASSWORD=<redacted>');
+    // Non-secret content still readable — the unit stays diagnosable.
+    expect(payload).toContain('Environment=PORT=5888');
+    expect(payload).toContain('SERVICEBAY_USERNAME=admin');
+    expect(payload).toContain('/etc/containers/systemd/servicebay.container');
+    await client.close();
+  });
+
+  it('keeps #2785 saved-variable behaviour: secrets named, never valued', async () => {
+    getServiceFiles.mockResolvedValue({
+      kubeContent: SERVICEBAY_UNIT, yamlContent: '', serviceContent: '', quadletKind: 'container',
+    });
+    const { client } = await connectClient();
+    const res = await client.callTool({ name: 'get_service_files', arguments: { node: 'local', name: 'servicebay' } });
+    const payload = JSON.parse((res.content as { text: string }[])[0].text) as {
+      installedVariables: { name: string; value: string | null; storedIn?: string }[];
+    };
+    expect(payload.installedVariables).toEqual([
+      { name: 'SERVICEBAY_PASSWORD', value: null, storedIn: 'installedSecrets' },
+      { name: 'SERVICEBAY_PORT', value: '5888', isTemplateDefault: false },
+    ]);
     await client.close();
   });
 });
