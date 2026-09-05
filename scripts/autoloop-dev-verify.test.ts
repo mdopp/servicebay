@@ -1,5 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  buildDevVerifyMarker,
+  clearDevVerifyMarker,
+  decideChannelRecovery,
+  isHarnessProcessAlive,
+  markerBudgetSec,
+  readDevVerifyMarker,
+  recoverExitCode,
+  recoverStrandedChannel,
+  writeDevVerifyMarker,
+  DEV_VERIFY_MARKER_PATH,
+  type ChannelRecoveryDeps,
+  type DevVerifyMarker,
+} from './autoloop-dev-verify';
 import {
   revisionMatchesSha,
   confirmFlipBack,
@@ -1140,5 +1156,289 @@ describe('runDevVerify — a set_channel client timeout is pull-in-progress (#28
     expect(outcome.flipTimeout).toBeNull();
     expect(calls.probes).toBe(0);
     expect(calls.flipBacks).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The in-flight marker + `--recover` (#2826).
+//
+// The 2026-09-05 strand: the orchestrator and its background harness run INSIDE
+// the `claude-dev` container, a FULL verify's probes upgraded that very service,
+// the container was recreated at 17:24:53Z, and the harness's process tree died
+// mid-flip — so the `finally` flip-back never ran and the box sat on `:dev`
+// until an operator flipped it back at 17:51Z. A detached child would have died
+// with the container too; only state that outlives the container closes this.
+// ---------------------------------------------------------------------------
+
+const MARKER_OPTS = { imageTimeout: 900, flipBackTimeout: 900 };
+const T0 = Date.parse('2026-09-05T17:23:00.000Z');
+
+function marker(overrides: Partial<DevVerifyMarker> = {}): DevVerifyMarker {
+  return { ...buildDevVerifyMarker(SHORT, MARKER_OPTS, { now: T0, pid: 4242 }), ...overrides };
+}
+
+describe('buildDevVerifyMarker / markerBudgetSec', () => {
+  it('expires after the run’s own budgets, not on a fixed guess', () => {
+    const m = marker();
+    expect(Date.parse(m.expiresAt) - Date.parse(m.flippedAt)).toBe(markerBudgetSec(MARKER_OPTS) * 1000);
+    expect(markerBudgetSec(MARKER_OPTS)).toBeGreaterThan(MARKER_OPTS.imageTimeout + MARKER_OPTS.flipBackTimeout);
+  });
+
+  it('records the sha, the pid and the argv fingerprint that pid must carry', () => {
+    expect(marker()).toMatchObject({ sha: SHORT, channel: 'dev', pid: 4242, cmdlineMatch: 'autoloop-dev-verify' });
+  });
+});
+
+describe('the marker file round-trips through a path that outlives the container', () => {
+  it('writes, reads back and clears — creating .claude/state if it is missing', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'sb-marker-'));
+    try {
+      expect(readDevVerifyMarker(DEV_VERIFY_MARKER_PATH, cwd)).toBeNull();
+      writeDevVerifyMarker(marker(), DEV_VERIFY_MARKER_PATH, cwd);
+      expect(existsSync(join(cwd, DEV_VERIFY_MARKER_PATH))).toBe(true);
+      expect(readDevVerifyMarker(DEV_VERIFY_MARKER_PATH, cwd)).toMatchObject({ sha: SHORT, pid: 4242 });
+      clearDevVerifyMarker(DEV_VERIFY_MARKER_PATH, cwd);
+      expect(readDevVerifyMarker(DEV_VERIFY_MARKER_PATH, cwd)).toBeNull();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('lives under the gitignored .claude/state/, and is NOT the broker cache or the verify result file', () => {
+    expect(DEV_VERIFY_MARKER_PATH.startsWith('.claude/state/')).toBe(true);
+    expect(DEV_VERIFY_MARKER_PATH).not.toContain('autoloop-cache');
+    expect(DEV_VERIFY_MARKER_PATH).not.toContain('work-queue');
+    expect(DEV_VERIFY_MARKER_PATH).not.toContain('box-verify');
+  });
+
+  it('treats a corrupt marker as no marker — nothing can be proven in flight from it', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'sb-marker-'));
+    try {
+      writeDevVerifyMarker(marker(), DEV_VERIFY_MARKER_PATH, cwd);
+      rmSync(join(cwd, DEV_VERIFY_MARKER_PATH));
+      expect(readDevVerifyMarker(DEV_VERIFY_MARKER_PATH, cwd)).toBeNull();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('isHarnessProcessAlive', () => {
+  it('is alive only when the pid still carries the harness argv', () => {
+    expect(isHarnessProcessAlive(marker(), () => 'node .../tsx scripts/autoloop-dev-verify.ts 64b19601')).toBe(true);
+  });
+
+  it('is dead when the pid is gone (the container was recreated)', () => {
+    expect(isHarnessProcessAlive(marker(), () => null)).toBe(false);
+  });
+
+  it('REJECTS a recycled pid — a recreated container restarts pid numbering, so some live process WILL hold it', () => {
+    expect(isHarnessProcessAlive(marker(), () => '/usr/bin/node /opt/claude/cli.js')).toBe(false);
+  });
+});
+
+describe('decideChannelRecovery — a :dev box no live harness owns is stranded (#2826)', () => {
+  const alive = { channel: 'dev', marker: marker(), harnessAlive: true, now: T0 + 60_000 };
+
+  it('REPAIRS when the harness that took the flip is gone — the #2826 scenario', () => {
+    const d = decideChannelRecovery({ ...alive, harnessAlive: false });
+    expect(d.action).toBe('repair');
+    expect(d.staleMarker).toBe(true);
+    expect(d.reason).toContain('container');
+  });
+
+  it('REPAIRS when the box is on :dev with no marker at all (a hand-flip, or a marker lost)', () => {
+    expect(decideChannelRecovery({ ...alive, marker: null, harnessAlive: false })).toMatchObject({ action: 'repair' });
+  });
+
+  it('REPAIRS when a matching pid is still alive but the run blew its whole budget', () => {
+    const past = Date.parse(marker().expiresAt) + 1;
+    expect(decideChannelRecovery({ ...alive, now: past })).toMatchObject({ action: 'repair', staleMarker: true });
+  });
+
+  it('REPAIRS on a corrupt expiry rather than trusting it', () => {
+    expect(decideChannelRecovery({ ...alive, marker: marker({ expiresAt: 'not-a-date' }) })).toMatchObject({
+      action: 'repair',
+    });
+  });
+
+  it('LEAVES a live in-flight run alone — the recovery must not fight the harness', () => {
+    const d = decideChannelRecovery(alive);
+    expect(d.action).toBe('harness-in-flight');
+    expect(d.staleMarker).toBe(false);
+  });
+
+  it('does nothing when the box is on :latest, but drops a marker left behind there', () => {
+    expect(decideChannelRecovery({ ...alive, channel: 'latest' })).toMatchObject({
+      action: 'not-on-dev',
+      staleMarker: true,
+    });
+    expect(decideChannelRecovery({ ...alive, channel: 'latest', marker: null })).toMatchObject({ staleMarker: false });
+  });
+
+  it('never flips blind: a null channel is "no answer", not "on :latest"', () => {
+    expect(decideChannelRecovery({ ...alive, channel: null, marker: null })).toMatchObject({
+      action: 'channel-unknown',
+    });
+  });
+});
+
+function makeRecoveryDeps(overrides: Partial<ChannelRecoveryDeps> = {}) {
+  const calls = { setChannel: [] as string[], cleared: 0 };
+  const deps: ChannelRecoveryDeps = {
+    getChannel: async () => 'dev',
+    setChannel: async target => {
+      calls.setChannel.push(target);
+    },
+    readMarker: () => marker(),
+    clearMarker: () => {
+      calls.cleared++;
+    },
+    isAlive: () => false,
+    now: () => T0 + 60_000,
+    ...overrides,
+  };
+  return { deps, calls };
+}
+
+describe('recoverStrandedChannel — the preflight repair pass', () => {
+  it('flips a stranded box back to :latest and drops the marker', async () => {
+    const { deps, calls } = makeRecoveryDeps();
+    const result = await recoverStrandedChannel(deps);
+    expect(calls.setChannel).toEqual(['latest']);
+    expect(calls.cleared).toBe(1);
+    expect(result).toMatchObject({ action: 'repair', repaired: true, error: null, markerSha: SHORT });
+    expect(recoverExitCode(result)).toBe(0);
+  });
+
+  it('does NOT flip while a live harness owns the flip', async () => {
+    const { deps, calls } = makeRecoveryDeps({ isAlive: () => true });
+    const result = await recoverStrandedChannel(deps);
+    expect(calls.setChannel).toEqual([]);
+    expect(calls.cleared).toBe(0);
+    expect(result.action).toBe('harness-in-flight');
+    expect(recoverExitCode(result)).toBe(0);
+  });
+
+  it('does NOT flip when the box did not answer get_channel', async () => {
+    const { deps, calls } = makeRecoveryDeps({ getChannel: async () => null, readMarker: () => null });
+    const result = await recoverStrandedChannel(deps);
+    expect(calls.setChannel).toEqual([]);
+    expect(recoverExitCode(result)).toBe(2);
+  });
+
+  it('reports a FAILED repair as the same hard-alert exit 5 as a failed flip-back', async () => {
+    const { deps } = makeRecoveryDeps({ setChannel: boom('mcp set_channel failed (HTTP 502)') });
+    const result = await recoverStrandedChannel(deps);
+    expect(result).toMatchObject({ action: 'repair', repaired: false });
+    expect(result.error).toContain('502');
+    expect(recoverExitCode(result)).toBe(5);
+  });
+
+  it('KEEPS the marker when the repair failed — it is the only record of who stranded the box', async () => {
+    const { deps, calls } = makeRecoveryDeps({ setChannel: boom('boom') });
+    await recoverStrandedChannel(deps);
+    expect(calls.cleared).toBe(0);
+  });
+
+  it('clears a marker left behind on a box that is already back on :latest', async () => {
+    const { deps, calls } = makeRecoveryDeps({ getChannel: async () => 'latest' });
+    const result = await recoverStrandedChannel(deps);
+    expect(calls.setChannel).toEqual([]);
+    expect(calls.cleared).toBe(1);
+    expect(result.action).toBe('not-on-dev');
+  });
+});
+
+describe('runDevVerify writes the marker before the flip and drops it only on a confirmed flip-back', () => {
+  function markerDeps(overrides: Partial<DevVerifyRunDeps> = {}) {
+    const events: string[] = [];
+    const base = makeRunDeps({
+      setChannel: async () => {
+        events.push('flip');
+      },
+      ...overrides,
+    });
+    const deps: DevVerifyRunDeps = {
+      ...base.deps,
+      markFlipped: () => events.push('mark'),
+      clearMark: () => events.push('clear'),
+    };
+    return { deps, events, calls: base.calls };
+  }
+
+  it('marks BEFORE the flip POST — a marker written after it misses the fatal window', async () => {
+    const { deps, events } = markerDeps();
+    await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(events.indexOf('mark')).toBeLessThan(events.indexOf('flip'));
+    expect(events[events.length - 1]).toBe('clear');
+  });
+
+  it('marks even when the flip POST is refused — the POST may still have landed', async () => {
+    const { deps, events } = markerDeps({ setChannel: boom('mcp set_channel failed (HTTP 502)') });
+    await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(events).toContain('mark');
+    expect(events).toContain('clear'); // the flip-back was confirmed, so the marker goes
+  });
+
+  it('KEEPS the marker when the flip-back failed — that is what --recover repairs', async () => {
+    const stranded: FlipBackResult = {
+      flippedBack: false,
+      channel: 'dev',
+      reissues: 5,
+      polls: 60,
+      detail: 'box still reports :dev after 900s',
+    };
+    const { deps, events } = markerDeps({ flipBack: async () => stranded });
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(devVerifyExitCode(outcome)).toBe(5);
+    expect(events).toContain('mark');
+    expect(events).not.toContain('clear');
+  });
+
+  it('never marks a run that never flipped (no :dev image on the registry)', async () => {
+    const { deps, events } = markerDeps({ waitForDevPush: async () => NOT_PUSHED });
+    await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(events).not.toContain('mark');
+  });
+
+  it('fails CLOSED when the marker cannot be written — no unrecoverable flip', async () => {
+    const base = makeRunDeps();
+    const deps: DevVerifyRunDeps = {
+      ...base.deps,
+      markFlipped: () => {
+        throw new Error('EROFS: read-only file system');
+      },
+    };
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(outcome.failure).toMatchObject({ step: 'flip-to-dev' });
+    expect(base.calls.setChannel).toBe(0); // the box was never flipped
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Playbook guards (#2826): the two prose rules that back the marker are as
+// load-bearing as the code, and prose is what an LLM skips (CLAUDE.md). Same
+// shape as the credential guard in scripts/autoloop-box.test.ts.
+// ---------------------------------------------------------------------------
+
+describe('the playbooks carry the #2826 rules', () => {
+  const skill = readFileSync('.claude/skills/autoloop-issues/SKILL.md', 'utf8');
+  const boxVerify = readFileSync('.claude/skills/autoloop-issues/stages/box-verify.md', 'utf8');
+
+  it('SKILL.md Step 0 probes the channel and repairs through the script', () => {
+    const step0 = skill.slice(skill.indexOf('## Step 0'), skill.indexOf('## Step 1'));
+    expect(step0).toMatch(/get_channel/);
+    expect(step0).toMatch(/autoloop:dev-verify -- --recover/);
+  });
+
+  it('box-verify.md forbids a FULL verify from upgrading/restarting the service the agent runs in', () => {
+    expect(boxVerify).toMatch(/claude-dev/);
+    expect(boxVerify).toMatch(/#2826/);
+    expect(boxVerify).toMatch(/[Nn]ever[\s\S]{0,80}(upgrade|restart|recreate)/);
+  });
+
+  it('both name the marker path, so a reader can find the state the recovery reads', () => {
+    expect(`${skill}${boxVerify}`).toContain(DEV_VERIFY_MARKER_PATH);
   });
 });
