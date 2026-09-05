@@ -283,6 +283,16 @@ export function redactLogText(text: string): string {
   return out;
 }
 
+const PEM_PRIVATE_BEGIN = '-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----';
+const PEM_PRIVATE_END = '-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----';
+
+/** A line that is nothing but a PEM private-key BEGIN/END marker. The markers
+ *  carry no key material — `redactPemPrivateKeys` preserves them on purpose —
+ *  so any later pass walking the same lines must leave them alone (#2838). */
+const PEM_PRIVATE_MARKER_LINE = new RegExp(
+  `^[ \\t]*(?:${PEM_PRIVATE_BEGIN}|${PEM_PRIVATE_END})[ \\t]*$`,
+);
+
 /**
  * Mask the body of every PEM **private**-key block (#2828).
  *
@@ -301,8 +311,8 @@ export function redactLogText(text: string): string {
  */
 function redactPemPrivateKeys(text: string): string {
   if (!text.includes('PRIVATE KEY')) return text;
-  const label = '-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----';
-  const end = '-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----';
+  const label = PEM_PRIVATE_BEGIN;
+  const end = PEM_PRIVATE_END;
   let out = text.replace(
     new RegExp(`^([ \\t]*)(${label})[\\s\\S]*?^[ \\t]*(${end})`, 'gm'),
     (_m, indent: string, begin: string, terminator: string) =>
@@ -407,6 +417,18 @@ function redactYamlBlockScalars(text: string): string {
         continue;
       }
       if (contIndent <= keyIndent) break;
+      // Leave the lines that carry nothing (#2838): `redactPemPrivateKeys`
+      // runs first in `redactLogText` and has already collapsed any PEM body
+      // to a single `<redacted>` line while deliberately keeping its
+      // `-----BEGIN/END … PRIVATE KEY-----` markers. Re-masking those here
+      // swallowed the markers whenever the block's own key name was
+      // secret-shaped (`key: |` — Authelia's real OIDC JWK shape), so the
+      // operator could no longer tell a private key from any other blob.
+      if (PEM_PRIVATE_MARKER_LINE.test(cont) || cont.trim() === REDACTED) {
+        out.push(cont);
+        i++;
+        continue;
+      }
       out.push(' '.repeat(contIndent) + REDACTED);
       i++;
     }
@@ -467,13 +489,32 @@ const splitKeyWords = (key: string): string[] =>
  */
 export function isSecretKey(key: string): boolean {
   const words = splitKeyWords(key);
-  for (const word of words) {
-    if (SECRET_WORDS.has(word)) return true;
-    // Plurals: `installedSecrets` → `secrets`, `apiKeys` → `keys`.
-    if (word.endsWith('s') && SECRET_WORDS.has(word.slice(0, -1))) return true;
-  }
+  const secretWords = words.filter(isSecretWord);
+  if (secretWords.length > 0 && !isKeyIdentifierName(words, secretWords)) return true;
   const flat = words.join('');
   return SECRET_SUFFIXES.some(suffix => flat.endsWith(suffix) || flat.endsWith(`${suffix}s`));
+}
+
+/** One word of a key name, secret-shaped? Plurals count: `installedSecrets` →
+ *  `secrets`, `apiKeys` → `keys`. */
+const isSecretWord = (word: string): boolean =>
+  SECRET_WORDS.has(word) || (word.endsWith('s') && SECRET_WORDS.has(word.slice(0, -1)));
+
+/**
+ * `key_id` / `keyId` / `key_ids` — an identifier that *references* a key, not
+ * the key itself (#2838). Authelia's `identity_providers.oidc.jwks[].key_id`
+ * is the JWK's public `kid`; masking it costs the operator the ability to see
+ * which key is wired up and hides nothing (the `key:` beside it still masks).
+ *
+ * Narrow on purpose: the exemption applies only when `key` is the ONLY
+ * secret-shaped word in the name, so a name where the identifier IS the
+ * credential — Vault AppRole's `secret_id`, a `password_id`, a `token_id` —
+ * stays masked. The tie-break still leans redact everywhere else.
+ */
+function isKeyIdentifierName(words: string[], secretWords: string[]): boolean {
+  const last = words.at(-1);
+  if (last !== 'id' && last !== 'ids') return false;
+  return secretWords.every(word => word === 'key' || word === 'keys');
 }
 
 /** Redact a `getServiceFiles` payload — touches yamlContent +
