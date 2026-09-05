@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.30.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.29.0...servicebay-v5.30.0) (2026-09-05)
+
+
+### Features
+
+* **runtime:** flip the image back to USER nextjs ([f1a15bf](https://github.com/mdopp/servicebay/commit/f1a15bf3464a2cbdf7a3bf2be5e11b955d632c27)), closes [#2815](https://github.com/mdopp/servicebay/issues/2815)
+* **runtime:** flip the image back to USER nextjs (autoloop batch 2026-09-05b) ([d323834](https://github.com/mdopp/servicebay/commit/d3238343c83144fa9a195f9efabf1408287b9d43))
+
 ## [5.29.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.28.2...servicebay-v5.29.0) (2026-09-05)
 
 
