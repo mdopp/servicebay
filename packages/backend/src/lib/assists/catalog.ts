@@ -276,11 +276,37 @@ export interface ListAssistsOptions {
   query?: string;
   /** Restrict to one kind. */
   kind?: AssistKind;
+  /** Restrict to entries carrying this tag (case-insensitive, whole-tag match). */
+  tag?: string;
+  /** Substring filter over title + whenToUse (case-insensitive). */
+  q?: string;
+}
+
+/**
+ * Apply the hard filters (`kind` / `tag` / `q`) — as opposed to `query`, which
+ * ranks. Split out of `listAssists` so the scan loop stays readable (#2813).
+ */
+function applyAssistFilters(entries: AssistSummary[], opts: ListAssistsOptions): AssistSummary[] {
+  let out = entries;
+  if (opts.kind) out = out.filter(e => e.kind === opts.kind);
+
+  const tag = opts.tag?.trim().toLowerCase();
+  if (tag) out = out.filter(e => e.tags.some(t => t.toLowerCase() === tag));
+
+  const needle = opts.q?.trim().toLowerCase();
+  if (needle) out = out.filter(e => `${e.title}\n${e.whenToUse}`.toLowerCase().includes(needle));
+
+  return out;
 }
 
 /**
  * List catalog entries, Local overriding Built-in by id. When `query` is set,
  * only matching entries are returned, best match first.
+ *
+ * `kind` / `tag` / `q` are hard FILTERS, unlike `query`, which ranks (#2813): a
+ * caller on a small context window narrows the catalog to the slice it can
+ * afford to read instead of paying for all ~55 entries. Omitting all of them is
+ * unchanged — the full catalog, ranked as before.
  */
 export async function listAssists(opts: ListAssistsOptions = {}): Promise<AssistSummary[]> {
   const byId = new Map<string, AssistSummary>();
@@ -310,8 +336,7 @@ export async function listAssists(opts: ListAssistsOptions = {}): Promise<Assist
   // just as quiet as the stub list it replaced, so this is a hard error (#2650).
   if (degraded > 0 && byId.size === 0) throw new AssistCatalogParseError(degraded);
 
-  let entries = [...byId.values()];
-  if (opts.kind) entries = entries.filter(e => e.kind === opts.kind);
+  const entries = applyAssistFilters([...byId.values()], opts);
 
   const tokens = (opts.query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
   const scored = entries
@@ -436,19 +461,87 @@ export async function listAssistDrift(): Promise<AssistDriftEntry[]> {
 }
 
 /**
+ * Sections that are catalog cartography or provenance rather than rule: the
+ * `Related` cross-reference footer (the catalog IS the map — `list_assists`
+ * finds siblings), and any explicit history/provenance/changelog section.
+ *
+ * `Amendment …` headings are deliberately NOT here: on an ADR an amendment is
+ * the CURRENT rule (adr-0007's 2026-08-12 amendment is the loopback-sibling
+ * decision), so dropping it would strip binding content, not chronology (#2813).
+ */
+const PROVENANCE_HEADING =
+  /^(#{1,6})\s+(related(\s+assists)?|history|provenance|changelog|revision\s+history)\s*$/i;
+
+/** A trailing `Related: …` prose footer (no heading), e.g. long-running-process.md. */
+const RELATED_FOOTER_LINE = /^\s*(\*\*)?related(\*\*)?\s*:/i;
+
+/**
+ * Strip provenance/cross-reference sections from an assist's markdown, keeping
+ * the frontmatter and every actionable rule (#2813/#2804). Fenced code blocks
+ * are never inspected, so a `## Related` inside an example survives.
+ */
+export function stripAssistProvenance(raw: string): string {
+  const lines = raw.split('\n');
+  const out: string[] = [];
+  let fenced = false;
+  let skipBelowLevel: number | null = null; // drop lines until a heading at/above this level
+  let skipFooter = false; // drop lines until the next blank line
+
+  for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+
+    if (!fenced) {
+      const heading = /^(#{1,6})\s+/.exec(line);
+      if (heading) {
+        skipFooter = false;
+        const level = heading[1].length;
+        if (PROVENANCE_HEADING.test(line)) {
+          skipBelowLevel = level;
+          continue;
+        }
+        if (skipBelowLevel !== null && level <= skipBelowLevel) skipBelowLevel = null;
+      } else if (skipBelowLevel === null) {
+        if (skipFooter) {
+          if (line.trim() === '') skipFooter = false;
+          continue;
+        }
+        if (RELATED_FOOTER_LINE.test(line)) {
+          skipFooter = true;
+          continue;
+        }
+      }
+    }
+
+    if (skipBelowLevel === null) out.push(line);
+  }
+
+  return `${out.join('\n').trimEnd()}\n`;
+}
+
+export interface GetAssistOptions {
+  /**
+   * Drop the provenance/cross-reference sections (see `stripAssistProvenance`).
+   * Default false — an existing caller gets the byte-identical full text.
+   */
+  brief?: boolean;
+}
+
+/**
  * Return the full raw markdown (frontmatter + body) of one assist by id. A bare
  * `<stem>` id reads Local (drop-dir override) then Built-in; a `local/<stem>` id
  * reads the additive landed dir (#2326 s4). Returns null for an unknown/unsafe id.
  */
-export async function getAssist(id: string): Promise<string | null> {
+export async function getAssist(id: string, opts: GetAssistOptions = {}): Promise<string | null> {
   const resolved = await resolveAssistFile(id);
   if (!resolved) return null;
   for (const dir of resolved.dirs) {
+    let raw: string;
     try {
-      return await fs.readFile(path.join(dir, resolved.file), 'utf-8');
+      raw = await fs.readFile(path.join(dir, resolved.file), 'utf-8');
     } catch {
       continue;
     }
+    return opts.brief ? stripAssistProvenance(raw) : raw;
   }
   return null;
 }

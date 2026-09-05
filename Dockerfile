@@ -253,16 +253,29 @@ COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
 #
 # Same mapping, same reason as packages/{backup-worker,disk-import-worker}/Containerfile.
 #
-# Re-land condition (#2805 follow-up): the unprivileged runtime user comes back
-# only once the mapping is reconciled ON THE AUTO-UPDATE PATH — a host-side
-# self-heal (e.g. an ExecStartPre deriving `UserNS=` from
-# `podman image inspect --format '{{.Config.User}}'`, alongside
-# servicebay-relabel-selfheal.sh in tools/sb/internal/build/assets/fedora-coreos.bu)
-# so no delivery route can start the container before its quadlet is mapped.
+# Re-land condition (#2808): the host half now EXISTS —
+# /usr/local/bin/servicebay-userns-selfheal.sh, wired as a plain (no leading
+# `-`) ExecStartPre on servicebay.container, derives `UserNS=` from
+# `podman image inspect --format '{{.Config.User}}'` of the pulled image and
+# rewrites the quadlet before podman starts the container, so no delivery route
+# (auto-update timer included) can start it on a mapping-less quadlet. It ships
+# in tools/sb/internal/build/assets/fedora-coreos.bu next to
+# servicebay-relabel-selfheal.sh, and packages/backend/src/lib/quadletUserNsHostHook.ts
+# pushes the identical script to boxes installed before #2808.
+#
+# What is still owed before the flip is ORDERING, not code. Delivery to existing
+# boxes happens from the RUNNING app, so the release carrying the host half must
+# be strictly OLDER than the release that flips this line — the same #2788 →
+# #2789 ordering. Flip both in one release and a box on the previous version has
+# no script when the timer pulls the new image: that is #2805, verbatim. So:
+# ship this release, confirm on the box that servicebay.container carries the
+# ExecStartPre and that a podman-auto-update run reconciles the mapping, THEN
+# flip to `USER nextjs` in a later release.
+#
 # Everything else the image half needs is deliberately LEFT IN PLACE and is
 # harmless under root — the nextjs/nodejs ids with their load-bearing
 # `--gid nodejs`, `ENV HOME=/home/nextjs`, and `--chown=nextjs:nodejs` on every
-# runner COPY — so the re-land is a one-line flip once the host half exists.
+# runner COPY — so the re-land really is a one-line flip.
 #
 # Guard: tests/backend/dockerfile_runtime_user.test.ts.
 USER root

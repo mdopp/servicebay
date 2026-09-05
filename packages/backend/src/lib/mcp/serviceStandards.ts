@@ -26,6 +26,22 @@ import { BOOTSTRAP_STEP, renderStandardsPointerBlock } from '@/lib/mcp/serviceRe
 export const SERVICE_STANDARDS_FLAVORS = ['servicebay', 'generic'] as const;
 export type ServiceStandardsFlavor = (typeof SERVICE_STANDARDS_FLAVORS)[number];
 
+/**
+ * The shape of the service being built (#2814). Narrows `assistsToRead` to what
+ * actually applies: #2804 measured a 65k-context agent burning 20k tokens on the
+ * fixed 15-entry list, six entries of which (data-authority, the uid/journal/
+ * forward-auth footguns, image rolling, long-running jobs) do not apply to a
+ * static nginx page with no auth, data, jobs or image of its own.
+ */
+export const SERVICE_SHAPES = [
+  'static-site',
+  'api',
+  'writes-foreign-store',
+  'has-ui',
+  'has-jobs',
+] as const;
+export type ServiceShape = (typeof SERVICE_SHAPES)[number];
+
 /** Assist ids of the numbered ADRs: `adr-NNNN-<slug>`. */
 const ADR_ASSIST_ID = /^adr-(\d{4})-/;
 
@@ -112,6 +128,113 @@ function extractAdrTitle(title: string): string {
   return title.replace(/^ADR\s+\d{4}\s*[—-]\s*/, '').trim();
 }
 
+interface AssistPointer {
+  id: string;
+  why: string;
+  /**
+   * Shapes this assist is MANDATORY reading for. Omitted = core: it applies to
+   * every service and is never filtered out.
+   */
+  shapes?: readonly ServiceShape[];
+  /** The symptom that makes it worth fetching for a shape it is not core to. */
+  symptom?: string;
+}
+
+/**
+ * The reading list, with the shape each entry actually serves (#2814). Every
+ * entry stays reachable: one a shape doesn't need is demoted from mandatory
+ * reading to a one-line `readIfSymptom` pointer, never dropped.
+ */
+const ASSIST_POINTERS: readonly AssistPointer[] = [
+  {
+    id: 'new-service-architecture',
+    why: 'Recommended defaults (language, structure, libraries, tests, storage, secrets) + the ADRs a new service must respect.',
+    // #2804 point 7: this is a question for whoever is DESIGNING a service, and
+    // its ADR list duplicates mustRespectAdrs above. A static page has no
+    // language, storage or secret decisions left to make.
+    shapes: ['api', 'has-ui', 'has-jobs', 'writes-foreign-store'],
+    symptom: 'you still have to choose a language, framework, storage engine or secret handling',
+  },
+  { id: 'create-service', why: 'Concrete recipe to build and deploy a service repo behind SSO.' },
+  { id: 'servicebay-overview', why: 'What the platform is and how the pieces fit together.' },
+  { id: 'testing-and-ci-gate', why: 'Required standard: a real test suite, thread-aware coverage, and CI that gates image publish on green tests (build-only CI is non-compliant).' },
+  {
+    id: 'long-running-process',
+    why: 'Standard for any operation over ~10s: server-owned durable job, reconnect via the server (not localStorage), survive restart, observable + cancelable.',
+    shapes: ['api', 'has-jobs'],
+    symptom: 'an operation in your service takes more than ~10s, or a page needs to reconnect to work already running',
+  },
+  {
+    id: 'service-ui-design-standard',
+    why: 'UI/design standard for a user-facing service: real ServiceBay design tokens (palette/accent, radii, typography, spacing) + UX baseline (styled large file picker, streaming progress, responsive/mobile, focus states) so the service looks and behaves like ServiceBay.',
+    shapes: ['static-site', 'has-ui'],
+    symptom: 'you render anything a person looks at',
+  },
+  {
+    id: 'service-ui-user-language',
+    why: 'Required for any rendered UI: state texts speak the user\'s language, not the implementation\'s. CLI commands, env-var and header names never reach rendered HTML; every state says what the user can do next; a named action the user cannot trigger is a product gap. Applies docs/UX_PHILOSOPHY.md §5 to a service frontend.',
+    shapes: ['static-site', 'has-ui'],
+    symptom: 'you write any text a person reads (including an error page)',
+  },
+  {
+    id: 'data-authority',
+    why: 'Consume the canonical index (Jellyfin/Immich/Radicale) instead of re-scanning; one writer per store or an explicit coordination model.',
+    shapes: ['api', 'writes-foreign-store'],
+    symptom: 'you read or write data another service owns',
+  },
+  {
+    id: 'recipe-roll-new-image-to-running-service',
+    why: 'How to actually run a freshly-pushed image on an installed service (pull + restart), and the pinned-tag-vs-:latest versioning expectation.',
+    shapes: ['api', 'has-ui', 'has-jobs', 'writes-foreign-store'],
+    symptom: 'your service ships its own container image that you will rebuild',
+  },
+  { id: 'report-standards-gaps', why: 'Convention: report missing/ambiguous/wrong standards back so the catalog improves from real friction.' },
+  {
+    id: 'footgun-journal-is-a-buffer-not-an-archive',
+    why: 'Footgun: the systemd journal rotates by size/age with no per-service guarantee — a service whose actions must be reconstructable later writes its own durable log rather than relying on journalctl retention.',
+    shapes: ['api', 'has-jobs', 'writes-foreign-store'],
+    symptom: 'you need to reconstruct later what your service did',
+  },
+  {
+    id: 'footgun-cross-service-uid-writes',
+    why: 'Footgun: container->host uid mapping, foreign ownership, and locks when writing another service’s store.',
+    shapes: ['writes-foreign-store'],
+    symptom: 'a write into another service’s store fails with EACCES or lands root-owned',
+  },
+  { id: 'footgun-local-template-write-uid', why: 'Footgun: Local templates must be placed as uid 1000 or write_file EACCES leaves a root-owned stray dir.' },
+  {
+    id: 'footgun-forward-auth-acme-collision',
+    why: 'Footgun: forward-auth vs ACME cert collision.',
+    shapes: ['api', 'has-ui'],
+    symptom: 'a cert renewal starts failing after you put a route behind forward-auth',
+  },
+  { id: 'footgun-subdomain-needs-public-domain', why: 'Footgun: a public subdomain needs a public domain.' },
+];
+
+const ASSISTS_TO_READ_NOTE =
+  'Fetch full text via get_assist(id); use list_assists to read each whenToUse and self-select.';
+
+/**
+ * Assemble `assistsToRead`. No `shape` → today's full list, byte-for-byte, so
+ * an existing caller sees no change (#2814). With a `shape`, the entries that
+ * shape does not need become one-line `readIfSymptom` pointers instead.
+ */
+function buildAssistsToRead(shape?: ServiceShape) {
+  if (!shape) {
+    return { note: ASSISTS_TO_READ_NOTE, ids: ASSIST_POINTERS.map(({ id, why }) => ({ id, why })) };
+  }
+  const applies = (p: AssistPointer) => !p.shapes || p.shapes.includes(shape);
+  return {
+    note: `${ASSISTS_TO_READ_NOTE} Narrowed to shape "${shape}" — the rest are listed under readIfSymptom, still fetchable by id.`,
+    shape,
+    ids: ASSIST_POINTERS.filter(applies).map(({ id, why }) => ({ id, why })),
+    readIfSymptom: {
+      note: 'Not mandatory reading for this shape. Fetch with get_assist(id) only when you hit the symptom.',
+      ids: ASSIST_POINTERS.filter(p => !applies(p)).map(p => ({ id: p.id, ifYouHit: p.symptom ?? '' })),
+    },
+  };
+}
+
 interface StandardsBlocks {
   flavor: ServiceStandardsFlavor;
   summary: string;
@@ -123,7 +246,10 @@ interface StandardsBlocks {
  * Assemble the standards index for a flavor. Read-only; pure assembly of
  * pointers over the curated ADR scan + backing-assist references.
  */
-export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Promise<StandardsBlocks> {
+export async function buildServiceStandards(
+  flavor: ServiceStandardsFlavor,
+  shape?: ServiceShape,
+): Promise<StandardsBlocks> {
   if (flavor === 'generic') {
     return {
       flavor,
@@ -230,26 +356,7 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
       note: 'Reporting a standards gap is itself a standard. If you had to guess, were corrected, or found a missing/ambiguous/wrong standard while building, close the loop: file a mdopp/servicebay issue with the `standards-gap` label and, if you worked out the answer, propose an assist/docs update (a Local assist drop is a fine first home, then it gets promoted to a built-in). See get_assist("report-standards-gaps").',
       assist: 'report-standards-gaps',
     },
-    assistsToRead: {
-      note: 'Fetch full text via get_assist(id); use list_assists to read each whenToUse and self-select.',
-      ids: [
-        { id: 'new-service-architecture', why: 'Recommended defaults (language, structure, libraries, tests, storage, secrets) + the ADRs a new service must respect.' },
-        { id: 'create-service', why: 'Concrete recipe to build and deploy a service repo behind SSO.' },
-        { id: 'servicebay-overview', why: 'What the platform is and how the pieces fit together.' },
-        { id: 'testing-and-ci-gate', why: 'Required standard: a real test suite, thread-aware coverage, and CI that gates image publish on green tests (build-only CI is non-compliant).' },
-        { id: 'long-running-process', why: 'Standard for any operation over ~10s: server-owned durable job, reconnect via the server (not localStorage), survive restart, observable + cancelable.' },
-        { id: 'service-ui-design-standard', why: 'UI/design standard for a user-facing service: real ServiceBay design tokens (palette/accent, radii, typography, spacing) + UX baseline (styled large file picker, streaming progress, responsive/mobile, focus states) so the service looks and behaves like ServiceBay.' },
-        { id: 'service-ui-user-language', why: 'Required for any rendered UI: state texts speak the user\'s language, not the implementation\'s. CLI commands, env-var and header names never reach rendered HTML; every state says what the user can do next; a named action the user cannot trigger is a product gap. Applies docs/UX_PHILOSOPHY.md §5 to a service frontend.' },
-        { id: 'data-authority', why: 'Consume the canonical index (Jellyfin/Immich/Radicale) instead of re-scanning; one writer per store or an explicit coordination model.' },
-        { id: 'recipe-roll-new-image-to-running-service', why: 'How to actually run a freshly-pushed image on an installed service (pull + restart), and the pinned-tag-vs-:latest versioning expectation.' },
-        { id: 'report-standards-gaps', why: 'Convention: report missing/ambiguous/wrong standards back so the catalog improves from real friction.' },
-        { id: 'footgun-journal-is-a-buffer-not-an-archive', why: 'Footgun: the systemd journal rotates by size/age with no per-service guarantee — a service whose actions must be reconstructable later writes its own durable log rather than relying on journalctl retention.' },
-        { id: 'footgun-cross-service-uid-writes', why: 'Footgun: container->host uid mapping, foreign ownership, and locks when writing another service’s store.' },
-        { id: 'footgun-local-template-write-uid', why: 'Footgun: Local templates must be placed as uid 1000 or write_file EACCES leaves a root-owned stray dir.' },
-        { id: 'footgun-forward-auth-acme-collision', why: 'Footgun: forward-auth vs ACME cert collision.' },
-        { id: 'footgun-subdomain-needs-public-domain', why: 'Footgun: a public subdomain needs a public domain.' },
-      ],
-    },
+    assistsToRead: buildAssistsToRead(shape),
     templateContract: {
       note: 'Services ship as templates, not code.',
       pointers: ['docs/TEMPLATE_AUTHORING.md', 'templates/CLAUDE.md'],

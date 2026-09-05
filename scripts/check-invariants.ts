@@ -716,16 +716,22 @@ async function checkCiRunsEveryCheckScript() {
 //
 // A step that lives only in prose is a step an agent skips (CLAUDE.md
 // § "Deterministic execution → scripts"), and prose is also what silently rots:
-// re-order the recipe, drop the pointer block, and nothing complains. This check
-// is the ratchet — the recipe must still name the tool in its FIRST ordered
-// action, and must still carry a pointer block that references the tool, the
-// assist fetch, and the gap-reporting convention.
+// re-order the recipe and nothing complains. This check is the ratchet — the
+// recipe must still name the tool in its FIRST ordered action.
+//
+// #2812 turned the second half around. The recipe used to paste the whole
+// generated block verbatim, kept byte-identical by this check; but the same
+// bytes are already served to the same reader as `repoBootstrap.claudeMdBlock`,
+// so an agent read ~2.2 KB of it twice. The block's *content* is ratcheted where
+// it is generated (`BOOTSTRAP_REQUIRED_REFERENCES` in serviceRepoBootstrap.ts,
+// asserted in tests/backend/mcp_service_repo_bootstrap.test.ts). What the recipe
+// owes is the pointer, so that is what is checked here — and re-pasting a copy
+// is now itself a violation, because a second copy is what drifts.
 // ---------------------------------------------------------------------------
 const CREATE_SERVICE_ASSIST = path.join(REPO_ROOT, 'assists', 'create-service.md');
 const BOOTSTRAP_BEGIN_RE = /<!-- BEGIN SERVICEBAY STANDARDS POINTER/;
-const BOOTSTRAP_END_RE = /<!-- END SERVICEBAY STANDARDS POINTER -->/;
-/** Every pointer block is worthless without these — same list as the module. */
-const BOOTSTRAP_POINTER_REFS = ['get_service_standards', 'get_assist', 'standards-gap', 'workingAgreements'];
+/** The recipe must route the reader to the served field, and to the tool that serves it. */
+const BOOTSTRAP_POINTER_REFS = ['get_service_standards', 'get_assist', 'repoBootstrap.claudeMdBlock'];
 
 /**
  * Pure audit of the `create-service` recipe text. Returns one detail string per
@@ -749,19 +755,17 @@ export function auditServiceRepoBootstrap(doc: string): string[] {
         }
     }
 
-    const start = doc.search(BOOTSTRAP_BEGIN_RE);
-    const end = doc.search(BOOTSTRAP_END_RE);
-    if (start < 0 || end < 0) {
+    // The generated block must NOT be pasted back in — `get_service_standards`
+    // already hands the same bytes to the same reader (#2812).
+    if (BOOTSTRAP_BEGIN_RE.test(doc)) {
         problems.push(
-            'assists/create-service.md no longer carries the generated CLAUDE.md standards-pointer block. Regenerate it with `npm run standards:bootstrap -- --print` (#2513).',
+            'assists/create-service.md embeds a copy of the generated CLAUDE.md standards-pointer block again. It is served as `repoBootstrap.claudeMdBlock` — point at that field instead of duplicating it (#2812).',
         );
-        return problems;
     }
-    const block = doc.slice(start, end);
     for (const ref of BOOTSTRAP_POINTER_REFS) {
-        if (block.includes(ref)) continue;
+        if (doc.includes(ref)) continue;
         problems.push(
-            `assists/create-service.md — the standards-pointer block no longer mentions \`${ref}\`, so a repo bootstrapped from it loses that link into the catalog (#2513).`,
+            `assists/create-service.md no longer mentions \`${ref}\`, so a repo bootstrapped from it loses that link into the catalog (#2513).`,
         );
     }
     return problems;
@@ -783,7 +787,7 @@ async function checkServiceRepoBootstrapStep() {
     const problems = auditServiceRepoBootstrap(doc);
     for (const detail of problems) violations.push({ check, detail });
     if (problems.length === 0) {
-        measurements.push('service-repo bootstrap: step 1 of assists/create-service.md consults get_service_standards, pointer block intact');
+        measurements.push('service-repo bootstrap: step 1 of assists/create-service.md consults get_service_standards and points at repoBootstrap.claudeMdBlock without duplicating it');
     }
 }
 

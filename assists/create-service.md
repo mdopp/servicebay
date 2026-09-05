@@ -27,10 +27,17 @@ Required annotations on `metadata.annotations`:
   mount another service's files).
 - `servicebay.healthcheck` — an HTTP/TCP probe; gates install completion.
 
-The pod MUST satisfy one of: `hostNetwork: true` **or** every `containerPort` has
-an explicit `hostPort` — otherwise the deploy is silently unreachable. Use
-`hostNetwork: true` if the app must reach another on-box service on loopback
-(e.g. Home Assistant at `127.0.0.1:8123`).
+**Isolated netns + an explicit `hostPort` on every published `containerPort`** —
+a pod with neither that nor host networking is silently unreachable.
+`hostNetwork: true` is reserved for the **closed, named** carve-out list in ADR
+0007 Decision 2; a new service does not join it by arguing its case.
+
+Needing to reach a loopback-bound sibling on the box is explicitly **not** a
+carve-out (ADR 0007 Decision 3): the consumer stays isolated and addresses the
+sibling as `http://host.containers.internal:<port>` — never `127.0.0.1`, never
+`{{LAN_IP}}` — while the *sibling's* port variable carries `blockLanAccess: true`
+so its wider bind stays off the LAN. Siblings first, consumer second. Full rule:
+assist `adr-0007-container-network-isolation-and-carveouts`.
 
 Path resolution: `{{DATA_DIR}}` renders to **`/mnt/data/stacks`** (per-service
 data), while ServiceBay's own data dir is **`/mnt/data/servicebay`** (config,
@@ -63,71 +70,33 @@ proxy host at `<sub>.<PUBLIC_DOMAIN>`:
 1. **Bootstrap the repo against the standards catalog** — *before* the stack, the
    CI, the storage engine or the auth design. Call `get_service_standards`
    (flavor `servicebay`), read every id in its `assistsToRead` via
-   `get_assist(id)`, and write the pointer block below into the new repo's
-   `CLAUDE.md` so the next agent in that repo finds the catalog too:
-   `npm run standards:bootstrap -- --write <repo>` (verify with `-- --check <repo>`).
+   `get_assist(id)`, then paste the block it hands back as
+   **`repoBootstrap.claudeMdBlock`** into the new repo's `CLAUDE.md` so the next
+   agent in that repo finds the catalog too. That field *is* the finished text —
+   this recipe deliberately does not carry a second copy of it. (From a
+   `mdopp/servicebay` checkout the same block is written by
+   `npm run standards:bootstrap -- --write <repo>`, verified with `-- --check <repo>`.)
    **If the ServiceBay MCP is not connected in this session, stop and say so** —
    an unconnected session cannot see the ADRs, so its stack/CI/auth choices are
    guesses (#2513: exactly how a sibling repo shipped without SSO awareness,
    without a health endpoint, and with a CI that didn't gate on tests).
 2. **Image** — build + push it; confirm the box can `podman pull` it.
-3. **Place the template** — push to a template registry, OR drop it under
+3. **Place the template** — push to a template registry, OR write each file under
    `/mnt/data/servicebay/local-templates/templates/<name>/` (survives reinstall,
-   no git needed).
-4. **Install** — `POST /api/install/assemble` `{items:[{name,checked:true}],
-   prefilled:{...}, templateSource:"Local"}` → returns `{items, variables}` →
-   `POST /api/install/start` `{source, input:{items, variables, wipeMode:"install",
-   templateSource:"Local", host}}` → poll `/api/install/progress?jobId=…` until
-   `phase:"done"`. (All accept a `lifecycle`-scoped `sb_` token.)
+   no git needed). One `write_file` per file: it is jailed to `/mnt/data`,
+   creates the parent dir, and sets `core:core` ownership so the install runner
+   can read what you dropped. Check the result with `list_dir`.
+4. **Install** — `install_template` `{names:["<name>"], templateSource:"Local",
+   variables:{…}}` returns a `jobId`; then poll `get_install_progress`
+   `{jobId, logsSince:<previous logsOffset>}` until `phase:"done"` (`error` /
+   `needs_credentials` are the other outcomes to handle). This is the whole
+   wizard flow — variable assembly, secret generation, subdomain→NPM proxy host,
+   Authelia wiring, dependency ordering, migrations — not the raw-YAML
+   `deploy_service` shortcut. Confirm the pod with `list_containers`, and read
+   `get_logs` on the new container if it isn't up.
 5. **Verify** — healthcheck 200; `https://<sub>.<PUBLIC_DOMAIN>/` unauthenticated
    returns **302 → auth.<domain>** (Authelia); the app's function works; and a
    request missing `Remote-User` is rejected (no SSO bypass).
-
-## The `CLAUDE.md` standards pointer (step 1, verbatim)
-
-Paste this into the new repo's `CLAUDE.md` — or let the script write it. It is
-generated from `packages/backend/src/lib/mcp/serviceRepoBootstrap.ts` and served
-by `get_service_standards` as its `repoBootstrap.claudeMdBlock`; the copy below
-is kept byte-identical by `npm run check:arch`, so all three can't drift.
-
-```markdown
-<!-- BEGIN SERVICEBAY STANDARDS POINTER (generated — do not edit by hand) -->
-
-## Standards: fetch them, never re-derive them
-
-This repo is built for a ServiceBay box, so **ServiceBay's standards catalog is
-the binding source of its architecture decisions** — this file only points at it.
-
-1. **Before the first stack, CI, storage, or auth decision**, call the ServiceBay
-   MCP tool `get_service_standards(flavor="servicebay")` and fetch every id it
-   lists under `assistsToRead` via `get_assist(id)`. Read first, design second —
-   a stack chosen before reading is a stack chosen against the ADRs by accident.
-2. **Then call `get_service_standards(flavor="generic")` and read every id under
-   `workingAgreements`.** They are the cross-repo agreements on how work enters,
-   how it is gated, when to ask the operator, and how sessions hand over — they
-   are platform-agnostic, so they hang off the *generic* flavor and the
-   servicebay index does NOT repeat them. Fetching only one flavor is how a repo
-   follows this file exactly and still never hears about them.
-   Start with `get_assist("footgun-importing-a-working-agreement-from-another-repo")`:
-   the questions and mechanisms port between repos, the thresholds and autonomy
-   levels do not.
-3. **If the ServiceBay MCP is not connected in this session, stop and say so.**
-   An unconnected session cannot see the ADRs, so anything it decides about auth,
-   health, storage, or CI is a guess. Connecting it is the first task, not an
-   optional extra.
-4. **The catalog wins.** Where this file and the catalog disagree, this file is
-   the stale one — fix it here, not in your head. The catalog is read from the
-   box at runtime, so it can be newer than any release you are running.
-5. **Report gaps back.** A missing, ambiguous, or wrong standard is itself a
-   finding: file a `standards-gap` issue on `mdopp/servicebay` and propose the
-   assist/docs fix. See `get_assist("report-standards-gaps")`.
-
-This block is generated. Regenerate or verify it from a `mdopp/servicebay`
-checkout: `npm run standards:bootstrap -- --flavor servicebay --write <repo>` /
-`-- --flavor servicebay --check <repo>`.
-
-<!-- END SERVICEBAY STANDARDS POINTER -->
-```
 
 ## Verify the proxy actually loaded
 The install log can say "proxy hosts ensured" while nginx reverted the conf.

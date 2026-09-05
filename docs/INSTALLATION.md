@@ -177,19 +177,41 @@ the container's uid 0 *is* the host user that runs the quadlet (`core`), which
 owns the bind-mounted podman socket, `/app/data` and the host SSH key — so
 dropping privilege only works together with a mapping that puts the unprivileged
 uid back onto `core`: `UserNS=keep-id:uid=1001,gid=1001` on
-`servicebay.container`. That line is **not** in the butane template; the
-reconciler `packages/backend/src/lib/quadletUserNs.ts` (#2788) derives it from
-the user the image declares, at boot and after a channel swap, and removes it
-again when a root image is back.
+`servicebay.container`. That line is **not** in the butane template — it is
+*derived*, in two places:
 
-#2789 shipped the unprivileged half (`USER nextjs`, uid 1001 / gid 1001
-`nodejs`) in 5.28.0 and it was rolled back in #2805: the host's
-`podman-auto-update.timer` pulls `:latest` and restarts the unit without ever
-running that reconciler, so the non-root container started on a mapping-less
-quadlet and lost `/app/data`, the agent SSH key and the podman socket. The image
-keeps the `nextjs` user, `HOME=/home/nextjs` and the `--chown=nextjs:nodejs`
-COPYs — all harmless under root — so the re-land is a one-line flip once the
-mapping is also reconciled on the auto-update path.
+- `packages/backend/src/lib/quadletUserNs.ts` (#2788), in-app, at boot and
+  before a channel swap; and
+- `/usr/local/bin/servicebay-userns-selfheal.sh` (#2808), on the **host**, as a
+  plain `ExecStartPre=` on `servicebay.container` — no leading `-`.
+
+Both read the user the pulled image declares and write the quadlet to match, in
+both directions (a root image gets the line *removed*, which is what makes a
+rollback self-healing).
+
+The host half exists because the in-app one cannot cover the route that took the
+box down in #2805. #2789 shipped the unprivileged half (`USER nextjs`, uid 1001 /
+gid 1001 `nodejs`) in 5.28.0; the host's `podman-auto-update.timer` pulls
+`:latest` and restarts the unit from the host, with no in-app hook anywhere on
+that path, so the non-root container started on a mapping-less quadlet and lost
+`/app/data`, the agent SSH key and the podman socket — and could not repair
+itself, because repairing needs exactly the three things it had just lost. The
+`ExecStartPre` runs before podman, on every route. Its one subtlety: quadlet is
+a systemd *generator*, so the podman argv for the start job that runs it was
+baked at the last `daemon-reload`. When (and only when) it rewrites the quadlet
+it reloads the generator and **exits non-zero on purpose** — aborting the stale,
+mapping-less start so `Restart=always` brings the unit back on the regenerated
+unit file. Ignition writes the script on fresh boxes; boxes installed earlier get
+the identical text pushed by `packages/backend/src/lib/quadletUserNsHostHook.ts`
+at boot.
+
+The image still runs as **root**. The image half keeps the `nextjs` user,
+`HOME=/home/nextjs` and the `--chown=nextjs:nodejs` COPYs — all harmless under
+root — so the re-land is a one-line `USER` flip, gated only on *ordering*: the
+release carrying the host half must be older than the release that flips `USER`,
+or a box on the previous version has no script when the timer pulls the new
+image. `tests/backend/dockerfile_runtime_user.test.ts` cross-checks the two
+halves so a non-root image cannot be released without the host-side reconcile.
 
 For a leaner local dev image that re-uses the host build (avoids
 running webpack inside the container), see `Dockerfile.dev` and

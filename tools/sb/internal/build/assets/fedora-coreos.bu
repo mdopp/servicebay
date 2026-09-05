@@ -680,6 +680,23 @@ storage:
           # relabel succeeds. Leading `-` + the script's own `|| true`
           # guards mean it NEVER blocks startup, even if the data dir is
           # missing or already clean.
+          # Reconcile the user-namespace mapping BEFORE podman starts the
+          # container — the host half of #2788, added by #2808 after the
+          # #2805 outage. servicebay.container's `UserNS=` line must match the
+          # uid the pulled IMAGE declares, and the in-app reconciler
+          # (packages/backend/src/lib/quadletUserNs.ts) only runs on a channel
+          # swap and ~30 s after boot — never on the podman-auto-update path,
+          # which pulls `:latest` and restarts this unit with no pre-swap hook.
+          # That gap is what put 5.28.0's unprivileged image into `core`'s
+          # subuid range with no podman socket, no /app/data and no ssh key.
+          # Deliberately NO leading `-`: the script exits non-zero on exactly
+          # one path — it just rewrote the quadlet, so the podman argv systemd
+          # baked for THIS start job is stale — and that failure is the
+          # mechanism, aborting the mapping-less start so `Restart=always`
+          # below brings the unit back on the regenerated unit file. Every
+          # other path (no quadlet, image not inspectable, mapping already
+          # correct) exits 0 and the start proceeds.
+          ExecStartPre=/bin/bash /usr/local/bin/servicebay-userns-selfheal.sh
           ExecStartPre=-/bin/bash /usr/local/bin/servicebay-relabel-selfheal.sh
           # Stop the splash sidecar before podman binds :${SERVICEBAY_PORT}
           # so the port is free. Replaces the [Unit] Conflicts= directive
@@ -1119,6 +1136,115 @@ storage:
           /usr/bin/mv -f "$QUADLET" "$RETIRED"
           /usr/bin/systemctl --user daemon-reload || true
           echo "retire-splash-quadlet: renamed $QUADLET → $RETIRED"
+
+    # ExecStartPre user-namespace self-heal (#2808, after the #2805 outage).
+    # The HOST half of packages/backend/src/lib/quadletUserNs.ts: it derives
+    # `UserNS=` from the user the PULLED image declares and rewrites
+    # servicebay.container to match, before podman starts the container — so
+    # every delivery route is covered, including podman-auto-update.timer,
+    # which has no in-app hook at all. Root image -> no line (that is what
+    # makes a rollback self-healing); uid N -> keep-id:uid=N,gid=M.
+    #
+    # This text is generated from USERNS_SELFHEAL_SCRIPT in
+    # packages/backend/src/lib/quadletUserNsHostHook.ts, which is also what the
+    # running app pushes to boxes installed before #2808 (Ignition runs once).
+    # tests/backend/dockerfile_runtime_user.test.ts asserts the two copies are
+    # byte-identical, so the host half cannot drift into two behaviours.
+    - path: /usr/local/bin/servicebay-userns-selfheal.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          # ServiceBay UserNS self-heal (#2808). Runs on the HOST, as the user that owns
+          # the quadlet, BEFORE podman starts the container — so it covers EVERY delivery
+          # route, including podman-auto-update.timer, which has no in-app hook and is
+          # the route that took the box down in #2805.
+          #
+          # Host-side twin of packages/backend/src/lib/quadletUserNs.ts: read the user the
+          # image declares and make servicebay.container's UserNS= line agree. Root image
+          # -> no line at all; uid N -> keep-id:uid=N,gid=M.
+          #
+          # The subtlety: quadlet is a systemd GENERATOR, so the podman argv for the start
+          # job that is running us was baked at the last daemon-reload. Rewriting the
+          # quadlet here cannot change it. So when — and only when — the file actually
+          # changed, this reloads the generator and then exits NON-ZERO on purpose: the
+          # stale, mapping-less start is aborted and Restart=always (RestartSec=5) brings
+          # the unit straight back on the regenerated one. That is why the unit wires this
+          # WITHOUT a leading '-'. Every other path exits 0.
+          #
+          # No 'set -e': a single failing probe must leave the box exactly as it was.
+
+          Q="$HOME/.config/containers/systemd/servicebay.container"
+          [ -f "$Q" ] || exit 0
+
+          IMG="$(sed -n 's/^[[:space:]]*Image=[[:space:]]*\([^[:space:]][^[:space:]]*\).*$/\1/p' "$Q" | head -n1)"
+          [ -n "$IMG" ] || exit 0
+
+          # The image must already be on disk (podman-auto-update pulls before it
+          # restarts). If it is not, we cannot know the uid — leave the quadlet alone.
+          if ! SPEC="$(podman image inspect "$IMG" --format '{{.Config.User}}' 2>/dev/null)"; then
+              exit 0
+          fi
+          SPEC="$(printf %s "$SPEC" | tr -d '[:space:]')"
+
+          UID_WANT=""
+          GID_WANT=""
+          case "$SPEC" in
+              ''|root|root:root|0|0:0)
+                  # Runs as uid 0 -> the mapping must be ABSENT. This is what makes a
+                  # rollback to a root image self-healing rather than a brick.
+                  ;;
+              *)
+                  UID_WANT="$(printf %s "$SPEC" | cut -d: -f1)"
+                  GID_WANT="$(printf %s "$SPEC" | cut -s -d: -f2)"
+                  case "$UID_WANT" in
+                      ''|*[!0-9]*)
+                          # A NAME (USER nextjs) exists only in the image's own
+                          # /etc/passwd, so only the image can resolve it. --entrypoint id
+                          # overrides the server entrypoint: a sub-second run of a local
+                          # image, no network, no port bind.
+                          UID_WANT="$(podman run --rm --entrypoint id "$IMG" -u 2>/dev/null)" || exit 0
+                          GID_WANT="$(podman run --rm --entrypoint id "$IMG" -g 2>/dev/null)" || exit 0
+                          ;;
+                  esac
+                  case "$UID_WANT" in ''|*[!0-9]*) exit 0 ;; esac
+                  case "$GID_WANT" in ''|*[!0-9]*) GID_WANT="$UID_WANT" ;; esac
+                  [ "$UID_WANT" = "0" ] && UID_WANT=""
+                  ;;
+          esac
+
+          WANT=""
+          if [ -n "$UID_WANT" ]; then
+              WANT="UserNS=keep-id:uid=$UID_WANT,gid=$GID_WANT"
+          fi
+
+          HAVE="$(grep -m1 -E '^[[:space:]]*UserNS[[:space:]]*=' "$Q" 2>/dev/null | tr -d '[:space:]')"
+          WANT_CMP="$(printf %s "$WANT" | tr -d '[:space:]')"
+          # Already correct (the overwhelmingly common case, every restart): exit 0 and
+          # let the start proceed. This guard is also what stops the exit-1 path below
+          # from ever becoming a restart loop.
+          [ "$HAVE" = "$WANT_CMP" ] && exit 0
+
+          TMP="$Q.sb-userns.tmp"
+          awk -v want="$WANT" '
+              /^[ \t]*UserNS[ \t]*=/ { if (want != "" && !done) { print want; done = 1 } next }
+              { print }
+              /^[ \t]*ContainerName[ \t]*=/ { if (want != "" && !done) { print want; done = 1 } }
+          ' "$Q" > "$TMP" 2>/dev/null || { rm -f "$TMP"; exit 0; }
+          [ -s "$TMP" ] || { rm -f "$TMP"; exit 0; }
+
+          # Convergence check BEFORE the swap: if the rewrite did not actually produce the
+          # state we want (no [Container] anchor to insert after, an unexpected shape),
+          # throw it away rather than restart into the same decision forever.
+          NEW="$(grep -m1 -E '^[[:space:]]*UserNS[[:space:]]*=' "$TMP" 2>/dev/null | tr -d '[:space:]')"
+          [ "$NEW" = "$WANT_CMP" ] || { rm -f "$TMP"; exit 0; }
+
+          # Atomic: a truncated write here would leave the box with no ServiceBay unit.
+          mv -f "$TMP" "$Q" || { rm -f "$TMP"; exit 0; }
+          systemctl --user daemon-reload || true
+
+          echo "servicebay-userns-selfheal: $IMG needs '$WANT' - quadlet rewritten, aborting this stale start so Restart= picks up the regenerated unit" >&2
+          exit 1
 
     # ExecStartPre self-heal for the known relabel/permission failure
     # class (#2159 / #1796). A foreign-owned stray in the data dir — most

@@ -13,7 +13,7 @@ import {
   getProposalForReview,
   type ProposalStatus,
 } from '@/lib/assists/proposals';
-import { buildServiceStandards, SERVICE_STANDARDS_FLAVORS } from '../serviceStandards';
+import { buildServiceStandards, SERVICE_SHAPES, SERVICE_STANDARDS_FLAVORS } from '../serviceStandards';
 import { textResult, errorResult, type ToolRegistration } from './context';
 
 /**
@@ -66,10 +66,12 @@ export function registerAssistTools({ server, caller }: ToolRegistration) {
     {
       query: z.string().optional().describe('Free-text task description to rank matching entries (e.g. "deploy a new service behind SSO"). Omit to list everything.'),
       kind: z.enum(ASSIST_KINDS).optional().describe('Restrict to one kind: guide | recipe | adr | template | checklist | footgun | snippet.'),
+      tag: z.string().optional().describe('Restrict to entries carrying this tag (case-insensitive, whole-tag match), e.g. "sso". Filters, does not rank.'),
+      q: z.string().optional().describe('Substring filter over title + whenToUse (case-insensitive). Narrower than `query`: it filters instead of ranking, so a small-context caller gets only the slice it can afford to read.'),
     },
-    async ({ query, kind }) => {
+    async ({ query, kind, tag, q }) => {
       try {
-        const assists = await listAssists({ query, kind });
+        const assists = await listAssists({ query, kind, tag, q });
         return textResult(assists);
       } catch (e) {
         return catalogFailure(e);
@@ -80,14 +82,16 @@ export function registerAssistTools({ server, caller }: ToolRegistration) {
   // --- Get Assist (#2146) ---
   server.tool(
     'get_assist',
-    'Fetch the full content (markdown: frontmatter + body) of one assist catalog entry by id. Use list_assists first to find the id.',
+    'Fetch the full content (markdown: frontmatter + body) of one assist catalog entry by id. Use list_assists first to find the id. Pass brief=true on a small context window to get the same rules with the cross-reference/provenance sections dropped.',
     {
       id: z.string().describe('Assist id (the entry id returned by list_assists).'),
+      brief: z.boolean().optional().default(false)
+        .describe('true = drop the "Related" cross-reference footer and any history/provenance/changelog section, keeping every actionable rule (ADR amendments are rules and are KEPT). Default false = the byte-identical full text.'),
     },
-    async ({ id }) => {
+    async ({ id, brief }) => {
       let body: string | null;
       try {
-        body = await getAssist(id);
+        body = await getAssist(id, { brief });
       } catch (e) {
         return catalogFailure(e);
       }
@@ -237,13 +241,15 @@ export function registerAssistTools({ server, caller }: ToolRegistration) {
   // generic-project-standards assists (single source of truth).
   server.tool(
     'get_service_standards',
-    'Fetch a curated pointer index of the standards for building a new project. flavor="servicebay" (default) returns the platform ADRs a new ServiceBay service must respect, each with the get_assist id that returns its full text, the enforced invariants + gate commands, the assists to read in full via get_assist, and the template contract. flavor="generic" returns platform-agnostic dev standards (commit convention, release discipline, coverage floor, secret hygiene, scripts-over-prose). Use this FIRST when starting a new service/project so you build against the standards instead of re-deriving them.',
+    'Fetch a curated pointer index of the standards for building a new project. flavor="servicebay" (default) returns the platform ADRs a new ServiceBay service must respect, each with the get_assist id that returns its full text, the enforced invariants + gate commands, the assists to read in full via get_assist, and the template contract. flavor="generic" returns platform-agnostic dev standards (commit convention, release discipline, coverage floor, secret hygiene, scripts-over-prose). Pass `shape` to cut assistsToRead down to what your kind of service actually needs. Use this FIRST when starting a new service/project so you build against the standards instead of re-deriving them.',
     {
       flavor: z.enum(SERVICE_STANDARDS_FLAVORS).optional().default('servicebay')
         .describe('"servicebay" (default) for a new ServiceBay service; "generic" for platform-agnostic dev standards.'),
+      shape: z.enum(SERVICE_SHAPES).optional()
+        .describe('What kind of service this is: static-site | api | writes-foreign-store | has-ui | has-jobs. Narrows assistsToRead to the entries that apply (the rest come back as one-line readIfSymptom pointers, still fetchable by id). Omit to get the full mandatory list unchanged.'),
     },
-    async ({ flavor }) => {
-      const standards = await buildServiceStandards(flavor);
+    async ({ flavor, shape }) => {
+      const standards = await buildServiceStandards(flavor, shape);
       return textResult(standards);
     },
   );

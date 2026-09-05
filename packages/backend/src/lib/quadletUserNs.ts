@@ -44,7 +44,7 @@ import { shellQuoteAll } from './util/shellQuote';
 const TAG = 'quadlet-userns';
 
 /** Read side only — `read_file` expands `~` on the HOST (agent `os.path.expanduser`). */
-const QUADLET_PATH = '~/.config/containers/systemd/servicebay.container';
+export const QUADLET_PATH = '~/.config/containers/systemd/servicebay.container';
 
 /**
  * Shell required: the quadlet lives under the *host* user's `$HOME`, which only
@@ -57,7 +57,7 @@ const QUADLET_PATH = '~/.config/containers/systemd/servicebay.container';
  * as a positional (`$1`) and never interpolated — same shape as
  * `servicebayChannel.SWAP_TAG_SH`.
  */
-const WRITE_QUADLET_SH =
+export const WRITE_QUADLET_SH =
   'q="$HOME/.config/containers/systemd/servicebay.container"; printf %s "$1" > "$q.sb-userns.tmp" && mv -f "$q.sb-userns.tmp" "$q"';
 
 export interface ImageUser {
