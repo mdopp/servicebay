@@ -143,8 +143,8 @@ describe('RegistryDashboard registry-sync honesty (#2610)', () => {
     expect(banner.textContent).toMatch(/1 of the configured registries is not syncing/);
     expect(banner.textContent).toMatch(/ServiceBay Templates/);
     expect(banner.textContent).toMatch(/private and this box has no credentials/);
-    // How many attempts were spent, and what to do about it.
-    expect(banner.textContent).toMatch(/Stopped retrying after 4 attempts/);
+    // How many attempts were spent, that it keeps trying on its own (#2809), and what to do about it.
+    expect(banner.textContent).toMatch(/4 failed attempts so far; ServiceBay retries on its own after a cooldown/);
     expect(banner.textContent).toMatch(/Make the repository public/);
     expect(banner.textContent).toMatch(/press Sync Registries/i);
   });

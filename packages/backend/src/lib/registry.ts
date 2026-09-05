@@ -10,7 +10,9 @@ import { parseStackManifest, type StackManifest } from './template/stackContract
 import { logger } from './logger';
 import {
     REGISTRY_GIVE_UP_AFTER,
+    describeRetryDelay,
     hasGivenUp,
+    isDueForRetry,
     loadRegistrySyncState,
     nextFailureRecord,
     redactRegistryUrl,
@@ -490,13 +492,14 @@ async function cloneRegistry(reg: RegistryConfig, regPath: string): Promise<void
  * Two behaviours the caller can rely on:
  *  - the return value carries the denominator (`requested`) next to `synced`,
  *    so no caller can render "refreshed" from a run that refreshed a subset;
- *  - a registry that has failed `REGISTRY_GIVE_UP_AFTER` times in a row is not
- *    attempted again on an automatic sync. It comes back as `status:'skipped'`
- *    with the reason, instead of burning a clone and a WARN line every cycle
- *    for a cause that never fixes itself (a private repo with no credentials).
+ *  - a registry that has failed `REGISTRY_GIVE_UP_AFTER` times in a row is
+ *    left alone by automatic syncs until its cooldown has passed (#2809:
+ *    backoff, not a latch — see `isDueForRetry`). Meanwhile it comes back as
+ *    `status:'skipped'` with the reason, instead of burning a clone and a WARN
+ *    line every cycle.
  *
  * `force: true` — the operator's explicit "Sync Registries" click — ignores the
- * give-up state, so fixing the cause is one button away from being re-checked.
+ * cooldown, so fixing the cause is one button away from being re-checked.
  */
 export async function syncRegistries(opts: { force?: boolean } = {}): Promise<RegistrySyncSummary> {
     const config = await getConfig();
@@ -549,14 +552,15 @@ export async function syncRegistries(opts: { force?: boolean } = {}): Promise<Re
         const key = registryStateKey(reg.name, reg.url);
         const record = state[key];
 
-        // A registry whose failure has already proven permanent is not tried
-        // again on an automatic sync (#2610). It stays in the state file and in
-        // the summary — visible and explained — instead of producing an
-        // identical WARN on every boot and every install, forever.
-        if (!opts.force && hasGivenUp(record)) {
+        // A stalled registry is left alone by automatic syncs while its
+        // cooldown runs (#2610, #2809). It stays in the state file and in the
+        // summary — visible and explained — instead of producing an identical
+        // WARN on every boot and every install; once the cooldown has passed
+        // it is simply tried again, so the box recovers without a click.
+        if (!opts.force && hasGivenUp(record) && !isDueForRetry(record, now)) {
             logger.debug(
                 'registry',
-                `Registry ${reg.name} (${safeUrl}) not retried: ${record.reason} after ${record.consecutiveFailures} attempts.`,
+                `Registry ${reg.name} (${safeUrl}) not retried yet: ${record.reason} after ${record.consecutiveFailures} attempts; next automatic retry ${describeRetryDelay(record)} after the last one.`,
             );
             results.push({
                 name: reg.name,
@@ -632,11 +636,11 @@ export async function syncRegistries(opts: { force?: boolean } = {}): Promise<Re
             const { record: failure, diagnosis } = nextFailureRecord(record, reg, msg, now);
             state[key] = failure;
             const consecutiveFailures = failure.consecutiveFailures;
-            const givingUp = consecutiveFailures >= REGISTRY_GIVE_UP_AFTER;
+            const stalled = consecutiveFailures >= REGISTRY_GIVE_UP_AFTER;
             logger.warn(
                 'registry',
                 `Registry ${reg.name} (${safeUrl}) sync failed — ${diagnosis.reason} ` +
-                `(attempt ${consecutiveFailures}${givingUp ? `; not retried automatically from now on — ${diagnosis.advice}` : ''}). ` +
+                `(attempt ${consecutiveFailures}${stalled ? `; next automatic retry in ${describeRetryDelay(failure)} — ${diagnosis.advice}` : ''}). ` +
                 `Other registries continue. git: ${msg}`,
             );
             results.push({

@@ -141,14 +141,14 @@ export default function RegistryDashboard({ variant = 'page' }: RegistryDashboar
                         <li key={`${r.name} ${r.url}`}>
                             <span className="font-medium">{r.name}</span>{' '}
                             <span className="text-text-subtle">({r.url})</span> — {r.reason ?? 'sync failed'}.{' '}
-                            Stopped retrying after {r.consecutiveFailures} attempts.{' '}
+                            {r.consecutiveFailures} failed attempts so far; ServiceBay retries on its own after a cooldown.{' '}
                             {r.advice}
                         </li>
                     ))}
                 </ul>
                 <p className="mt-2 text-xs text-text-subtle">
                     Templates from {stalled.length === 1 ? 'it' : 'them'} are whatever was last cloned onto this box.
-                    Fix the cause, then press Sync Registries — that always retries, even after ServiceBay gave up.
+                    Fix the cause, then press Sync Registries to retry right away instead of waiting for the cooldown.
                 </p>
             </div>
         )}
