@@ -172,13 +172,13 @@ NODE_ENV=production    PORT=3000    HOSTNAME=0.0.0.0    HOME=/home/nextjs
 HOST_SSH=host.containers.internal   SSH_KEY_PATH=/app/data/ssh/id_rsa
 ```
 
-Container runs as **root**, reasoned in the Dockerfile. Under rootless podman
-the container's uid 0 *is* the host user that runs the quadlet (`core`), which
-owns the bind-mounted podman socket, `/app/data` and the host SSH key — so
-dropping privilege only works together with a mapping that puts the unprivileged
-uid back onto `core`: `UserNS=keep-id:uid=1001,gid=1001` on
-`servicebay.container`. That line is **not** in the butane template — it is
-*derived*, in two places:
+Container runs **unprivileged**, as `nextjs` (uid 1001, primary group `nodejs`
+gid 1001), reasoned in the Dockerfile. Under rootless podman the container's
+uid 0 *is* the host user that runs the quadlet (`core`), which owns the
+bind-mounted podman socket, `/app/data` and the host SSH key — so dropping
+privilege only works together with a mapping that puts the unprivileged uid back
+onto `core`: `UserNS=keep-id:uid=1001,gid=1001` on `servicebay.container`. That
+line is **not** in the butane template — it is *derived*, in two places:
 
 - `packages/backend/src/lib/quadletUserNs.ts` (#2788), in-app, at boot and
   before a channel swap; and
@@ -205,13 +205,18 @@ unit file. Ignition writes the script on fresh boxes; boxes installed earlier ge
 the identical text pushed by `packages/backend/src/lib/quadletUserNsHostHook.ts`
 at boot.
 
-The image still runs as **root**. The image half keeps the `nextjs` user,
-`HOME=/home/nextjs` and the `--chown=nextjs:nodejs` COPYs — all harmless under
-root — so the re-land is a one-line `USER` flip, gated only on *ordering*: the
-release carrying the host half must be older than the release that flips `USER`,
-or a box on the previous version has no script when the timer pulls the new
-image. `tests/backend/dockerfile_runtime_user.test.ts` cross-checks the two
-halves so a non-root image cannot be released without the host-side reconcile.
+The image half then re-landed in #2815, one release later — that *ordering* was
+the whole gate: the host half is pushed to already-installed boxes by the running
+app, so the release carrying it has to be strictly older than the release that
+drops privilege, or a box on the previous version has no script when the timer
+pulls the new image. The host half shipped in 5.29.0 and was confirmed on the box
+before the `USER` line moved. `tests/backend/dockerfile_runtime_user.test.ts`
+cross-checks the two halves so a non-root image can never be released without the
+host-side reconcile shipping and being wired.
+
+Rollback is self-healing in the same way: both reconciles read the pulled image's
+declared user, so a root image gets the `UserNS=` line *removed* again rather
+than starting under a mapping it does not want.
 
 For a leaner local dev image that re-uses the host build (avoids
 running webpack inside the container), see `Dockerfile.dev` and
@@ -401,7 +406,7 @@ Host filesystem (after FCOS install)
 │  /run/user/1000/podman/podman.sock  ←── Host Podman API socket │
 │                                                                 │
 │  Network: host  (shares host network stack)                     │
-│  No UserNS=   (rootless: container root = `core` on the host)  │
+│  UserNS=keep-id:uid=1001,gid=1001  (derived, never templated)   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
