@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.31.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.30.1...servicebay-v5.31.0) (2026-09-05)
+
+
+### Features
+
+* **claude-dev:** add pi + pi-web-ui as a second agent in the same container ([ae7ccf1](https://github.com/mdopp/servicebay/commit/ae7ccf112190c0b1e41c706ded58efef82b3b9a5)), closes [#2803](https://github.com/mdopp/servicebay/issues/2803)
+* **claude-dev:** add pi + pi-web-ui as a second agent in the same container ([#2803](https://github.com/mdopp/servicebay/issues/2803)) ([64b1960](https://github.com/mdopp/servicebay/commit/64b19601374f3c90d432492fc54d7dab0a2e4a3f))
+
 ## [5.30.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.30.0...servicebay-v5.30.1) (2026-09-05)
 
 
