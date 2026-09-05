@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.31.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.0...servicebay-v5.31.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **autoloop:** no false box-verify for scripts-only diffs; classify outcome 'none' ([#2829](https://github.com/mdopp/servicebay/issues/2829)) ([380e4bd](https://github.com/mdopp/servicebay/commit/380e4bdbdfc73c6a17b7a87d00e873959f5a5ce9))
+* **autoloop:** stop false box-verify signals on scripts-only diffs ([4fc3b1f](https://github.com/mdopp/servicebay/commit/4fc3b1f27d7af07761a8a112bee5b4b12c6c795c)), closes [#2829](https://github.com/mdopp/servicebay/issues/2829)
+
 ## [5.31.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.30.1...servicebay-v5.31.0) (2026-09-05)
 
 
