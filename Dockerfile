@@ -220,56 +220,60 @@ COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=prod-deps --chown=nextjs:nodejs /app/packages ./packages-proddeps
 COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
 
-# Runtime user: unprivileged — 2026-09-04, #2789 (the image half of #2749).
+# Runtime user: root again, deliberately — 2026-09-05, #2805 (rollback of the
+# #2789 image half; the reasoning below is the #2722 one, restored).
 #
-# It used to be `USER root`, and the reason was never the image: under rootless
-# podman the container's uid 0 maps to the HOST user that runs the quadlet
-# (`core`, uid 1000 on the box), and every other container uid lands in that
-# user's subuid range and owns nothing on the host. Three things depend on that
-# mapping, all three checked against the running box rather than assumed:
+# 5.28.0 shipped `USER nextjs` and broke the box. Not because the image was
+# wrong, but because the mapping that makes a non-root image survivable is
+# written by a reconciler that the delivery path does not run: the host's
+# `podman-auto-update.timer` pulls `:latest` and restarts the unit with no
+# pre-swap hook, so the unprivileged container came up on a quadlet with no
+# `UserNS=` at all. Under rootless podman the container's uid 0 maps to the HOST
+# user that runs the quadlet (`core`, uid 1000 on the box); every other
+# container uid lands in that user's subuid range and owns nothing on the host.
+# Three things the app then cannot do — all three observed on the box, not
+# assumed:
 #
 #   1. The Podman control plane. The quadlet binds the host's rootless socket
 #      /run/user/1000/podman/podman.sock -> /run/podman/podman.sock and points
-#      CONTAINER_HOST at it. That socket is core-owned, mode 0660.
+#      CONTAINER_HOST at it. That socket is core-owned, mode 0660, so a subuid
+#      gets EACCES and ServiceBay can no longer list or deploy a single service.
 #   2. DATA_DIR. /app/data is a bind of ${DATA_ROOT}/servicebay (core-owned,
 #      SELinux :Z). Boot writes into it — see packages/backend/src/lib/dirs.ts
-#      plus the mkdir/write paths in secrets.ts and nodes.ts.
+#      plus the mkdir/write paths in secrets.ts and nodes.ts. Losing it is what
+#      took the tokens, the config and the service registry down in #2805.
 #   3. The host SSH identity. nodes.json points Agent V4 at
 #      /app/data/ssh/id_rsa (ssh://core@127.0.0.1). ssh refuses a private key it
-#      does not own.
+#      does not own, so the agent — and with it every host-side command — dies.
 #
-# What replaces uid 0 is the quadlet's `UserNS=keep-id:uid=1001,gid=1001`, which
-# maps host `core` onto container uid 1001 — so all three stay reachable while
-# the container no longer holds uid 0. That line is NOT written by hand and is
-# not in the butane template: the reconciler
-# packages/backend/src/lib/quadletUserNs.ts (#2788, shipped one release ahead of
-# this change) derives it at boot and after a channel swap from the user THIS
-# image declares, and removes it again when a rollback puts a root image back.
-# The two halves therefore move independently in either direction.
+# Root is therefore the self-healing state: the same auto-update timer that
+# broke the box repairs it, because packages/backend/src/lib/quadletUserNs.ts
+# (#2788) removes a stray `UserNS=` again as soon as the image it inspects
+# declares root. Rollback-safe by design, in that one direction only.
 #
-# Consequences, in the order they bite:
-#   - uid/gid here must stay the pair `id` reports inside the image (1001/1001,
-#     pinned by the groupadd/useradd above). The reconciler copies them verbatim
-#     into the host's quadlet.
-#   - NO host-side chown is required on an existing box: keep-id makes the
-#     core-owned socket, DATA_DIR and ssh key appear as nextjs-owned inside. If
-#     keep-id ever stops being how this is mapped, that turns into a real
-#     host-ownership migration.
-#   - Every step needing privilege (apt-get, groupadd/useradd, the /app chown)
-#     is ABOVE this line. Nothing below it may need root.
+# Same mapping, same reason as packages/{backup-worker,disk-import-worker}/Containerfile.
 #
-# packages/{backup-worker,disk-import-worker}/Containerfile still run as root
-# and still carry the old reasoning: they are one-shot workers the HOST starts
-# with their own mounts, not this container, and they are tracked separately
-# under #2749.
+# Re-land condition (#2805 follow-up): the unprivileged runtime user comes back
+# only once the mapping is reconciled ON THE AUTO-UPDATE PATH — a host-side
+# self-heal (e.g. an ExecStartPre deriving `UserNS=` from
+# `podman image inspect --format '{{.Config.User}}'`, alongside
+# servicebay-relabel-selfheal.sh in tools/sb/internal/build/assets/fedora-coreos.bu)
+# so no delivery route can start the container before its quadlet is mapped.
+# Everything else the image half needs is deliberately LEFT IN PLACE and is
+# harmless under root — the nextjs/nodejs ids with their load-bearing
+# `--gid nodejs`, `ENV HOME=/home/nextjs`, and `--chown=nextjs:nodejs` on every
+# runner COPY — so the re-land is a one-line flip once the host half exists.
 #
 # Guard: tests/backend/dockerfile_runtime_user.test.ts.
-USER nextjs
+USER root
 
-# Runs AFTER the switch, as nextjs, on purpose: `cp` as root would drop
-# root-owned files into the otherwise nextjs-owned node_modules, and repairing
-# that with a `chown -R node_modules` would duplicate the whole tree into a new
-# layer. Both source and destination are already nextjs-owned here.
+# Kept BELOW the switch where #2789 put it. It runs as root again now, which is
+# fine — the runtime user is root too, so the root-owned files this drops into
+# node_modules are readable by the process. When the unprivileged user re-lands
+# (#2805 follow-up) this position matters again: `cp` as root under
+# `USER nextjs` would leave root-owned files in a nextjs-owned tree, and
+# repairing that with a `chown -R node_modules` duplicates ~1 GB into a new
+# layer.
 RUN for d in packages-proddeps/*/node_modules; do [ -d "$d" ] && cp -rn "$d/." node_modules/; done; rm -rf packages-proddeps
 
 EXPOSE 3000
