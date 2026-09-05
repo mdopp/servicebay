@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.30.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.30.0...servicebay-v5.30.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **autoloop:** wait for the sha's :dev push before flipping the box ([185be26](https://github.com/mdopp/servicebay/commit/185be26466c7e57ee4be81f8070a518ce4064228)), closes [#2820](https://github.com/mdopp/servicebay/issues/2820)
+* **autoloop:** wait for the sha's :dev push before flipping the box ([#2820](https://github.com/mdopp/servicebay/issues/2820)) ([7225183](https://github.com/mdopp/servicebay/commit/72251831b3c77fa7adc26ef651c4fc43a468e9ae))
+
 ## [5.30.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.29.0...servicebay-v5.30.0) (2026-09-05)
 
 
