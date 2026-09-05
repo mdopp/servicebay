@@ -179,6 +179,157 @@ unrelated_value: visible
 });
 
 /**
+ * #2828 — the two leaks a keyword/convention list could never cover, both seen
+ * on a real node in one session: a kube env var named `*_PASS` came back in
+ * plaintext from `get_service_files`, and `read_file` on an Authelia config
+ * handed back `storage.encryption_key` plus the whole inline OIDC private key.
+ *
+ * Fixture values are obviously fake by construction — never a value read off
+ * the box (repo secret hygiene).
+ */
+const AUTHELIA_CONFIG = [
+  'theme: dark',
+  "default_redirection_url: https://auth.example.invalid/",
+  'jwt_secret: FAKE-JWT-SECRET-NOT-REAL',
+  'storage:',
+  "  encryption_key: 'FAKE-ENCRYPTION-KEY-NOT-REAL'",
+  '  local:',
+  '    path: /config/db.sqlite3',
+  'authentication_backend:',
+  '  ldap:',
+  '    base_dn: dc=example,dc=invalid',
+  '    user: uid=admin,ou=people,dc=example,dc=invalid',
+  'identity_providers:',
+  '  oidc:',
+  '    jwks:',
+  '      - algorithm: RS256',
+  '        key: |',
+  '          -----BEGIN RSA PRIVATE KEY-----',
+  '          FAKEPRIVATEKEYLINEONEAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  '          FAKEPRIVATEKEYLINETWOBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+  '          -----END RSA PRIVATE KEY-----',
+  'server:',
+  '  port: 9091',
+].join('\n');
+
+describe('redactLogText (#2828 — structural key names + PEM blocks)', () => {
+  it('redacts a `*_key` config value the keyword list never listed', () => {
+    const out = redactLogText(AUTHELIA_CONFIG);
+
+    expect(out).not.toContain('FAKE-ENCRYPTION-KEY-NOT-REAL');
+    expect(out).toContain("encryption_key: '<redacted>'");
+  });
+
+  it('redacts an inline PEM private key carried in a `key: |` block', () => {
+    const out = redactLogText(AUTHELIA_CONFIG);
+
+    expect(out).not.toContain('FAKEPRIVATEKEYLINEONE');
+    expect(out).not.toContain('FAKEPRIVATEKEYLINETWO');
+    // The block scalar's structure survives — only its body is masked.
+    expect(out).toContain('key: |');
+  });
+
+  it('redacts a bare PEM private key file, header and footer kept', () => {
+    const out = redactLogText([
+      '-----BEGIN PRIVATE KEY-----',
+      'FAKEBAREKEYBODYAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      'FAKEBAREKEYBODYBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      '-----END PRIVATE KEY-----',
+    ].join('\n'));
+
+    expect(out).not.toContain('FAKEBAREKEYBODY');
+    expect(out).toBe('-----BEGIN PRIVATE KEY-----\n<redacted>\n-----END PRIVATE KEY-----');
+  });
+
+  it('leaves the non-secret control lines of the same file readable', () => {
+    const out = redactLogText(AUTHELIA_CONFIG);
+
+    expect(out).toContain('theme: dark');
+    expect(out).toContain('default_redirection_url: https://auth.example.invalid/');
+    expect(out).toContain('base_dn: dc=example,dc=invalid');
+    expect(out).toContain('path: /config/db.sqlite3');
+    expect(out).toContain('port: 9091');
+  });
+
+  it('redacts a PEM private key with no END line (truncated read) to the end', () => {
+    const out = redactLogText([
+      'reading key',
+      '-----BEGIN PRIVATE KEY-----',
+      'FAKETRUNCATEDKEYBODYAAAAAAAAAAAAAAAAAAAAAAAA',
+    ].join('\n'));
+
+    expect(out).not.toContain('FAKETRUNCATEDKEYBODY');
+    expect(out).toContain('<redacted>');
+  });
+
+  it('leaves a certificate and a public key readable — they are not secrets', () => {
+    const input = [
+      '-----BEGIN CERTIFICATE-----',
+      'PUBLICCERTBODYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      '-----END CERTIFICATE-----',
+      '-----BEGIN PUBLIC KEY-----',
+      'PUBLICKEYBODYBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      '-----END PUBLIC KEY-----',
+    ].join('\n');
+
+    expect(redactLogText(input)).toBe(input);
+  });
+
+  it('redacts `key=value` shapes too, and skips empty / already-masked values', () => {
+    expect(redactLogText('ENCRYPTION_KEY=FAKE-VALUE-NOT-REAL'))
+      .toBe('ENCRYPTION_KEY=<redacted>');
+    // No value to leak — masking it would falsely suggest one is set.
+    expect(redactLogText('encryption_key:')).toBe('encryption_key:');
+    expect(redactLogText('encryption_key: <redacted>')).toBe('encryption_key: <redacted>');
+  });
+
+  it('does not redact a log sentence that merely mentions a key', () => {
+    const input = 'Loaded 3 keys from /config/keys.d in 4ms';
+    expect(redactLogText(input)).toBe(input);
+  });
+});
+
+describe('redactKubeYaml (#2828 — *_PASS env names)', () => {
+  const ENV = [
+    '    env:',
+    '      - name: LLDAP_LDAP_USER_PASS',
+    '        value: "FAKE-LLDAP-ADMIN-PASS-NOT-REAL"',
+    '      - name: AUTHELIA_STORAGE_ENCRYPTION_KEY',
+    '        value: "FAKE-STORAGE-KEY-NOT-REAL"',
+    '      - name: LLDAP_LDAP_BASE_DN',
+    '        value: "dc=example,dc=invalid"',
+    '      - name: TZ',
+    '        value: "Europe/Berlin"',
+  ].join('\n');
+
+  it('redacts a `*_PASS` env value (the leak #2828 was filed on)', () => {
+    const out = redactKubeYaml(ENV);
+
+    expect(out).not.toContain('FAKE-LLDAP-ADMIN-PASS-NOT-REAL');
+    expect(out).toContain('LLDAP_LDAP_USER_PASS');
+    expect(out).toContain('<redacted>');
+  });
+
+  it('redacts a `*_KEY` env value', () => {
+    expect(redactKubeYaml(ENV)).not.toContain('FAKE-STORAGE-KEY-NOT-REAL');
+  });
+
+  it('leaves non-secret env values readable (control)', () => {
+    const out = redactKubeYaml(ENV);
+
+    expect(out).toContain('dc=example,dc=invalid');
+    expect(out).toContain('Europe/Berlin');
+  });
+
+  it('redacts a `*_PASS` env value in the JSON form too', () => {
+    const out = redactKubeYaml('{"name":"LLDAP_LDAP_USER_PASS","value":"FAKE-PASS-NOT-REAL"}');
+
+    expect(out).not.toContain('FAKE-PASS-NOT-REAL');
+    expect(out).toContain('<redacted>');
+  });
+});
+
+/**
  * A `.container`-kind Quadlet unit (#2792): the unit file IS the artifact, so
  * `get_service_files` hands this whole body back and there is no pod spec for
  * `redactKubeYaml` to walk. Modelled on the box's own `servicebay.container`.
