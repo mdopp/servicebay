@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.28.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.28.0...servicebay-v5.28.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **runtime:** run the image as root again until the auto-update path reconciles UserNS ([#2805](https://github.com/mdopp/servicebay/issues/2805)) ([6e8ba61](https://github.com/mdopp/servicebay/commit/6e8ba61bcba03a4e288e93a15267cad446b78a02))
+* **runtime:** run the image as root again until the auto-update path reconciles UserNS ([#2805](https://github.com/mdopp/servicebay/issues/2805)) ([369c32b](https://github.com/mdopp/servicebay/commit/369c32b7a6bdbe344a41a2bcfb9b0147596e1e7b))
+
 ## [5.28.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.27.0...servicebay-v5.28.0) (2026-09-04)
 
 
