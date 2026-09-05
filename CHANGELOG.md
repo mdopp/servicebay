@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.28.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.28.1...servicebay-v5.28.2) (2026-09-05)
+
+
+### Bug Fixes
+
+* **registry:** read a GitHub throttle as transient, and back off instead of latching ([#2809](https://github.com/mdopp/servicebay/issues/2809)) ([3539ffc](https://github.com/mdopp/servicebay/commit/3539ffca6cca5d0ab8acafcd2b1c78df39096ea8))
+* **registry:** read a GitHub throttle as transient, and back off instead of latching ([#2809](https://github.com/mdopp/servicebay/issues/2809)) ([f8d68fb](https://github.com/mdopp/servicebay/commit/f8d68fb89d4e3337a51e56a798994dc9410fe7c1))
+
 ## [5.28.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.28.0...servicebay-v5.28.1) (2026-09-05)
 
 
