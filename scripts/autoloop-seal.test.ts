@@ -304,3 +304,64 @@ esac
     expect(`${r.stdout}${r.stderr}`).not.toContain(Buffer.from(`x-access-token:${FAKE_TOKEN}`).toString('base64'));
   }, 130_000);
 });
+
+// ---------------------------------------------------------------------------
+// #2829 — an effect marker is a LITERAL string, so unscoped it fires on any file
+// that merely mentions it. Sealing PR #2827 (a scripts/ + playbook-only diff)
+// emitted `template-schema-migration @ scripts/autoloop-verify-classify.ts` —
+// the classifier greps template YAML — and charged the batch a false `:dev`
+// verify while nothing under `templates/` had changed at all.
+// ---------------------------------------------------------------------------
+describe('effect markers are scoped to the paths the effect is about (#2829)', () => {
+  /** The actual added line from PR #2827 that tripped the gate. */
+  const CLASSIFIER_LINE = '  re: /servicebay\\.schema-version/,';
+
+  it('a scripts/ file that merely contains the literal "schema-version" trips nothing', () => {
+    expect(
+      durableStateEffects([
+        { path: 'scripts/autoloop-verify-classify.ts', addedLines: [CLASSIFIER_LINE, 'const TEMPLATE_ANY = /^templates\\//;'] },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('nor does a test, a playbook or a doc quoting the same annotation', () => {
+    expect(
+      durableStateEffects([
+        { path: 'scripts/autoloop-verify-classify.test.ts', addedLines: ['    servicebay.schema-version: "4"'] },
+        { path: '.claude/skills/autoloop-issues/stages/box-verify.md', addedLines: ['a `servicebay.schema-version` bump ⇒ FULL'] },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('but a real templates/** schema-version bump still DOES (no over-correction)', () => {
+    const effects = durableStateEffects([{ path: 'templates/demo/template.yml', addedLines: ['    servicebay.schema-version: "4"'] }]);
+    expect(effects.map(e => `${e.kind} @ ${e.path}`)).toEqual(['template-schema-migration @ templates/demo/template.yml']);
+  });
+
+  it('the store / manifest markers stay inside the shipped app code', () => {
+    // the same added lines in a helper script are tooling talking ABOUT the store
+    expect(
+      durableStateEffects([
+        { path: 'scripts/rotate-secrets.ts', addedLines: ['  const key = regenerateSecretKey();'] },
+        { path: 'scripts/autoloop-queue.ts', addedLines: ['  config.installedTemplates = next;'] },
+      ]),
+    ).toEqual([]);
+    // …and the same lines under packages/ still trip, as before
+    expect(
+      durableStateEffects([{ path: 'packages/backend/src/lib/secrets.ts', addedLines: ['  const key = regenerateSecretKey();'] }]).map(e => e.kind),
+    ).toEqual(['secret-store-write']);
+  });
+
+  it('the whole PR #2827 file list owes no box-verify at all', () => {
+    const gate = gateDecision([
+      { path: '.claude/skills/autoloop-issues/SKILL.md', addedLines: ['- a dispatch rule'] },
+      { path: '.claude/skills/autoloop-issues/stages/box-verify.md', addedLines: ['`servicebay.schema-version` bump ⇒ FULL'] },
+      { path: 'scripts/autoloop-verify-classify.ts', addedLines: [CLASSIFIER_LINE] },
+      { path: 'scripts/autoloop-dev-verify.ts', addedLines: ['const pushTimeout = 900;'] },
+      { path: 'package.json', addedLines: ['    "autoloop:classify": "tsx scripts/autoloop-verify-classify.ts",'] },
+    ]);
+    expect(gate.effects).toEqual([]);
+    expect(gate.pathMandated).toEqual([]);
+    expect(gate.boxVerifyOwed).toBe(false);
+  });
+});

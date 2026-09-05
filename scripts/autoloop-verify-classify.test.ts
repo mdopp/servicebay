@@ -5,6 +5,7 @@ import {
   parsePodContainerNames,
   classifyTemplateFile,
   classifyChanges,
+  packageJsonChangeIsInert,
   parseRange,
   formatVerdict,
   type ChangedFile,
@@ -160,14 +161,16 @@ describe('non-template classification', () => {
     const result = classifyChanges([{ status: 'M', path: 'packages/backend/src/lib/services/lifecycle/deploy.ts' }]);
     expect(result.path).toBe('full');
   });
-  it('docs, playbooks, scripts and tests are ignored, not FULL', () => {
+  it('docs, playbooks, scripts and tests are ignored — nothing left to verify (#2829)', () => {
     const result = classifyChanges([
       { status: 'M', path: 'docs/ARCHITECTURE_INVARIANTS.md' },
       { status: 'M', path: '.claude/skills/autoloop-issues/stages/box-verify.md' },
       { status: 'A', path: 'scripts/autoloop-verify-classify.ts' },
       { status: 'M', path: 'packages/backend/src/lib/install/runner.test.ts' },
     ]);
-    expect(result.path).toBe('light');
+    // was 'light' before #2829: a diff with nothing box-observable in it is
+    // 'none', which clears the gate without a Box-Verify dispatch at all.
+    expect(result.path).toBe('none');
     expect(result.files.full).toEqual([]);
     expect(result.files.ignored).toHaveLength(4);
   });
@@ -209,5 +212,129 @@ describe('box-verify.md Step 0 is wired to the classifier', () => {
     expect(renderOnly).toHaveLength(1);
     expect(renderOnly[0]).not.toContain('`templates/**`');
     expect(playbook).toMatch(/servicebay\.schema-version` bump/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #2829 — `npm run autoloop:classify -- 5bdf924f 699d6e22` answered FULL because
+// of `package.json`, whose only change was a new `"autoloop:classify"` entry
+// under `scripts`. A ~25 min `:dev` flip for a diff with zero runtime files.
+// ---------------------------------------------------------------------------
+describe('package.json and release-please noise (#2829)', () => {
+  const basePkg = {
+    name: 'servicebay',
+    version: '5.30.1',
+    scripts: { build: 'next build', lint: 'eslint .' },
+    dependencies: { next: '15.0.0' },
+    devDependencies: { vitest: '2.0.0' },
+    engines: { node: '>=22' },
+  };
+  const pkg = (overrides: Record<string, unknown> = {}) => JSON.stringify({ ...basePkg, ...overrides }, null, 2);
+
+  it('(2) a new npm script is not box-observable — the whole PR #2827 diff is none', () => {
+    const result = classifyChanges([
+      { status: 'M', path: '.claude/skills/autoloop-issues/SKILL.md' },
+      { status: 'M', path: 'scripts/autoloop-verify-classify.ts' },
+      {
+        status: 'M',
+        path: 'package.json',
+        before: pkg(),
+        after: pkg({ scripts: { ...basePkg.scripts, 'autoloop:classify': 'tsx scripts/autoloop-verify-classify.ts' } }),
+      },
+    ]);
+    expect(result.path).toBe('none');
+    expect(result.files.full).toEqual([]);
+    expect(result.files.ignored).toContain('package.json');
+  });
+
+  it('(2) a devDependencies bump is inert too, in any workspace', () => {
+    const result = classifyChanges([
+      { status: 'M', path: 'packages/backend/package.json', before: pkg(), after: pkg({ devDependencies: { vitest: '2.1.0' } }) },
+    ]);
+    expect(result.path).toBe('none');
+  });
+
+  it('(2) but a dependencies / engines change is real runtime surface ⇒ FULL', () => {
+    for (const after of [pkg({ dependencies: { next: '15.1.0' } }), pkg({ engines: { node: '>=24' } })]) {
+      const result = classifyChanges([{ status: 'M', path: 'package.json', before: pkg(), after }]);
+      expect(result.path).toBe('full');
+      expect(result.reasons.join('\n')).toMatch(/package\.json/);
+    }
+  });
+
+  it('(2) an unreadable or added package.json stays conservative ⇒ FULL', () => {
+    expect(classifyChanges([{ status: 'A', path: 'packages/new/package.json', before: null, after: pkg() }]).path).toBe('full');
+    expect(classifyChanges([{ status: 'M', path: 'package.json', before: 'not json', after: pkg() }]).path).toBe('full');
+    // no content read at all (a caller that skipped `git show`) — unchanged behaviour
+    expect(classifyChanges([{ status: 'M', path: 'package.json' }]).path).toBe('full');
+  });
+
+  it('(3) release-please noise classifies as none: the bump IS the release', () => {
+    const result = classifyChanges([
+      { status: 'M', path: '.release-please-manifest.json' },
+      { status: 'M', path: 'CHANGELOG.md' },
+      { status: 'M', path: 'packages/backend/CHANGELOG.md' },
+      { status: 'M', path: 'package.json', before: pkg(), after: pkg({ version: '5.31.0' }) },
+      { status: 'M', path: 'packages/backend/package.json', before: pkg(), after: pkg({ version: '5.31.0' }) },
+    ]);
+    expect(result.path).toBe('none');
+    expect(result.files.full).toEqual([]);
+    expect(result.files.light).toEqual([]);
+  });
+
+  it('packageJsonChangeIsInert is conservative about anything it cannot read', () => {
+    expect(packageJsonChangeIsInert(null, '{}')).toBe(false);
+    expect(packageJsonChangeIsInert('{}', null)).toBe(false);
+    expect(packageJsonChangeIsInert('[]', '[]')).toBe(false);
+    expect(packageJsonChangeIsInert('{oops', '{}')).toBe(false);
+    // a whitespace-only reformat changes no key
+    expect(packageJsonChangeIsInert(JSON.stringify(basePkg), JSON.stringify(basePkg, null, 4))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (4) The third outcome. `none` = every changed file was ignored, so there is
+// nothing on the box to look at and the orchestrator clears the verify gate
+// without dispatching Box-Verify at all (SKILL.md Step 1 rule 1).
+// ---------------------------------------------------------------------------
+describe('the none outcome', () => {
+  it('a diff of nothing but ignored files is none, not light', () => {
+    const result = classifyChanges([
+      { status: 'M', path: 'docs/ARCHITECTURE_INVARIANTS.md' },
+      { status: 'M', path: '.claude/skills/autoloop-issues/SKILL.md' },
+      { status: 'M', path: 'scripts/autoloop-seal.ts' },
+      { status: 'M', path: 'tests/backend/foo.test.ts' },
+    ]);
+    expect(result.path).toBe('none');
+    expect(result.files.ignored).toHaveLength(4);
+    expect(result.reasons).toEqual([]);
+  });
+
+  it('one box-observable file is enough to lift it back to light', () => {
+    const result = classifyChanges([
+      { status: 'M', path: 'docs/ARCHITECTURE_INVARIANTS.md' },
+      { status: 'M', path: 'packages/backend/src/lib/portal/provisioner.ts' },
+    ]);
+    expect(result.path).toBe('light');
+  });
+
+  it('an empty diff is none', () => {
+    expect(classifyChanges([]).path).toBe('none');
+  });
+
+  it('rides the same JSON line and the same exit-0 contract', () => {
+    const line = formatVerdict(classifyChanges([{ status: 'M', path: 'docs/README.md' }]));
+    const verdict = JSON.parse(line.slice('AUTOLOOP_VERIFY_CLASS '.length));
+    expect(verdict).toEqual({ path: 'none', reasons: [], files: { full: [], light: [], ignored: ['docs/README.md'] } });
+  });
+});
+
+describe('SKILL.md Step 1 rule 1 folds the none verdict', () => {
+  const skill = readFileSync('.claude/skills/autoloop-issues/SKILL.md', 'utf8');
+
+  it('tells the orchestrator to clear the gate on none without dispatching Box-Verify', () => {
+    const rule = skill.split('\n').find(l => l.includes('AUTOLOOP_SEAL_RESULT') && l.includes('verify-set')) ?? '';
+    expect(rule).toMatch(/autoloop:classify/);
+    expect(rule).toMatch(/"path":"none"|`none`/);
   });
 });
