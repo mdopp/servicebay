@@ -1,7 +1,7 @@
 import type * as fs from 'fs';
 import type * as path from 'path';
 import type { Database } from 'better-sqlite3';
-import { renderLogArg, shouldColorize, toSingleJournalLine } from './log-format';
+import { redactEnvironmentAssignments, renderLogArg, shouldColorize, toSingleJournalLine } from './log-format';
 
 const isServer = typeof window === 'undefined';
 
@@ -222,8 +222,37 @@ class Logger {
     return new Date().toISOString().replace('T', ' ').replace('Z', '');
   }
 
-  private insertLog(level: LogLevel, tag: string, message: string, args: unknown[]): LogEntry {
+  /**
+   * The ONE redaction step every persisted sink shares (#2836).
+   *
+   * #2833 masked secret `Environment=` assignments in `toSingleJournalLine`,
+   * which is the *console* funnel only — `insertLog` went on writing the raw
+   * `message` into `DATA_DIR/logs.db`, where it sits for the full 7-day
+   * retention window and is read straight back out by `queryLogs` and the log
+   * viewer. Masking it here instead of at the INSERT is deliberate: the entry
+   * built from these values also feeds the `onLog` subscribers (server.ts
+   * broadcasts it to the `logs:live` socket room), so one call covers the row,
+   * the socket and — since `formatConsole` renders `entry.message` — the
+   * journal line, and the two sinks can no longer diverge.
+   *
+   * `args` is treated too, and at two levels for a reason: a string arg is
+   * masked in place so the socket entry carries the masked value, and the
+   * serialized blob is masked again on its way into the `args` column so a
+   * body nested inside an object argument cannot slip in at rest either. The
+   * redactor is idempotent (`log-format.ts`), so the second pass is free.
+   *
+   * This does not rewrite history: rows written before this shipped still hold
+   * whatever they held, and rotating the credential (#2621) stays the remedy
+   * for anything already stored.
+   */
+  private redactArg(value: unknown): unknown {
+      return typeof value === 'string' ? redactEnvironmentAssignments(value) : value;
+  }
+
+  private insertLog(level: LogLevel, tag: string, rawMessage: string, rawArgs: unknown[]): LogEntry {
       const timestamp = this.getTimestamp();
+      const message = redactEnvironmentAssignments(rawMessage);
+      const args = rawArgs.map(a => this.redactArg(a));
       // Capture the request trace ID if a provider was registered (#597).
       // No direct import of traceContext.ts — that module pulls
       // node:async_hooks which webpack refuses to bundle for the client,
@@ -247,7 +276,7 @@ class Logger {
                   level,
                   tag,
                   message,
-                  args.length > 0 ? JSON.stringify(args) : null,
+                  args.length > 0 ? redactEnvironmentAssignments(JSON.stringify(args)) : null,
                   traceId ?? null,
               );
               entry.id = Number(info.lastInsertRowid);
@@ -349,8 +378,11 @@ class Logger {
    *    and the whole body is flattened by `toSingleJournalLine`, so one log call
    *    is one journal entry with no blank ones trailing it.
    *
-   * Only the console rendering changes: `insertLog` still persists the raw
-   * message and args, so the log viewer and `queryLogs` keep full fidelity.
+   * Only the *rendering* is console-specific. The body it renders is the entry
+   * `insertLog` already masked (#2836), and `toSingleJournalLine`'s own
+   * `Environment=` redaction (#2833) is idempotent, so this sink and the
+   * SQLite row show the same `<N chars redacted>` marker rather than two
+   * different views of the same line.
    */
   private formatConsole(level: LogLevel, entry: LogEntry): [string] {
     const c: Palette = shouldColorize() ? COLORS : PLAIN;

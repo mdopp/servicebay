@@ -54,6 +54,15 @@
  * **pull-in-progress**, not a refusal, so the run keeps polling for the image
  * budget instead of flipping straight back (it is reported as `flipTimeout`).
  *
+ * **The push wait resolves the SHA to its full 40-char form first (#2837).**
+ * `gh run list --commit` matches exactly and answers a SHORT sha with an empty
+ * array — not an error — so a run invoked the way the playbook documents it
+ * (short sha) polled out the whole `--push-timeout` and reported
+ * `dev-image-not-pushed` for an image that was already on the registry. The
+ * resolution happens ONCE, before the poll loop (`resolveFullSha`); the running
+ * image's revision label is still compared by prefix, so a short sha keeps
+ * matching there as it always did.
+ *
  * `reachedDev` and `flippedBack` are trustworthy on their own — both poll
  * through the whole restart window and carry their evidence (`devImage`,
  * `flipBack`), so no manual `list_containers`/image-tag cross-check is needed
@@ -90,7 +99,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { getChannel, setChannel, waitHealth, mcpCall, mcpExec } from './autoloop-box';
-import { gitEnv } from './autoloop-git';
+import { gitEnv, resolveFullSha } from './autoloop-git';
 
 /**
  * Does the running image's OCI revision label identify `sha`?
@@ -416,6 +425,11 @@ export interface DevPushDeps {
   listRuns: (sha: string) => Promise<ReleaseRunRow[] | null>;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
+  /** Resolve the caller's SHA to its full 40-char form, ONCE, before the poll
+   *  loop starts (#2837). `null` = it could not be resolved, and the wait then
+   *  polls with the SHA it was given (exactly the pre-#2837 behaviour).
+   *  Optional so the existing dep fixtures stay valid. */
+  resolveSha?: (sha: string) => string | null;
 }
 
 export interface DevPushResult {
@@ -481,13 +495,19 @@ export async function waitForDevPush(
   const timeoutSec = Number.isFinite(requested) && requested > 0 ? requested : DEV_PUSH_TIMEOUT_SEC;
   const pollEverySec = opts.pollEverySec ?? DEV_PUSH_POLL_SEC;
 
+  // `gh run list --commit` matches on the EXACT 40-char SHA and answers a short
+  // one with an empty array, not an error — so a short SHA used to poll out the
+  // whole budget and report "no Release workflow run" for a run that had already
+  // succeeded (#2837). Resolve ONCE here, before the loop, never per poll.
+  const lookupSha = deps.resolveSha?.(sha) ?? sha;
+
   const deadline = deps.now() + timeoutSec * 1000;
   let state: ReleaseRunState | null = null;
   let polls = 0;
   let lookupFailures = 0;
 
   for (;;) {
-    const rows = await deps.listRuns(sha);
+    const rows = await deps.listRuns(lookupSha);
     if (rows === null) {
       lookupFailures++;
     } else {
@@ -1260,7 +1280,12 @@ async function main(): Promise<void> {
             }
           : await waitForDevPush(
               s,
-              { listRuns: listReleaseRuns, sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now() },
+              {
+                listRuns: listReleaseRuns,
+                sleep: ms => new Promise(r => setTimeout(r, ms)),
+                now: () => Date.now(),
+                resolveSha: rev => resolveFullSha(rev),
+              },
               { timeoutSec },
             );
         // Pre-pull :dev so the flip is a cache-hit (survives the exec caps —

@@ -1031,6 +1031,59 @@ describe('waitForDevPush (#2820)', () => {
   });
 });
 
+describe('waitForDevPush resolves the sha ONCE before polling (#2837)', () => {
+  /** A registry that behaves like the real `gh run list --commit`: it answers
+   *  ONLY the exact 40-char sha, and returns an empty array (never an error)
+   *  for a short one. */
+  function exactShaRegistry() {
+    let t = 0;
+    const shas: string[] = [];
+    const deps: DevPushDeps = {
+      now: () => t,
+      sleep: async ms => {
+        t += ms;
+      },
+      listRuns: async sha => {
+        t += 1_000;
+        shas.push(sha);
+        return sha === FULL ? [{ databaseId: 77, status: 'completed', conclusion: 'success' }] : [];
+      },
+    };
+    return { deps, shas, elapsedMs: () => t };
+  }
+
+  it('finds the already-completed Release run for a SHORT sha instead of burning the budget', async () => {
+    const reg = exactShaRegistry();
+    let resolutions = 0;
+    const result = await waitForDevPush(SHORT, {
+      ...reg.deps,
+      resolveSha: () => {
+        resolutions++;
+        return FULL;
+      },
+    });
+    expect(result).toMatchObject({ pushed: true, runId: 77, polls: 1 });
+    expect(reg.shas).toEqual([FULL]); // polled with the full sha, not the short one
+    expect(resolutions).toBe(1); // resolved once, before the loop — never per poll
+    expect(reg.elapsedMs()).toBeLessThan(5_000);
+  });
+
+  it('is exactly the bug when the sha is NOT resolved — the budget is burnt on an empty answer', async () => {
+    const reg = exactShaRegistry();
+    const result = await waitForDevPush(SHORT, reg.deps);
+    expect(result.pushed).toBe(false);
+    expect(result.detail).toContain('no Release workflow run');
+    expect(reg.elapsedMs()).toBeGreaterThanOrEqual(DEV_PUSH_TIMEOUT_SEC * 1000);
+  });
+
+  it('falls back to the given sha when the resolution fails — no worse than before', async () => {
+    const reg = exactShaRegistry();
+    const result = await waitForDevPush(FULL, { ...reg.deps, resolveSha: () => null });
+    expect(result.pushed).toBe(true);
+    expect(reg.shas).toEqual([FULL]);
+  });
+});
+
 describe('isPullInProgressTimeout (#2820)', () => {
   it('recognises the live client-side abort of the set_channel POST', () => {
     // The exact 13:22Z message: the box is still inside its 5-min podman pull.

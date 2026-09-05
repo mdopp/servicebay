@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { redactBundleEnvironments, redactKubeYaml, redactLogText, redactQuadletUnit, redactServiceFiles } from './redact';
+import { isSecretKey, redactBundleEnvironments, redactKubeYaml, redactLogText, redactQuadletUnit, redactServiceFiles } from './redact';
 
 describe('redactKubeYaml', () => {
   it('redacts the value of a *_PASSWORD env entry (two-line YAML)', () => {
@@ -286,6 +286,72 @@ describe('redactLogText (#2828 — structural key names + PEM blocks)', () => {
   it('does not redact a log sentence that merely mentions a key', () => {
     const input = 'Loaded 3 keys from /config/keys.d in 4ms';
     expect(redactLogText(input)).toBe(input);
+  });
+});
+
+describe('redactLogText (#2838 — over-redaction around a JWK private key)', () => {
+  // The real Authelia `identity_providers.oidc.jwks[]` shape, as `read_file`
+  // sees it: a `key_id` reference beside a `key: |` block scalar holding the
+  // PEM. Fake key material only.
+  const JWKS = [
+    'jwks:',
+    '  - key_id: main',
+    '    algorithm: RS256',
+    '    use: sig',
+    '    key: |',
+    '      -----BEGIN PRIVATE KEY-----',
+    '      FAKEJWKBODYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    '      FAKEJWKBODYBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+    '      -----END PRIVATE KEY-----',
+  ].join('\n');
+
+  it('keeps the PEM BEGIN/END markers inside a secret-shaped block scalar', () => {
+    const out = redactLogText(JWKS);
+
+    expect(out).toContain('      -----BEGIN PRIVATE KEY-----');
+    expect(out).toContain('      -----END PRIVATE KEY-----');
+    expect(out).toContain('    key: |');
+  });
+
+  it('still masks the private-key body in full (control)', () => {
+    const out = redactLogText(JWKS);
+
+    expect(out).not.toContain('FAKEJWKBODYA');
+    expect(out).not.toContain('FAKEJWKBODYB');
+    expect(out).toContain('      <redacted>');
+  });
+
+  it('keeps `key_id` and its non-secret siblings readable', () => {
+    const out = redactLogText(JWKS);
+
+    expect(out).toContain('  - key_id: main');
+    expect(out).toContain('    algorithm: RS256');
+    expect(out).toContain('    use: sig');
+  });
+
+  it('masks a non-PEM body under the same secret-shaped block header (control)', () => {
+    const out = redactLogText([
+      'key: |',
+      '  FAKERAWSECRETBODYAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      'port: 9091',
+    ].join('\n'));
+
+    expect(out).not.toContain('FAKERAWSECRETBODY');
+    expect(out).toBe('key: |\n  <redacted>\nport: 9091');
+  });
+
+  it('exempts key *identifiers* from `isSecretKey`, not key material', () => {
+    for (const name of ['key_id', 'keyId', 'key_ids', 'keyIds', 'signing_key_id']) {
+      expect(isSecretKey(name)).toBe(false);
+    }
+    // The identifier IS the credential in these — they stay masked.
+    for (const name of ['secret_id', 'secretId', 'token_id', 'password_id', 'api_key_secret_id']) {
+      expect(isSecretKey(name)).toBe(true);
+    }
+    // And the key itself is untouched by the exemption.
+    for (const name of ['key', 'apiKey', 'privateKey', 'AUTHELIA_STORAGE_ENCRYPTION_KEY']) {
+      expect(isSecretKey(name)).toBe(true);
+    }
   });
 });
 
