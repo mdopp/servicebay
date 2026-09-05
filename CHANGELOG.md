@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.29.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.28.2...servicebay-v5.29.0) (2026-09-05)
+
+
+### Features
+
+* **mcp:** narrow the assist tool surface to what a caller can afford to read ([e76a32b](https://github.com/mdopp/servicebay/commit/e76a32be6e98d684f6bd878d7ace0712a193366a)), closes [#2813](https://github.com/mdopp/servicebay/issues/2813) [#2814](https://github.com/mdopp/servicebay/issues/2814)
+
+
+### Bug Fixes
+
+* **runtime:** reconcile the quadlet UserNS on the podman-auto-update path ([28f9444](https://github.com/mdopp/servicebay/commit/28f9444340f922d1012dfadb4bbe8c41ff00a4c1)), closes [#2808](https://github.com/mdopp/servicebay/issues/2808)
+
 ## [5.28.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.28.1...servicebay-v5.28.2) (2026-09-05)
 
 
