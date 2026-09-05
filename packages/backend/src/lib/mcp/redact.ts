@@ -27,13 +27,18 @@
  *
  * 1. **Named env-var pairs** — kube YAML form. Match `name: SOMETHING`
  *    followed by `value: X` (across one line or two), where SOMETHING
- *    matches our convention of `*_PASSWORD`, `*_SECRET`, `*_TOKEN`,
- *    `*_KEY`, or `ACCOUNT_*`.
+ *    is secret-shaped per `isSecretEnvName` — our `*_PASSWORD`,
+ *    `*_SECRET`, `*_TOKEN`, `*_KEY`, `ACCOUNT_*` convention *plus* the
+ *    structural word match `isSecretKey`, which is what catches
+ *    `LLDAP_LDAP_USER_PASS` and friends (#2828).
  *
  * 2. **Inline `key: value` patterns** — log form. Match
  *    `password[: =] <value>` and friends. Conservative — only matches
  *    explicit named patterns, not arbitrary 32-char strings (which
- *    would falsely redact UUIDs, container ids, etc.).
+ *    would falsely redact UUIDs, container ids, etc.). Plus two
+ *    structural passes for the config-file shapes a keyword list can
+ *    never enumerate (#2828): a `key: value` **line** whose key name is
+ *    secret-shaped (`encryption_key:`), and any PEM private-key block.
  */
 
 const SENSITIVE_NAME =
@@ -70,7 +75,7 @@ export function redactKubeYaml(text: string): string {
   // to the kube-env-var convention.
   const twoLine = /(\s*-?\s*name:\s*)(?:["']?)([A-Z][A-Za-z0-9_]*)(?:["']?)(\s*\n\s*value:\s*)(?:["']?)([^\n"']*)(?:["']?)/g;
   let out = text.replace(twoLine, (match, namePrefix, name, valuePrefix) => {
-    if (!SENSITIVE_NAME.test(name)) return match;
+    if (!isSecretEnvName(name)) return match;
     return `${namePrefix}${name}${valuePrefix}"${REDACTED}"`;
   });
 
@@ -78,7 +83,7 @@ export function redactKubeYaml(text: string): string {
   //   {"name":"FOO_PASSWORD","value":"..."}
   const jsonForm = /("name"\s*:\s*"([A-Z][A-Za-z0-9_]*)"[^}]*?"value"\s*:\s*")([^"]*)(")/g;
   out = out.replace(jsonForm, (match, prefix, name, _value, suffix) => {
-    if (!SENSITIVE_NAME.test(name)) return match;
+    if (!isSecretEnvName(name)) return match;
     return `${prefix}${REDACTED}${suffix}`;
   });
 
@@ -189,6 +194,14 @@ export function redactQuadletUnit(text: string): string {
  * Same set of trigger keywords as the YAML pass, plus a few that are
  * exclusively log-shaped (not env-var names): `Bearer <token>`,
  * `apikey=`, `api_key=`.
+ *
+ * The keyword list alone under-redacts a *config file* read through
+ * `read_file` (#2828): `storage.encryption_key:` carries no listed keyword,
+ * and a PEM private key carries no key/value shape at all. So two structural
+ * passes back it up — `redactPemPrivateKeys` (any `-----BEGIN … PRIVATE
+ * KEY-----` block) and `redactSecretKeyLines` (a `name: value` / `name=value`
+ * line whose *name* is secret-shaped per `isSecretKey`, the same predicate
+ * `get_config` and the audit log already use).
  */
 export function redactLogText(text: string): string {
   if (!text) return text;
@@ -196,6 +209,10 @@ export function redactLogText(text: string): string {
   const KEYWORDS = '(?:password|passwd|secret|token|api[_-]?key)';
 
   let out = text;
+
+  // PEM private-key blocks FIRST (#2828): the body is base64, so no other
+  // pass recognises it, and running first keeps those passes off it.
+  out = redactPemPrivateKeys(out);
 
   // Multi-line YAML block scalar (#581):
   //   password: |
@@ -205,7 +222,7 @@ export function redactLogText(text: string): string {
   // single-line patterns below. The continuation lines are any lines
   // indented MORE than the key line; the block ends at the next line
   // with same-or-less indent (or EOF).
-  out = redactYamlBlockScalars(out, KEYWORDS);
+  out = redactYamlBlockScalars(out);
 
   // URL query strings FIRST (#581): the generic `key=X` pattern below
   // uses `\S+` which is too greedy in URL contexts (eats
@@ -253,25 +270,117 @@ export function redactLogText(text: string): string {
     (_m, prefix) => `${prefix}${REDACTED}`,
   );
 
+  // Structural key/value lines LAST (#2828) — it skips a value the keyword
+  // passes above already masked, so the two never fight over one line.
+  out = redactSecretKeyLines(out);
+
   return out;
 }
 
 /**
- * Walk `text` line by line and replace YAML block-scalar bodies whose
- * key matches one of `keywordsAlternation` (anchored to a `|` or `>`
- * scalar header). Stops the block at the next line with same-or-less
- * indent than the key line. Conservative: only redacts the block body,
- * never the structural lines around it.
+ * Mask the body of every PEM **private**-key block (#2828).
+ *
+ * Authelia's `identity_providers.oidc.jwks[].key` is an inline PEM block: no
+ * `password`-ish keyword anywhere, so every keyword pass walks straight past
+ * it and `read_file` handed the whole private key back in plaintext.
+ *
+ * Deliberately private-key only: `-----BEGIN CERTIFICATE-----` and
+ * `-----BEGIN PUBLIC KEY-----` are meant to be readable, and masking them
+ * would cost an operator the ability to check which cert is wired up while
+ * leaking nothing.
+ *
+ * An **unterminated** block (a truncated log, a clipped file) is masked to the
+ * end of the text — a key that lost its `-----END …-----` is still a key, so
+ * this fails closed.
  */
-function redactYamlBlockScalars(text: string, keywordsAlternation: string): string {
+function redactPemPrivateKeys(text: string): string {
+  if (!text.includes('PRIVATE KEY')) return text;
+  const label = '-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----';
+  const end = '-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----';
+  let out = text.replace(
+    new RegExp(`^([ \\t]*)(${label})[\\s\\S]*?^[ \\t]*(${end})`, 'gm'),
+    (_m, indent: string, begin: string, terminator: string) =>
+      `${indent}${begin}\n${indent}${REDACTED}\n${indent}${terminator}`,
+  );
+  // Unterminated: a BEGIN with no END *after* it (the lookahead is what keeps
+  // this off a block the pass above already masked).
+  out = out.replace(
+    new RegExp(`^([ \\t]*)(${label})(?![\\s\\S]*${end})[\\s\\S]*$`, 'm'),
+    (_m, indent: string, begin: string) => `${indent}${begin}\n${indent}${REDACTED}`,
+  );
+  return out;
+}
+
+/**
+ * A `name: value` / `name=value` **line** whose name is secret-shaped (#2828).
+ *
+ * The keyword list is an enumeration, so it only ever covers the names someone
+ * remembered — `encryption_key` was not one of them. This pass asks the
+ * structural question instead: is the *key name* secret-shaped per
+ * `isSecretKey` (the predicate `get_config` and the MCP audit log already
+ * share)? One predicate, so a name that is secret in the config is secret in a
+ * file read too.
+ *
+ * Anchored to the start of the line (with an optional YAML list marker) on
+ * purpose: that is the config-file shape this closes, and mid-line matching
+ * would turn every log sentence containing " key: " into `<redacted>`. The
+ * keyword passes still cover the mid-line log shapes they always did.
+ */
+const SECRET_KEY_LINE = /^([ \t]*(?:-[ \t]+)?)(["']?)([A-Za-z_][A-Za-z0-9_.-]*)\2([ \t]*[:=][ \t]*)(.+)$/;
+
+function redactSecretKeyLines(text: string): string {
+  if (!text.includes(':') && !text.includes('=')) return text;
+  return text
+    .split('\n')
+    .map(line => {
+      const match = SECRET_KEY_LINE.exec(line);
+      if (!match) return line;
+      const [, indent, quote, name, separator, value] = match;
+      if (!isSecretKey(name)) return line;
+      const masked = maskScalarValue(value);
+      return masked === null ? line : `${indent}${quote}${name}${quote}${separator}${masked}`;
+    })
+    .join('\n');
+}
+
+/**
+ * Mask one scalar value, keeping its quoting and a trailing JSON comma so the
+ * surrounding document still reads. Returns `null` — leave the line alone —
+ * for anything that carries no secret: an empty value, a value already masked,
+ * an empty/null placeholder, and a YAML block-scalar header (`key: |`), whose
+ * body `redactYamlBlockScalars` has already masked.
+ */
+function maskScalarValue(value: string): string | null {
+  const match = /^(["'`]?)([\s\S]*?)\1([ \t]*,?)$/.exec(value);
+  if (!match) return null;
+  const [, quote, body, tail] = match;
+  const trimmed = body.trim();
+  if (trimmed === '' || trimmed === REDACTED) return null;
+  if (/^[|>][+-]?$/.test(trimmed)) return null;
+  if (trimmed === '{}' || trimmed === '[]' || trimmed === 'null' || trimmed === '~') return null;
+  return `${quote}${REDACTED}${quote}${tail}`;
+}
+
+/**
+ * Walk `text` line by line and replace YAML block-scalar bodies whose key is
+ * secret-shaped (anchored to a `|` or `>` scalar header). Stops the block at
+ * the next line with same-or-less indent than the key line. Conservative: only
+ * redacts the block body, never the structural lines around it.
+ *
+ * The key test is `isSecretKey`, not a keyword list (#2828) — it covers every
+ * keyword the list held (`password`, `secret`, `token`, `api_key`, …) and also
+ * the ones it did not (`key: |`, the shape Authelia's inline OIDC private key
+ * arrives in).
+ */
+function redactYamlBlockScalars(text: string): string {
   const lines = text.split('\n');
-  const headerRe = new RegExp(`^(\\s*)(${keywordsAlternation})\\s*:\\s*[|>][+\\-]?\\s*$`, 'i');
+  const headerRe = /^([ \t]*(?:-[ \t]+)?)(["']?)([A-Za-z_][A-Za-z0-9_.-]*)\2\s*:\s*[|>][+-]?\s*$/;
   const out: string[] = [];
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
     const m = line.match(headerRe);
-    if (!m) {
+    if (!m || !isSecretKey(m[3])) {
       out.push(line);
       i++;
       continue;
