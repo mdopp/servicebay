@@ -28,9 +28,14 @@ mutation surface. Highlights beyond the read/lifecycle basics:
   `restore_trashed_service`, `factory_reset`, `set_boot_next_usb`, `reboot_node`,
   channel switch (`get_channel` / `set_channel`), backups, health checks, and the
   `diagnose` aggregator.
-- Knowledge: `list_assists` / `get_assist`, and **`get_service_standards`**
-  (`flavor: servicebay | generic`) — a curated pointer index (ADRs, invariants,
-  assists to read, the template contract) for an agent building a new service.
+- Knowledge: `list_assists` (filter with `kind` / `tag` / `q`) / `get_assist`
+  (`brief: true` drops the cross-reference + provenance sections), and
+  **`get_service_standards`** (`flavor: servicebay | generic`) — a curated pointer
+  index (ADRs, invariants, assists to read, the template contract) for an agent
+  building a new service. Its optional `shape`
+  (`static-site | api | writes-foreign-store | has-ui | has-jobs`) narrows the
+  reading list to what that kind of service needs; the rest come back as one-line
+  "read this if you hit X" pointers. Omit it for the full list.
 
 Several formerly-narrow tools were **consolidated** in 5.0.0 (a breaking change
 to the surface): `manage_service` (`action: start|stop|restart`, plus `force-update` since

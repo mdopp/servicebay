@@ -20,6 +20,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildServiceStandards,
   scanCuratedAdrs,
+  SERVICE_SHAPES,
   SERVICE_STANDARDS_FLAVORS,
 } from '@/lib/mcp/serviceStandards';
 import { TOOL_SCOPES } from '@/lib/mcp/server';
@@ -228,6 +229,103 @@ describe('journal retention is a documented standard, not tribal knowledge (#265
     const body = (await getAssist('footgun-journal-is-a-buffer-not-an-archive')) ?? '';
     expect(body).toContain('footgun-journal-conmon-is-not-a-second-emitter.md');
     expect(await getAssist('footgun-journal-conmon-is-not-a-second-emitter')).not.toBeNull();
+  });
+});
+
+describe('assistsToRead narrows by service shape (#2814)', () => {
+  const idsOf = (s: Awaited<ReturnType<typeof buildServiceStandards>>) =>
+    (s.assistsToRead as { ids: { id: string }[] }).ids.map(i => i.id);
+
+  it('omitting shape keeps today\'s full mandatory list — no breaking change', async () => {
+    const s = await buildServiceStandards('servicebay');
+    const block = s.assistsToRead as { ids: unknown[]; shape?: string; readIfSymptom?: unknown };
+    expect(block.ids.length).toBeGreaterThanOrEqual(15);
+    // No shape → the answer carries no shape marker and no demoted list at all.
+    expect(block.shape).toBeUndefined();
+    expect(block.readIfSymptom).toBeUndefined();
+    // The #2344/#2345 entries an unshaped caller has always had are still there.
+    for (const id of ['data-authority', 'footgun-cross-service-uid-writes', 'long-running-process']) {
+      expect(idsOf(s)).toContain(id);
+    }
+  });
+
+  it('static-site returns a materially shorter list without the footguns #2804 named', async () => {
+    const full = idsOf(await buildServiceStandards('servicebay'));
+    const s = await buildServiceStandards('servicebay', 'static-site');
+    const ids = idsOf(s);
+    // #2804: a static nginx page with no auth, data, jobs or image of its own
+    // was still handed all fifteen. These six do not apply to it.
+    for (const id of [
+      'footgun-cross-service-uid-writes',
+      'data-authority',
+      'footgun-journal-is-a-buffer-not-an-archive',
+      'footgun-forward-auth-acme-collision',
+      'recipe-roll-new-image-to-running-service',
+      'long-running-process',
+      // #2804 point 7: design-level, and its ADR list duplicates mustRespectAdrs.
+      'new-service-architecture',
+    ]) {
+      expect(ids, `static-site drops ${id}`).not.toContain(id);
+    }
+    expect(ids.length).toBeLessThan(full.length * 0.6);
+    // The core it DOES need survives.
+    for (const id of ['create-service', 'servicebay-overview', 'service-ui-user-language', 'footgun-subdomain-needs-public-domain']) {
+      expect(ids, `static-site keeps ${id}`).toContain(id);
+    }
+  });
+
+  it('a demoted entry is never lost — it comes back as a one-line symptom pointer', async () => {
+    const s = await buildServiceStandards('servicebay', 'static-site');
+    const block = s.assistsToRead as {
+      shape: string;
+      ids: { id: string }[];
+      readIfSymptom: { note: string; ids: { id: string; ifYouHit: string }[] };
+    };
+    expect(block.shape).toBe('static-site');
+    const full = idsOf(await buildServiceStandards('servicebay'));
+    const covered = [...block.ids.map(i => i.id), ...block.readIfSymptom.ids.map(i => i.id)];
+    expect(covered.sort()).toEqual([...full].sort());
+    // Each demoted entry says WHEN to fetch it, so the knowledge stays reachable.
+    for (const entry of block.readIfSymptom.ids) {
+      expect(entry.ifYouHit.trim().length, `${entry.id} names its symptom`).toBeGreaterThan(0);
+    }
+    expect(block.readIfSymptom.ids.map(i => i.id)).toContain('footgun-cross-service-uid-writes');
+  });
+
+  it('other shapes keep what they need and drop what they do not', async () => {
+    const writer = idsOf(await buildServiceStandards('servicebay', 'writes-foreign-store'));
+    expect(writer).toContain('footgun-cross-service-uid-writes');
+    expect(writer).toContain('data-authority');
+    // A store-writing backend is not a frontend.
+    expect(writer).not.toContain('service-ui-design-standard');
+
+    const api = idsOf(await buildServiceStandards('servicebay', 'api'));
+    expect(api).toContain('long-running-process');
+    expect(api).not.toContain('service-ui-user-language');
+
+    const jobs = idsOf(await buildServiceStandards('servicebay', 'has-jobs'));
+    expect(jobs).toContain('long-running-process');
+    expect(jobs).toContain('footgun-journal-is-a-buffer-not-an-archive');
+  });
+
+  it('every shape still resolves every id it hands back, and keeps the core', async () => {
+    for (const shape of SERVICE_SHAPES) {
+      const ids = idsOf(await buildServiceStandards('servicebay', shape));
+      for (const id of ['create-service', 'servicebay-overview', 'testing-and-ci-gate', 'report-standards-gaps']) {
+        expect(ids, `${shape} keeps core ${id}`).toContain(id);
+      }
+      for (const id of ids) {
+        expect(await getAssist(id), `${shape}: assist "${id}" resolves`).not.toBeNull();
+      }
+    }
+  });
+
+  it('shape does not disturb the other blocks', async () => {
+    const s = await buildServiceStandards('servicebay', 'static-site');
+    expect((s.mustRespectAdrs as unknown[]).length).toBeGreaterThanOrEqual(12);
+    expect(s.enforcedInvariants).toBeDefined();
+    expect(s.templateContract).toBeDefined();
+    expect(s.repoBootstrap).toBeDefined();
   });
 });
 

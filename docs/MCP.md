@@ -190,7 +190,7 @@ Claude Code) to see the live tool registry on your version.
 | Requests | `list_requests` (`type: access\|token`), `file_access_request`, `get_access_request_status`, `request_token`, `poll_token_request`, `get_approval_status` |
 | Backups | `list_backups`, `run_backup`, `restore_backup` |
 | System | `list_nodes`, `get_system_info`, `get_network_graph`, `get_config`, `update_config`, `exec_command`, `get_channel`, `set_channel` |
-| Knowledge | `list_assists`, `get_assist`, `get_service_standards` (`flavor: servicebay\|generic`), `propose_learning` (`propose` scope), `list_learning_proposals` / `get_learning_proposal` / `list_assist_drift` (`read`, admin review) |
+| Knowledge | `list_assists` (filters: `kind` / `tag` / `q`), `get_assist` (`brief`), `get_service_standards` (`flavor: servicebay\|generic`, `shape: static-site\|api\|writes-foreign-store\|has-ui\|has-jobs`), `propose_learning` (`propose` scope), `list_learning_proposals` / `get_learning_proposal` / `list_assist_drift` (`read`, admin review) |
 | Dev box | `manage_claude_dev_project` (`action: create\|restart\|delete`) — one tool for the claude-dev container's Claude projects |
 
 The three merged tools above (`manage_service`, `get_logs`,
@@ -324,10 +324,34 @@ open), `enforcedInvariants`
 diff-coverage floor), `assistsToRead` (ids resolvable via `get_assist`), and
 `templateContract` (pointers to `docs/TEMPLATE_AUTHORING.md` + `templates/CLAUDE.md`),
 plus `adrCatalog` (how to reach the ADRs without this tool: `list_assists(kind="adr")`).
+
+The optional `shape` (`static-site | api | writes-foreign-store | has-ui |
+has-jobs`, #2814) narrows `assistsToRead` to the entries that apply to that kind
+of service; the rest come back under `readIfSymptom` as one-line "fetch this if
+you hit X" pointers, so nothing becomes unreachable. Omitting `shape` returns
+the full mandatory list exactly as before. `shape: 'static-site'` cuts it from 15
+entries / ~67 KB to 8 / ~37 KB — #2804 measured a 65k-context agent spending its
+whole window on the fixed list, six entries of which (foreign-store writes,
+journal retention, forward-auth/ACME, image rolling, long-running jobs, data
+authority) cannot apply to a static page.
+
 `flavor: 'generic'` yields platform-agnostic dev standards (commit convention,
 release discipline, coverage floor, secret hygiene, scripts-over-prose) with no
 ServiceBay ADRs or template details. Backing prose lives single-sourced in the
 `new-service-standards` / `generic-project-standards` assists.
+
+### Reading the catalog on a small context window (#2813)
+
+`list_assists` takes three optional **filters** — `kind`, `tag` (case-insensitive
+whole-tag match) and `q` (substring over title + `whenToUse`) — alongside the
+existing `query`, which *ranks* rather than filters. They compose. Passing none
+of them returns the full catalog, unchanged.
+
+`get_assist(id, brief=true)` returns the same entry with the `Related`
+cross-reference footer and any history/provenance/changelog section removed — the
+catalog *is* the map, so the footers cost context without telling a builder
+anything it can act on. ADR **amendments** are kept: an amendment is the current
+rule, not chronology. Without `brief` the text is byte-identical to before.
 
 ### The learning-feedback loop (`propose_learning`, #2326)
 

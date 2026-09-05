@@ -70,6 +70,12 @@ describe('assist MCP tools (#2146)', () => {
     const res = await client.callTool({ name: 'list_assists', arguments: { query: 'deploy a service', kind: 'recipe' } });
     expect(listAssists).toHaveBeenCalledWith({ query: 'deploy a service', kind: 'recipe' });
     expect(firstText(res)).toContain('create-service');
+
+    // #2813: the kind/tag/q filters reach the catalog verbatim.
+    await client.callTool({ name: 'list_assists', arguments: { kind: 'footgun', tag: 'sso', q: 'subdomain' } });
+    expect(listAssists).toHaveBeenLastCalledWith({
+      query: undefined, kind: 'footgun', tag: 'sso', q: 'subdomain',
+    });
     await client.close();
   });
 
@@ -80,9 +86,13 @@ describe('assist MCP tools (#2146)', () => {
     const { client } = await connectClient();
 
     const ok = await client.callTool({ name: 'get_assist', arguments: { id: 'create-service' } });
-    expect(getAssist).toHaveBeenCalledWith('create-service');
+    // #2813: brief is opt-in — an argument-less call still asks for the full text.
+    expect(getAssist).toHaveBeenCalledWith('create-service', { brief: false });
     expect(firstText(ok)).toContain('title: Create');
     expect((ok as { isError?: boolean }).isError).toBeFalsy();
+
+    await client.callTool({ name: 'get_assist', arguments: { id: 'create-service', brief: true } });
+    expect(getAssist).toHaveBeenLastCalledWith('create-service', { brief: true });
 
     const bad = await client.callTool({ name: 'get_assist', arguments: { id: 'nope' } });
     expect((bad as { isError?: boolean }).isError).toBe(true);
