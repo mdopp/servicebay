@@ -198,10 +198,23 @@ export async function checkClaudeDevAuth(nodeName: string): Promise<ClaudeDevAut
   const until = stamp ? ` Stored sign-in runs to ${stamp} (${days} days).` : '';
 
   if (doctor.failures.length === 0) {
-    return {
-      status: 'ok',
-      detail: `Signed in and reachable — Remote Control is available, so the sessions show up in the Claude app.${until}`,
-    };
+    const reachable = `Signed in and reachable — Remote Control is available, so the sessions show up in the Claude app.${until}`;
+    // Remote Control works today, but the stored sign-in is close enough to
+    // running out that the operator should re-login on their own schedule
+    // instead of finding out when the sessions go quiet.
+    if (days !== null && days <= WARN_DAYS) {
+      return {
+        status: 'warn',
+        detail:
+          `${reachable} That is inside the ${WARN_DAYS}-day window before it runs out — re-login ` +
+          'now, while it is a planned minute rather than a surprise outage.',
+        hint:
+          `Open ${LOGIN_DEEP_LINK} — it drops you straight into the container with "claude auth ` +
+          'login" already running (it works from a phone). Restart the service afterwards so the ' +
+          'running sessions pick the new sign-in up.',
+      };
+    }
+    return { status: 'ok', detail: reachable };
   }
   return {
     status: 'fail',
