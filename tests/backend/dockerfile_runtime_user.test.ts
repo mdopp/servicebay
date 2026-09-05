@@ -11,19 +11,21 @@
  *
  * A commented-out `USER` cannot say that, so this test forbids the shape and
  * demands the reasoning instead: run unprivileged, or state — dated, with the
- * issue that tracks the way out — why not. `USER nextjs` landed in #2789 and was
- * rolled back in #2805, so the root branch applies again — which is exactly why
- * it was kept: a rollback to root is a legitimate move and must come back with
- * its reasoning attached.
+ * issue that tracks the way out — why not. The image runs unprivileged again as
+ * of #2815, so the root branch of that rule is currently dormant; it is kept
+ * deliberately, because a rollback to root is a legitimate move (#2805 was one)
+ * and must come back with its reasoning attached rather than silently.
  *
- * The second describe block below is the #2789 half. #2805 flipped its one
- * assertion about the active user (root, until the auto-update path reconciles
- * the quadlet mapping); every other assertion still holds and is deliberately
- * unchanged, because it pins the *shape* the image must keep for the re-land —
- * the uid/gid pair the reconciler copies into each box's quadlet, `--chown` on
- * every runner COPY, no privileged step below the switch, no ENV into /root.
- * Nothing else in the repo can catch a regression here: the image is only built
- * at release time, so a wrong uid surfaces as a dead box, not as a red test.
+ * The second describe block below is the #2789 half. Its one assertion about the
+ * active user has moved twice — to root in #2805 when the unprivileged image
+ * came up on a mapping-less quadlet, and back to `nextjs` in #2815 once the
+ * host-side reconcile of #2808 had shipped a release earlier and was confirmed
+ * on the box. Every other assertion in the block held through both flips,
+ * because it pins the *shape* the image must keep — the uid/gid pair the
+ * reconciler copies into each box's quadlet, `--chown` on every runner COPY, no
+ * privileged step below the switch, no ENV into /root. Nothing else in the repo
+ * can catch a regression here: the image is only built at release time, so a
+ * wrong uid surfaces as a dead box, not as a red test.
  */
 
 import * as fs from 'fs';
@@ -117,21 +119,21 @@ describe('Dockerfile unprivileged runtime (#2789)', () => {
     return all.slice(start);
   }
 
-  it('runs as root — the #2805 rollback, until the auto-update path reconciles', () => {
-    // #2789 made this `USER nextjs`. The non-root image only survives with
-    // `UserNS=keep-id:uid=1001,gid=1001` on servicebay.container, and that line
-    // is written by a reconciler the host's podman-auto-update.timer never runs:
-    // it pulls :latest and restarts the unit with no pre-swap hook, so 5.28.0
-    // came up mapping-less and lost /app/data, the agent key and the podman
-    // socket (#2805). Root is the self-healing state — the same timer repairs
-    // the box, because quadletUserNs.ts strips a stray `UserNS=` under a root
-    // image. #2808 landed the host half (the ExecStartPre self-heal, asserted
-    // by the cross-check block below), so what still gates the flip is release
-    // ORDERING: the host half has to be ON the box before an unprivileged image
-    // arrives, and it is delivered by the running app. Flip this one release
-    // later, not in the release that ships the host half.
+  it('runs unprivileged — the #2815 re-land, one release after the host half', () => {
+    // The non-root image only survives with `UserNS=keep-id:uid=1001,gid=1001`
+    // on servicebay.container. #2789 shipped it in 5.28.0 while the only writer
+    // of that line was in-app, and the host's podman-auto-update.timer runs
+    // nowhere near the app: it pulls :latest and restarts the unit with no
+    // pre-swap hook, so the container came up mapping-less and lost /app/data,
+    // the agent key and the podman socket (#2805). #2808 landed the host half —
+    // the plain ExecStartPre self-heal, asserted by the cross-check block below
+    // — and shipped it in 5.29.0; #2815 flips this line one release later, which
+    // is the ordering the halves require (the host half is delivered to existing
+    // boxes by the RUNNING app, so it must already be there when the new image
+    // arrives). Going back is safe in the same way: both reconciles remove a
+    // stray `UserNS=` under a root image.
     const active = lines().filter((l) => /^\s*USER\s+\S/.test(l));
-    expect(active.map((l) => l.trim())).toEqual(['USER root']);
+    expect(active.map((l) => l.trim())).toEqual(['USER nextjs']);
   });
 
   it('creates nextjs as uid 1001 with nodejs (gid 1001) as its PRIMARY group', () => {

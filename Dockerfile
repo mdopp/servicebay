@@ -220,19 +220,16 @@ COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=prod-deps --chown=nextjs:nodejs /app/packages ./packages-proddeps
 COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
 
-# Runtime user: root again, deliberately — 2026-09-05, #2805 (rollback of the
-# #2789 image half; the reasoning below is the #2722 one, restored).
+# Runtime user: unprivileged again — 2026-09-05, #2815 (the re-land of the
+# #2789 image half, one release after the host half of #2808).
 #
-# 5.28.0 shipped `USER nextjs` and broke the box. Not because the image was
-# wrong, but because the mapping that makes a non-root image survivable is
-# written by a reconciler that the delivery path does not run: the host's
-# `podman-auto-update.timer` pulls `:latest` and restarts the unit with no
-# pre-swap hook, so the unprivileged container came up on a quadlet with no
-# `UserNS=` at all. Under rootless podman the container's uid 0 maps to the HOST
-# user that runs the quadlet (`core`, uid 1000 on the box); every other
-# container uid lands in that user's subuid range and owns nothing on the host.
-# Three things the app then cannot do — all three observed on the box, not
-# assumed:
+# Why this needed two releases. Under rootless podman the container's uid 0 maps
+# to the HOST user that runs the quadlet (`core`, uid 1000 on the box); every
+# other container uid lands in that user's subuid range and owns nothing on the
+# host. So the unprivileged runtime only survives with a mapping that puts uid
+# 1001 back onto `core` — `UserNS=keep-id:uid=1001,gid=1001` on
+# `servicebay.container`. Without it, three things go at once (all three observed
+# on the box in #2805, not assumed):
 #
 #   1. The Podman control plane. The quadlet binds the host's rootless socket
 #      /run/user/1000/podman/podman.sock -> /run/podman/podman.sock and points
@@ -246,14 +243,15 @@ COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
 #      /app/data/ssh/id_rsa (ssh://core@127.0.0.1). ssh refuses a private key it
 #      does not own, so the agent — and with it every host-side command — dies.
 #
-# Root is therefore the self-healing state: the same auto-update timer that
-# broke the box repairs it, because packages/backend/src/lib/quadletUserNs.ts
-# (#2788) removes a stray `UserNS=` again as soon as the image it inspects
-# declares root. Rollback-safe by design, in that one direction only.
+# 5.28.0 (#2789) shipped this line unprivileged while the only writer of that
+# mapping was in-app (packages/backend/src/lib/quadletUserNs.ts, #2788) — and the
+# delivery route that actually broke the box does not go through the app at all:
+# the host's `podman-auto-update.timer` pulls `:latest` and restarts the unit
+# with no pre-swap hook, so the container came up on a mapping-less quadlet and
+# could not repair itself, because repairing needs exactly the three things it
+# had just lost. That is #2805.
 #
-# Same mapping, same reason as packages/{backup-worker,disk-import-worker}/Containerfile.
-#
-# Re-land condition (#2808): the host half now EXISTS —
+# What makes the flip safe now is the HOST half (#2808):
 # /usr/local/bin/servicebay-userns-selfheal.sh, wired as a plain (no leading
 # `-`) ExecStartPre on servicebay.container, derives `UserNS=` from
 # `podman image inspect --format '{{.Config.User}}'` of the pulled image and
@@ -261,32 +259,27 @@ COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
 # (auto-update timer included) can start it on a mapping-less quadlet. It ships
 # in tools/sb/internal/build/assets/fedora-coreos.bu next to
 # servicebay-relabel-selfheal.sh, and packages/backend/src/lib/quadletUserNsHostHook.ts
-# pushes the identical script to boxes installed before #2808.
+# pushes the identical script to boxes installed before #2808. It shipped in
+# 5.29.0 and was confirmed installed on the box before this line moved — that
+# ORDERING (host half strictly OLDER than the image flip) is the whole reason
+# #2815 is a separate issue from #2808 and not a second hunk in the same PR.
 #
-# What is still owed before the flip is ORDERING, not code. Delivery to existing
-# boxes happens from the RUNNING app, so the release carrying the host half must
-# be strictly OLDER than the release that flips this line — the same #2788 →
-# #2789 ordering. Flip both in one release and a box on the previous version has
-# no script when the timer pulls the new image: that is #2805, verbatim. So:
-# ship this release, confirm on the box that servicebay.container carries the
-# ExecStartPre and that a podman-auto-update run reconciles the mapping, THEN
-# flip to `USER nextjs` in a later release.
+# Both reconciles are bidirectional: a rollback to a root image gets the
+# `UserNS=` line REMOVED again, so going back is self-healing too.
 #
-# Everything else the image half needs is deliberately LEFT IN PLACE and is
-# harmless under root — the nextjs/nodejs ids with their load-bearing
-# `--gid nodejs`, `ENV HOME=/home/nextjs`, and `--chown=nextjs:nodejs` on every
-# runner COPY — so the re-land really is a one-line flip.
+# Same mapping, same reason as packages/{backup-worker,disk-import-worker}/Containerfile.
 #
-# Guard: tests/backend/dockerfile_runtime_user.test.ts.
-USER root
+# Guard: tests/backend/dockerfile_runtime_user.test.ts — the
+# `image ↔ quadlet cross-check (#2808)` block fails this image if the host half
+# ever stops shipping or stops being wired.
+USER nextjs
 
-# Kept BELOW the switch where #2789 put it. It runs as root again now, which is
-# fine — the runtime user is root too, so the root-owned files this drops into
-# node_modules are readable by the process. When the unprivileged user re-lands
-# (#2805 follow-up) this position matters again: `cp` as root under
-# `USER nextjs` would leave root-owned files in a nextjs-owned tree, and
-# repairing that with a `chown -R node_modules` duplicates ~1 GB into a new
-# layer.
+# Kept BELOW the switch where #2789 put it, and the position is load-bearing
+# again now that the switch is unprivileged: `cp` as root would leave root-owned
+# files in a nextjs-owned tree, and repairing that with a
+# `chown -R node_modules` duplicates ~1 GB into a new layer. Everything it reads
+# and writes was copied in with `--chown=nextjs:nodejs`, so it needs no
+# privilege.
 RUN for d in packages-proddeps/*/node_modules; do [ -d "$d" ] && cp -rn "$d/." node_modules/; done; rm -rf packages-proddeps
 
 EXPOSE 3000
