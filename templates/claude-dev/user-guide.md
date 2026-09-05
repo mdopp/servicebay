@@ -157,3 +157,24 @@ up owned by `root` (a clone made from a root shell, or one restored from a
 backup), which otherwise gets a session in which every git command fails with
 *"detected dubious ownership"*. Set `CLAUDE_DEV_REPO_RESCAN_SECONDS=0` in the
 service's environment to turn the rescan off.
+
+## Use pi instead of Claude
+
+Since template v4 the container carries a **second coding agent**, [pi](https://pi.dev),
+next to Claude Code. Nothing about Claude changes — this is an addition.
+
+In a terminal it works the same way `claude` does:
+
+```sh
+cd /workspace/<repo> && pi
+```
+
+From a phone or a browser, open **`pi.<your domain>`**. You will be asked to
+sign in first, exactly like the configuration page, and only members of your
+`CLAUDE_DEV_LDAP_GROUP` (`admins` by default) get through — that sign-in is the
+only thing standing in front of it, so do not put the chat's port on the LAN.
+
+pi talks to **one** model: the local model server on this box. No cloud
+account, no API key, no subscription. If the model picker is empty, the model
+server was not running when the container started — start it and restart the
+service, or set `CLAUDE_DEV_PI_MODEL_ID` to the id it serves.

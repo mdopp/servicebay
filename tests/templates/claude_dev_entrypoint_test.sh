@@ -902,6 +902,178 @@ unset SERVICEBAY_MCP_TOKEN
 rm -f "$STUB_BIN/node" "$STUB_BIN/install"
 
 # =========================================================================
+# 9. pi (#2803) — the SECOND agent service in this container.
+#
+#    Two properties carry the operator decision and neither is visible from
+#    outside the process: pi-web-ui must run with NO PI_WEB_TOKEN (Authelia in
+#    front of the subdomain is the gate, and a second shared password would only
+#    be one more thing to leak), and the websocket origin whitelist must name
+#    the subdomain — without it the page loads and the chat silently reconnects
+#    forever, which reads as a proxy bug rather than a missing variable.
+#
+#    The model wiring is asserted the same way: the ONE provider this template
+#    owns points at the box's own model server, and nothing hands pi a cloud
+#    credential.
+# =========================================================================
+export PI_WEB_RECORD="$RECORD/pi-web.txt"
+cat > "$STUB_BIN/pi-web-ui" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\0' "PORT=${PI_WEB_PORT:-}" \
+  "HOST=${PI_WEB_HOST:-}" \
+  "CWD=${PI_WEB_CWD:-}" \
+  "DATA=${PI_WEB_DATA_DIR:-}" \
+  "ORIGINS=${PI_WEB_ALLOW_ORIGINS:-}" \
+  "AGENTDIR=${PI_CODING_AGENT_DIR:-}" \
+  "TOKEN=${PI_WEB_TOKEN-<unset>}" \
+  "SBTOKEN=${SERVICEBAY_MCP_TOKEN-<unset>}" \
+  "LDAPPW=${LLDAP_ADMIN_PASSWORD-<unset>}" \
+  "SSHPW=${CLAUDE_DEV_SSH_PASSWORD-<unset>}" \
+  "PWD=$PWD" "HOME=$HOME" >> "$PI_WEB_RECORD"
+STUB
+chmod +x "$STUB_BIN/pi-web-ui"
+
+PI_WEB_DATA_DIR="$WORK/pi-web-data"
+PI_AGENT_DIR="$WORK/pi-agent"
+
+# The pod hands PID 1 these; pi-web-ui runs an agent with a bash tool, so they
+# must not be sitting in its environment.
+export PI_WEB_TOKEN='a-shared-password-nobody-asked-for'
+export SERVICEBAY_MCP_TOKEN='sb_pi_case_token'
+export LLDAP_ADMIN_PASSWORD='pi-case-bind-password'
+export CLAUDE_DEV_SSH_PASSWORD='pi-case-ssh-password'
+
+CLAUDE_DEV_PI_PORT=8791
+CLAUDE_DEV_PI_ORIGIN='https://pi.example.test'
+start_pi_web_ui >/dev/null 2>&1
+pi_loop_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  [ -s "$PI_WEB_RECORD" ] && break
+  sleep 0.1
+done
+kill "$pi_loop_pid" 2>/dev/null
+pi_rec="$(read_nul "$PI_WEB_RECORD" | tr '\n' '|')"
+
+check "start_pi_web_ui launches pi-web-ui on the configured port" \
+  "$(printf '%s' "$pi_rec" | grep -Fq 'PORT=8791' && echo 0 || echo 1)" \
+  "pi-web-ui env: $pi_rec"
+check "…and NOT on pi-web-ui's own default 8787, which solaris occupies" \
+  "$(printf '%s' "$pi_rec" | grep -Fq 'PORT=8787' && echo 1 || echo 0)" \
+  "pi-web-ui env: $pi_rec"
+check "it binds the pod's own interface, not the container loopback the port forwarder cannot reach" \
+  "$(printf '%s' "$pi_rec" | grep -Fq 'HOST=0.0.0.0' && echo 0 || echo 1)" \
+  "pi-web-ui env: $pi_rec"
+check "the websocket origin whitelist names the proxied subdomain" \
+  "$(printf '%s' "$pi_rec" | grep -Fq 'ORIGINS=https://pi.example.test' && echo 0 || echo 1)" \
+  "pi-web-ui env: $pi_rec"
+check "NO PI_WEB_TOKEN reaches it — Authelia is the gate, not a second password" \
+  "$(printf '%s' "$pi_rec" | grep -Fq 'TOKEN=<unset>' && echo 0 || echo 1)" \
+  "pi-web-ui env: $pi_rec"
+check "the box's credentials are dropped from its environment" \
+  "$(printf '%s' "$pi_rec" | grep -Fq 'SBTOKEN=<unset>' \
+     && printf '%s' "$pi_rec" | grep -Fq 'LDAPPW=<unset>' \
+     && printf '%s' "$pi_rec" | grep -Fq 'SSHPW=<unset>' && echo 0 || echo 1)" \
+  "pi-web-ui env: $pi_rec"
+check "…and none of their VALUES appears anywhere in what it was given" \
+  "$(printf '%s' "$pi_rec" | grep -Eq 'sb_pi_case_token|pi-case-bind-password|pi-case-ssh-password|a-shared-password-nobody-asked-for' && echo 1 || echo 0)" \
+  "pi-web-ui env: $pi_rec"
+check "it runs as dev with the shared workspace as HOME and as the agent's cwd" \
+  "$(printf '%s' "$pi_rec" | grep -Fq "HOME=$DEV_HOME_FAKE" \
+     && printf '%s' "$pi_rec" | grep -Fq "CWD=$DEV_HOME_FAKE" && echo 0 || echo 1)" \
+  "pi-web-ui env: $pi_rec"
+check "sessions and uploads land on the persistent volume, not in a container tmpfs" \
+  "$(printf '%s' "$pi_rec" | grep -Fq "DATA=$PI_WEB_DATA_DIR" \
+     && printf '%s' "$pi_rec" | grep -Fq "AGENTDIR=$PI_AGENT_DIR" && echo 0 || echo 1)" \
+  "pi-web-ui env: $pi_rec"
+
+# A box with no PUBLIC_DOMAIN renders CLAUDE_DEV_PI_ORIGIN to a bare
+# "https://pi." — whitelisting that would be worse than whitelisting nothing.
+: > "$PI_WEB_RECORD"
+CLAUDE_DEV_PI_ORIGIN='https://pi.'
+start_pi_web_ui >/dev/null 2>&1
+pi_loop_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  [ -s "$PI_WEB_RECORD" ] && break
+  sleep 0.1
+done
+kill "$pi_loop_pid" 2>/dev/null
+check "an origin with no domain behind it is dropped rather than whitelisted" \
+  "$(read_nul "$PI_WEB_RECORD" | grep -Fq 'ORIGINS=' \
+     && ! read_nul "$PI_WEB_RECORD" | grep -Fq 'ORIGINS=https://pi.' && echo 0 || echo 1)" \
+  "pi-web-ui env: $(read_nul "$PI_WEB_RECORD" | tr '\n' '|')"
+
+# A junk port must refuse rather than fall back to a default the operator did
+# not choose — and must not abort the boot, sshd still has to come up.
+: > "$PI_WEB_RECORD"
+CLAUDE_DEV_PI_PORT='87 91; touch pwned-pi-port'
+pi_bad_log="$(start_pi_web_ui 2>&1)"
+pi_bad_rc=$?
+kill $! 2>/dev/null
+check "a non-numeric CLAUDE_DEV_PI_PORT starts nothing" \
+  "$([ ! -s "$PI_WEB_RECORD" ] && echo 0 || echo 1)" \
+  "pi-web-ui env: $(read_nul "$PI_WEB_RECORD" | tr '\n' '|')"
+check "…says so, and still lets the boot continue to sshd" \
+  "$([ "$pi_bad_rc" -eq 0 ] && printf '%s' "$pi_bad_log" | grep -q 'not a number' && echo 0 || echo 1)" \
+  "rc=$pi_bad_rc log=$pi_bad_log"
+
+# --- seed_pi_models -------------------------------------------------------
+export PI_SEED_RECORD="$RECORD/pi-seed.txt"
+cat > "$STUB_BIN/node" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\0' "ARGV=$*" \
+  "AGENTDIR=${PI_AGENT_DIR:-}" \
+  "BASEURL=${CLAUDE_DEV_PI_MODEL_BASE_URL:-}" \
+  "MODELID=${CLAUDE_DEV_PI_MODEL_ID:-}" \
+  "ANTHROPIC=${ANTHROPIC_API_KEY-<unset>}" \
+  "OPENROUTER=${OPENROUTER_API_KEY-<unset>}" \
+  "HOME=$HOME" >> "$PI_SEED_RECORD"
+STUB
+chmod +x "$STUB_BIN/node"
+
+PI_SEED_MODELS="$WORK/pi/seed-models.mjs"
+mkdir -p "$WORK/pi"
+: > "$PI_SEED_MODELS"
+
+CLAUDE_DEV_PI_MODEL_BASE_URL='http://host.containers.internal:18080/v1'
+CLAUDE_DEV_PI_MODEL_ID=''
+seed_pi_models >/dev/null 2>&1
+seed_rec="$(read_nul "$PI_SEED_RECORD" | tr '\n' '|')"
+
+check "seed_pi_models runs the seeder from the image, as dev, with the workspace HOME" \
+  "$(printf '%s' "$seed_rec" | grep -Fq "ARGV=$PI_SEED_MODELS" \
+     && printf '%s' "$seed_rec" | grep -Fq "HOME=$DEV_HOME_FAKE" && echo 0 || echo 1)" \
+  "node calls: $seed_rec"
+check "the model source is the box's own server via host.containers.internal (ADR 0007)" \
+  "$(printf '%s' "$seed_rec" | grep -Fq 'BASEURL=http://host.containers.internal:18080/v1' && echo 0 || echo 1)" \
+  "node calls: $seed_rec"
+check "…never localhost (this pod's own loopback) and never a LAN IP" \
+  "$(printf '%s' "$seed_rec" | grep -Eq 'BASEURL=[^|]*(localhost|127\.0\.0\.1|192\.168\.|10\.)' && echo 1 || echo 0)" \
+  "node calls: $seed_rec"
+check "no cloud provider credential is handed to the seeder" \
+  "$(printf '%s' "$seed_rec" | grep -Fq 'ANTHROPIC=<unset>' \
+     && printf '%s' "$seed_rec" | grep -Fq 'OPENROUTER=<unset>' && echo 0 || echo 1)" \
+  "node calls: $seed_rec"
+
+: > "$PI_SEED_RECORD"
+CLAUDE_DEV_PI_MODEL_BASE_URL=''
+seed_empty_log="$(seed_pi_models 2>&1)"
+seed_empty_rc=$?
+check "an empty model base URL seeds nothing and does not abort the boot" \
+  "$([ ! -s "$PI_SEED_RECORD" ] && [ "$seed_empty_rc" -eq 0 ] && echo 0 || echo 1)" \
+  "rc=$seed_empty_rc node calls: $(read_nul "$PI_SEED_RECORD" | tr '\n' '|')"
+
+# Structural: defined is not called. The definition line ends in `(`.
+check "the boot sequence calls seed_pi_models" \
+  "$(grep -qE '^seed_pi_models[^(]*$' "$ENTRYPOINT" && echo 0 || echo 1)"
+check "the boot sequence calls start_pi_web_ui" \
+  "$(grep -qE '^start_pi_web_ui[^(]*$' "$ENTRYPOINT" && echo 0 || echo 1)"
+# The Claude side is untouched by all of the above — pi is additive (#2803).
+check "start-claude is still what the boot sequence autostarts Claude with" \
+  "$(grep -q 'autostart_claude' "$ENTRYPOINT" && grep -q 'start-claude' "$ENTRYPOINT" && echo 0 || echo 1)"
+
+unset PI_WEB_TOKEN SERVICEBAY_MCP_TOKEN LLDAP_ADMIN_PASSWORD CLAUDE_DEV_SSH_PASSWORD
+rm -f "$STUB_BIN/node" "$STUB_BIN/pi-web-ui"
+
+# =========================================================================
 echo
 # The denominator is always printed, skips included: a case whose precondition
 # could not be established must never disappear into a smaller, greener total.

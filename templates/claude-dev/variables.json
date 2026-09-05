@@ -41,6 +41,35 @@
       "advanced_config": "__authelia_forward_auth__"
     }
   },
+  "CLAUDE_DEV_PI_PORT": {
+    "type": "text",
+    "description": "Port the container's pi web chat (pi-web-ui) listens on. Published on the host's 127.0.0.1 only, so the reverse proxy and the sign-in are the single way in. Deliberately NOT pi-web-ui's own default of 8787 — that port is already taken on this box by solaris. Change it only if 8791 is taken too.",
+    "default": "8791"
+  },
+  "CLAUDE_DEV_PI_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for the pi web chat, e.g. `pi.<your domain>` — the second agent in this container, alongside the Claude sessions you reach over SSH and Remote Control. Gated by Authelia forward-auth exactly like the configuration UI: an unauthenticated request is redirected to the login page and never reaches the container. Authelia is the ONLY gate here — pi-web-ui carries no sign-in of its own, which is why this subdomain must never be pointed at a port that is reachable without it.",
+    "default": "pi",
+    "exposure": "public",
+    "proxyPort": "CLAUDE_DEV_PI_PORT",
+    "loopbackOnly": true,
+    "proxyConfig": {
+      "allow_websocket_upgrade": true,
+      "block_exploits": true,
+      "ssl_forced": true,
+      "advanced_config": "__authelia_forward_auth__"
+    }
+  },
+  "CLAUDE_DEV_PI_MODEL_BASE_URL": {
+    "type": "text",
+    "description": "The OpenAI-compatible endpoint pi talks to — this box's own local model server (`local-qwen`). It is the only model source this template configures: no cloud provider, no API key, no OAuth. `host.containers.internal` is how an isolated pod reaches an on-box sibling (ADR 0007); `localhost` would be this pod's own loopback and a LAN IP is refused outright by rootless podman. Change the port here if your model server listens elsewhere.",
+    "default": "http://host.containers.internal:18080/v1"
+  },
+  "CLAUDE_DEV_PI_MODEL_ID": {
+    "type": "text",
+    "description": "Optional: the model id to offer in pi, e.g. what `curl <CLAUDE_DEV_PI_MODEL_BASE_URL>/models` reports. Comma-separate several. Leave blank and the container asks the model server itself at start-up and writes back whatever it lists — set this only when the server is not up at deploy time or you want to pin one model.",
+    "default": ""
+  },
   "LLDAP_LDAP_PORT": {
     "type": "text",
     "description": "LLDAP LDAP-protocol port. Must match the `auth` stack's LLDAP_LDAP_PORT.",

@@ -10,6 +10,38 @@ installed schema-version and the current one and surfaces them in the re-deploy
 dialog. Each `(breaking)` section needs an explicit acknowledgement before the
 deploy can proceed.
 
+## v4
+
+**A second coding agent — pi — now lives in the same container (#2803).**
+
+`pi` is on the PATH of every SSH session next to `claude`, and a new address,
+`pi.<your domain>` (the new `CLAUDE_DEV_PI_SUBDOMAIN`), opens a chat window onto
+it from a phone or a browser.
+
+**Nothing about Claude changes.** Your Claude sessions, `start-claude` and the
+Claude mobile app's Remote Control work exactly as before — pi is an addition,
+not a replacement. Both agents share the same `/workspace`, the same logins and
+the same break-glass account. No data moves and there is no migration to run:
+re-deploy and the new address is there.
+
+**Who can open it.** The same people as the configuration page: the reverse
+proxy sends every visitor to the box's sign-in first, and only members of
+`CLAUDE_DEV_LDAP_GROUP` (`admins` by default) get through. The chat's own port
+is published on the box's loopback address only, so it cannot be reached from
+the LAN without the sign-in. There is deliberately no second password in front
+of it — the sign-in is the gate.
+
+**Which model it uses.** One, and it is your own: the local model server on this
+box (`CLAUDE_DEV_PI_MODEL_BASE_URL`, `http://host.containers.internal:18080/v1`
+by default). No cloud account, no API key and no subscription is involved, and
+none is asked for. If your model server is not running when the container
+starts, the model picker will be empty — start it and restart the container, or
+set `CLAUDE_DEV_PI_MODEL_ID` to the id it serves.
+
+**One port to know about.** The chat listens on `CLAUDE_DEV_PI_PORT`, `8791` by
+default — deliberately not pi's own default of `8787`, which is already in use
+on this box by solaris.
+
 ## v3
 
 **The container now serves its own configuration UI (#2678).**

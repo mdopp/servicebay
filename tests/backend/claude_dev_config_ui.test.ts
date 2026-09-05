@@ -218,8 +218,14 @@ describe('claude-dev config UI: proxy + SSO wiring (acceptance 2 and 3)', () => 
   it('declares the port and depends on nginx, so the proxy host exists at install time', () => {
     expect(variables.CLAUDE_DEV_CONFIG_PORT.default).toBe('8790');
     expect(podYaml).toContain('servicebay.dependencies: "nginx,auth"');
-    expect(podYaml).toContain('servicebay.ports: "{{CLAUDE_DEV_SSH_PORT}}/tcp,{{CLAUDE_DEV_CONFIG_PORT}}/tcp"');
-    expect(podYaml).toContain('servicebay.schema-version: "3"');
+    // The UI's port has to be in the declared set; the set itself grows as the
+    // container gains services (v4 added pi's, #2803), so this asserts the
+    // membership rather than the exact string.
+    const declaredPorts = /servicebay\.ports: "([^"]+)"/.exec(podYaml)?.[1] ?? '';
+    expect(declaredPorts.split(',')).toContain('{{CLAUDE_DEV_CONFIG_PORT}}/tcp');
+    // The config UI arrived in v3; the template is at or above that ever since.
+    const schema = Number(/servicebay\.schema-version: "(\d+)"/.exec(podYaml)?.[1]);
+    expect(schema).toBeGreaterThanOrEqual(3);
   });
 
   it('needs no manual step: the image carries the UI and the entrypoint starts it before sshd', () => {

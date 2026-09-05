@@ -15,6 +15,9 @@ on:
       # shell would change in the repo and the box would keep serving the old
       # one, because `:latest` is only rebuilt by this workflow.
       - 'templates/claude-dev/config-ui/**'
+      # pi's model-source seeder ships inside the image too (#2803), for the
+      # same reason as the config UI above.
+      - 'templates/claude-dev/pi/**'
       - '.github/workflows/claude-dev-image.yml'
   workflow_dispatch:
 
