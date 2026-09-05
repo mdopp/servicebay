@@ -1,7 +1,16 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { withGitAuth, basicAuthHeader, gitEnv, resetGitAuthCache, redactGitSecrets } from './autoloop-git';
+import {
+  withGitAuth,
+  basicAuthHeader,
+  gitEnv,
+  resetGitAuthCache,
+  redactGitSecrets,
+  resolveFullSha,
+} from './autoloop-git';
 
 const TOKEN = 'gh-test-token-not-a-real-secret';
+const FULL = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'; // 40-char git sha
+const SHORT = 'a1b2c3d4'; // the short sha the autoloop playbooks hand around
 
 afterEach(() => resetGitAuthCache());
 
@@ -65,5 +74,37 @@ describe('redactGitSecrets', () => {
     expect(redactGitSecrets('fatal: remote error: GitHub is temporarily limiting some unauthenticated downloads')).toBe(
       'fatal: remote error: GitHub is temporarily limiting some unauthenticated downloads',
     );
+  });
+});
+
+describe('resolveFullSha (#2837) — gh run list --commit needs the exact 40-char sha', () => {
+  it('expands a short sha through git rev-parse', () => {
+    const seen: string[] = [];
+    const revParse = (rev: string) => {
+      seen.push(rev);
+      return `${FULL}\n`;
+    };
+    expect(resolveFullSha(SHORT, revParse)).toBe(FULL);
+    expect(seen).toEqual([`${SHORT}`]);
+  });
+
+  it('passes a full sha straight through, without spending a git call', () => {
+    const revParse = () => {
+      throw new Error('rev-parse must not run for an already-full sha');
+    };
+    expect(resolveFullSha(FULL.toUpperCase(), revParse)).toBe(FULL);
+  });
+
+  it('returns null when the lookup FAILS — an unknown rev is not a resolution', () => {
+    const revParse = () => {
+      throw new Error("fatal: Needed a single revision");
+    };
+    expect(resolveFullSha(SHORT, revParse)).toBeNull();
+  });
+
+  it('returns null on a non-sha argument and on a non-sha answer', () => {
+    expect(resolveFullSha('HEAD', () => FULL)).toBeNull();
+    expect(resolveFullSha('', () => FULL)).toBeNull();
+    expect(resolveFullSha(SHORT, () => 'ghcr.io/mdopp/servicebay:dev')).toBeNull();
   });
 });

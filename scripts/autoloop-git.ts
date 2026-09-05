@@ -83,6 +83,44 @@ export function resetGitAuthCache(token?: string | null): void {
 }
 
 /**
+ * The full 40-char SHA for `sha`, or `null` when it cannot be resolved.
+ *
+ * `gh run list --commit <sha>` requires the **exact** 40-char SHA: a short one
+ * returns an empty array rather than an error, so the push wait burnt its whole
+ * `--push-timeout` on a commit whose Release run had already completed (#2837).
+ * The playbook and the orchestrator's context line both hand the stage agent a
+ * short SHA, so the harness resolves it itself. The image-label comparison
+ * (`revisionMatchesSha`) is unaffected — it prefix-matches a 40-char label and
+ * keeps accepting a short SHA exactly as before.
+ *
+ * A non-hex argument, an unknown rev, or a missing `git` all resolve to `null`:
+ * the caller then polls with what it was given, i.e. no worse than before.
+ * `revParse` is injected for tests; the default runs `git rev-parse --verify
+ * <sha>^{commit}` on the autoloop's own git auth path (`gitEnv()`, #2761).
+ */
+export function resolveFullSha(sha: string, revParse: (rev: string) => string = gitRevParse): string | null {
+  const want = sha.trim().toLowerCase();
+  if (!/^[0-9a-f]{7,40}$/.test(want)) return null;
+  if (want.length === 40) return want;
+  try {
+    const out = revParse(want).trim().toLowerCase();
+    return /^[0-9a-f]{40}$/.test(out) ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `git rev-parse --verify <rev>^{commit}` — throws when the rev is unknown. */
+function gitRevParse(rev: string): string {
+  return execFileSync('git', ['rev-parse', '--verify', `${rev}^{commit}`], {
+    encoding: 'utf8',
+    env: gitEnv(),
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 30_000,
+  });
+}
+
+/**
  * Scrub anything token-shaped out of text that is about to be printed. The
  * env never appears in an `execFileSync` error (it embeds argv, not env), but
  * a git/gh message can echo a header back, so redact before we re-throw.
