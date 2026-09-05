@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.31.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.1...servicebay-v5.31.2) (2026-09-05)
+
+
+### Bug Fixes
+
+* **mcp:** redact *_PASS env vars, secret-shaped keys and PEM blocks ([5265526](https://github.com/mdopp/servicebay/commit/526552685e43ddd5e623e7e2b78784cd44161705)), closes [#2828](https://github.com/mdopp/servicebay/issues/2828)
+* **mcp:** redact *_PASS env vars, secret-shaped keys and PEM private keys in read tools ([#2828](https://github.com/mdopp/servicebay/issues/2828)) ([58ff0f1](https://github.com/mdopp/servicebay/commit/58ff0f13364d77ac7330b11517e7fd485dfcc449))
+
 ## [5.31.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.0...servicebay-v5.31.1) (2026-09-05)
 
 
