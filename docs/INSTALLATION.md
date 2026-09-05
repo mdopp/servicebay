@@ -172,18 +172,24 @@ NODE_ENV=production    PORT=3000    HOSTNAME=0.0.0.0    HOME=/home/nextjs
 HOST_SSH=host.containers.internal   SSH_KEY_PATH=/app/data/ssh/id_rsa
 ```
 
-Container runs **unprivileged** as `nextjs` (uid 1001, gid 1001 `nodejs`) —
-`USER nextjs`, reasoned in the Dockerfile, #2789. Under rootless podman the
-container's uid 0 *is* the host user that runs the quadlet (`core`), which owns
-the bind-mounted podman socket, `/app/data` and the host SSH key — so dropping
-privilege only works together with a mapping that puts uid 1001 back onto
-`core`. That mapping is `UserNS=keep-id:uid=1001,gid=1001` on
-`servicebay.container`, and it is **not** in the butane template: the reconciler
-`packages/backend/src/lib/quadletUserNs.ts` (#2788) derives it from the user the
-image declares, at boot and after a channel swap, and removes it again if a
-rollback puts a root image back. No host-side chown of `${DATA_ROOT}/servicebay`
-is needed — `keep-id` makes the `core`-owned files appear as `nextjs`-owned
-inside the container.
+Container runs as **root**, reasoned in the Dockerfile. Under rootless podman
+the container's uid 0 *is* the host user that runs the quadlet (`core`), which
+owns the bind-mounted podman socket, `/app/data` and the host SSH key — so
+dropping privilege only works together with a mapping that puts the unprivileged
+uid back onto `core`: `UserNS=keep-id:uid=1001,gid=1001` on
+`servicebay.container`. That line is **not** in the butane template; the
+reconciler `packages/backend/src/lib/quadletUserNs.ts` (#2788) derives it from
+the user the image declares, at boot and after a channel swap, and removes it
+again when a root image is back.
+
+#2789 shipped the unprivileged half (`USER nextjs`, uid 1001 / gid 1001
+`nodejs`) in 5.28.0 and it was rolled back in #2805: the host's
+`podman-auto-update.timer` pulls `:latest` and restarts the unit without ever
+running that reconciler, so the non-root container started on a mapping-less
+quadlet and lost `/app/data`, the agent SSH key and the podman socket. The image
+keeps the `nextjs` user, `HOME=/home/nextjs` and the `--chown=nextjs:nodejs`
+COPYs — all harmless under root — so the re-land is a one-line flip once the
+mapping is also reconciled on the auto-update path.
 
 For a leaner local dev image that re-uses the host build (avoids
 running webpack inside the container), see `Dockerfile.dev` and
