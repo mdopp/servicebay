@@ -119,7 +119,8 @@
           "scripts/**/*.{ts,mjs}",
           "tests/e2e/**/*.e2e.ts",
           "tests/backend/fixtures/*-emitter.ts",
-          "templates/*/config-ui/server.mjs"
+          "templates/*/config-ui/server.mjs",
+          "templates/*/pi/*.mjs"
         ],
         "ignoreDependencies": [
           "@tailwindcss/typography",

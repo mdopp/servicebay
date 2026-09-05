@@ -41,6 +41,30 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # SSH session. Package name per the published npm package.
 RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 
+# pi (#2803) — a SECOND coding agent in the same container, additive: the
+# Claude Code CLI above, `start-claude` and Anthropic's Remote Control are
+# untouched, and nothing here replaces them.
+#
+#   - @earendil-works/pi-coding-agent puts `pi` on PATH for every SSH session,
+#     the same way `claude` is there.
+#   - pi-web-ui is the remote chat pi does NOT ship itself (no built-in remote
+#     control, no first-party web UI). The entrypoint runs it as a second
+#     service on CLAUDE_DEV_PI_PORT; the template publishes that port on the
+#     host loopback only and nginx + Authelia are the way in.
+#
+# Both declare `engines.node >= 22.19`, which node:22-bookworm-slim satisfies.
+# pi-web-ui pulls `node-pty`, a native module compiled by its install script —
+# npm runs install scripts by default and make/gcc/g++/python3 are already in
+# the toolchain layer above, so no extra flag is needed here (a pnpm-based
+# image would need `--allow-scripts=node-pty`).
+#
+# Deliberately UNPINNED, like the Claude Code CLI above: `:latest` is rebuilt
+# by .github/workflows/claude-dev-image.yml and both agents ship fast-moving
+# releases. Versions verified against the npm registry when this layer was
+# written: @earendil-works/pi-coding-agent 0.85.1, pi-web-ui 0.64.3.
+RUN npm install -g @earendil-works/pi-coding-agent pi-web-ui \
+ && npm cache clean --force
+
 # Non-root `dev` user. Its home is /workspace — the template mounts a
 # persistent volume there, so git checkouts, ~/.claude session history
 # and gh auth all survive container restarts. --create-home seeds the
@@ -111,6 +135,15 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 COPY config-ui /usr/local/lib/claude-dev-config-ui
 RUN chmod -R a+rX /usr/local/lib/claude-dev-config-ui
 
+# pi's model wiring (#2803). One dependency-free Node script that merges the
+# `local-qwen` provider into ~/.pi/agent/models.json — a MERGE, not an
+# overwrite, so a provider the operator added through pi-web-ui's model panel
+# survives a container restart while the endpoint this template owns stays
+# correct. Lives in the image for the same reason the config UI does: a wiped
+# or restored /workspace can never leave stale code running.
+COPY pi /usr/local/lib/claude-dev-pi
+RUN chmod -R a+rX /usr/local/lib/claude-dev-pi
+
 # `start-claude` — manual launcher for one Claude per directory, each with
 # Remote Control on and its own tmux window (survives SSH disconnects).
 COPY start-claude.sh /usr/local/bin/start-claude
@@ -166,8 +199,8 @@ RUN printf '%s\n' \
       'fi' \
       > /etc/profile.d/claude-dev-tmux.sh
 
-# Informational — the real ports are set at runtime via CLAUDE_DEV_SSH_PORT
-# and CLAUDE_DEV_CONFIG_PORT.
-EXPOSE 2222 8790
+# Informational — the real ports are set at runtime via CLAUDE_DEV_SSH_PORT,
+# CLAUDE_DEV_CONFIG_PORT and CLAUDE_DEV_PI_PORT.
+EXPOSE 2222 8790 8791
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

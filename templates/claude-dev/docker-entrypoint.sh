@@ -206,6 +206,16 @@ SERVICEBAY_API_URL="${SERVICEBAY_API_URL:-http://host.containers.internal:5888}"
 CONFIG_UI_DIR=/usr/local/lib/claude-dev-config-ui
 CONFIG_UI_TOKEN_FILE=/run/claude-dev/servicebay-token
 
+# pi (#2803) — the second coding agent in this container. `pi` itself is a CLI
+# on PATH for every SSH session; `pi-web-ui` is the remote chat pi does not
+# ship, run here as a second service on its own port. Both come from the image
+# (Dockerfile), the seeder that wires pi's model source lives beside the config
+# UI for the same reason, and pi's agent dir + the web UI's data dir sit on the
+# /workspace volume so sessions survive a restart.
+PI_SEED_MODELS=/usr/local/lib/claude-dev-pi/seed-models.mjs
+PI_AGENT_DIR="$DEV_HOME/.pi/agent"
+PI_WEB_DATA_DIR="$DEV_HOME/.pi-web"
+
 configure_mcp_server() {
   local token="${SERVICEBAY_MCP_TOKEN:-}"
   [ -n "$token" ] || return 0
@@ -301,6 +311,107 @@ start_config_ui() {
     done
   ) &
   echo "claude-dev: configuration UI on port ${port}, restricted to Authelia users in group '${CLAUDE_DEV_LDAP_GROUP:-admins}'."
+}
+
+# Wire pi's ONE model source (#2803): the box's own OpenAI-compatible model
+# server, reached at CLAUDE_DEV_PI_MODEL_BASE_URL — `host.containers.internal`
+# per ADR 0007, never a LAN IP and never `localhost` (that is this pod's own
+# loopback since v2). No cloud provider and no API-key variable is written; the
+# operator decision on #2803 keeps cloud secrets out of this template entirely.
+#
+# The mechanics are a Node script rather than shell because the job is a JSON
+# MERGE — models.json lives on /workspace and pi-web-ui's model panel writes to
+# it, so rendering the whole file here would delete what the operator
+# configured. Runs as `dev`, because the file belongs to `dev`'s home.
+seed_pi_models() {
+  local base="${CLAUDE_DEV_PI_MODEL_BASE_URL:-}"
+  if [ -z "$base" ]; then
+    echo "claude-dev: WARNING — CLAUDE_DEV_PI_MODEL_BASE_URL is empty; pi has no model source." >&2
+    return 0
+  fi
+  if [ ! -f "$PI_SEED_MODELS" ]; then
+    echo "claude-dev: WARNING — $PI_SEED_MODELS is missing; pi's model source not configured." >&2
+    return 0
+  fi
+  su_dev '
+    export HOME="$1"
+    cd "$HOME" || exit 1
+    exec env PI_AGENT_DIR="$2" \
+             CLAUDE_DEV_PI_MODEL_BASE_URL="$3" \
+             CLAUDE_DEV_PI_MODEL_ID="$4" \
+             node "$5"
+  ' "$DEV_HOME" "$PI_AGENT_DIR" "$base" "${CLAUDE_DEV_PI_MODEL_ID:-}" "$PI_SEED_MODELS" \
+    || echo "claude-dev: WARNING — could not seed pi's models.json." >&2
+}
+
+# Start pi-web-ui (#2803) as the unprivileged `dev` user — the second service in
+# this container, additive to sshd and the configuration UI. `start-claude`,
+# the Claude sessions and their Remote Control are untouched by this.
+#
+# Reachability is the config UI's arrangement, not sshd's: the pod manifest
+# publishes CLAUDE_DEV_PI_PORT on the HOST's 127.0.0.1 only, so nginx — the one
+# process sharing the host netns — is the sole path in, and Authelia gates it
+# through CLAUDE_DEV_PI_SUBDOMAIN. That is why NO PI_WEB_TOKEN is set: the
+# decision on #2803 makes Authelia the gate, and a second shared password in
+# front of it would only be one more thing to leak. `env -u` makes that
+# structural rather than a matter of the pod happening not to pass one.
+#
+# PI_WEB_HOST=0.0.0.0 binds INSIDE the pod's own netns, exactly like the
+# configuration UI's default bind. Its loopback default would be unreachable
+# here: podman's port forwarder connects to the pod's address, not to the
+# container's 127.0.0.1, so a loopback bind publishes a port that answers
+# nobody. The host-side half of the publish is what keeps this off the LAN.
+#
+# The credential vars the pod hands PID 1 are dropped before exec: pi-web-ui
+# runs an agent with a bash tool, and there is no reason for the box's LDAP bind
+# password or its ServiceBay token to be sitting in that process's environment.
+start_pi_web_ui() {
+  local port="${CLAUDE_DEV_PI_PORT:-8791}"
+  case "$port" in ''|*[!0-9]*)
+    echo "claude-dev: WARNING — CLAUDE_DEV_PI_PORT is not a number; pi-web-ui not started." >&2
+    return 0;;
+  esac
+  if ! command -v pi-web-ui >/dev/null 2>&1; then
+    echo "claude-dev: WARNING — pi-web-ui is not installed in this image; pi web chat not started." >&2
+    return 0
+  fi
+
+  # pi-web-ui rejects a websocket upgrade whose Origin does not match the Host
+  # it sees, so the proxied subdomain has to be whitelisted explicitly. On a box
+  # with no public domain CLAUDE_DEV_PI_ORIGIN renders to a bare "https://pi." —
+  # unusable as an origin, so it is dropped rather than whitelisted, and the
+  # server's own same-authority check remains the only rule.
+  local origin="${CLAUDE_DEV_PI_ORIGIN:-}"
+  case "$origin" in
+    ''|*.|*://) origin='';;
+  esac
+
+  (
+    while true; do
+      su_dev '
+        export HOME="$1"
+        cd "$HOME" || exit 1
+        exec env -u PI_WEB_TOKEN \
+                 -u SERVICEBAY_MCP_TOKEN \
+                 -u LLDAP_ADMIN_PASSWORD \
+                 -u CLAUDE_DEV_SSH_PASSWORD \
+                 PI_WEB_PORT="$2" \
+                 PI_WEB_HOST=0.0.0.0 \
+                 PI_WEB_CWD="$1" \
+                 PI_WEB_DATA_DIR="$3" \
+                 PI_WEB_ALLOW_ORIGINS="$4" \
+                 PI_CODING_AGENT_DIR="$5" \
+                 pi-web-ui --no-browser
+      ' "$DEV_HOME" "$port" "$PI_WEB_DATA_DIR" "$origin" "$PI_AGENT_DIR" \
+        || echo "claude-dev: WARNING — pi-web-ui exited; restarting in 5s." >&2
+      sleep 5
+    done
+  ) &
+  if [ -n "$origin" ]; then
+    echo "claude-dev: pi-web-ui on port ${port}, reachable only through ${origin} behind Authelia (group '${CLAUDE_DEV_LDAP_GROUP:-admins}')."
+  else
+    echo "claude-dev: pi-web-ui on port ${port}, published on the host loopback only — no public origin configured."
+  fi
 }
 
 # One full reconcile pass: discover the checkouts, make git usable in each of
@@ -632,6 +743,14 @@ configure_mcp_server
 # Before the repo work: the configuration UI is what an operator reaches when
 # something in the repo work went wrong, so it must not be gated behind it.
 start_config_ui
+
+# pi (#2803), same reasoning as the configuration UI: a second service the
+# operator reaches from a phone, so it must not be gated behind the repo work.
+# The model source is wired BEFORE the web UI starts — pi reads models.json when
+# a session picks a model, and seeding after the fact would leave the first
+# visit with an empty picker.
+seed_pi_models
+start_pi_web_ui
 
 reconcile_repos
 

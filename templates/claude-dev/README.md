@@ -14,6 +14,10 @@ Built from [`Dockerfile`](./Dockerfile) (published as
 
 - Node.js 20.x + npm — matches the repo's `engines.node`
 - `@anthropic-ai/claude-code` installed globally (`claude` on `PATH`)
+- `@earendil-works/pi-coding-agent` installed globally (`pi` on `PATH`) —
+  a second coding agent alongside Claude, not a replacement (#2803)
+- `pi-web-ui` — the remote chat pi itself does not ship, run as a second
+  service behind nginx + Authelia (see [pi](#pi))
 - `git` + the GitHub CLI (`gh`)
 - `make` / `gcc` / `g++` / `python3` — native-module builds
 - the `podman` client — for the repo's `scripts/test-container-e2e.sh`
@@ -43,6 +47,10 @@ homes under `/workspace/home/<user>` stay private (mode `700`).
 | `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in **and** open the configuration UI (default `admins`). |
 | `CLAUDE_DEV_CONFIG_PORT` | Port the configuration UI listens on (default `8790`), published on the host loopback only. |
 | `CLAUDE_DEV_CONFIG_SUBDOMAIN` | Subdomain the configuration UI is served on (default `claude`), behind nginx + Authelia. See [The configuration UI](#the-configuration-ui). |
+| `CLAUDE_DEV_PI_PORT` | Port the pi web chat listens on (default `8791`), published on the host loopback only. Deliberately **not** pi-web-ui's own default `8787`, which solaris already uses on this box. |
+| `CLAUDE_DEV_PI_SUBDOMAIN` | Subdomain the pi chat is served on (default `pi`), behind nginx + Authelia. See [pi](#pi). |
+| `CLAUDE_DEV_PI_MODEL_BASE_URL` | The OpenAI-compatible endpoint pi talks to — this box's own model server (default `http://host.containers.internal:18080/v1`). The only model source configured; no cloud key ships with this template. |
+| `CLAUDE_DEV_PI_MODEL_ID` | Optional model id (or comma-separated ids) to offer in pi. Blank ⇒ the container asks the model server itself at start-up. |
 | `SERVICEBAY_APP_URL` | Set by the pod to `https://admin.<your domain>` — where a *browser* reaches ServiceBay, so the UI can link at the Claude sign-in repair terminal. Not `SERVICEBAY_API_URL`, which is the container-side address. |
 | `LLDAP_LDAP_PORT` / `LLDAP_BASE_DN` | LLDAP coordinates; default to the `auth` stack's (`3890` / the base DN derived from `PUBLIC_DOMAIN`). LDAP login is skipped when the base DN is blank. The LLDAP *host* is not a variable — since template v2 the pod reaches it at `host.containers.internal` (see [CHANGELOG](CHANGELOG.md)). |
 
@@ -386,6 +394,48 @@ route in — a LAN host cannot hit `<lan-ip>:8790` and skip the sign-in.
   `homeDir`, `tmuxSession`, `runTmux`, `runCommand`). Use it rather than adding
   a second seam — it is what lets the whole add/remove path be tested without a
   real `/workspace`.
+
+## pi
+
+Since template **v4** (#2803) the container carries a **second coding agent**
+next to Claude Code: [pi](https://pi.dev) (`@earendil-works/pi-coding-agent`).
+It is *additive* — `start-claude`, the running Claude sessions and the mobile
+app's Remote Control are untouched, and both agents share the same
+`/workspace`, the same LDAP logins and the same `dev` break-glass account.
+
+**From a terminal:** `pi` is on the `PATH` of every SSH session, exactly like
+`claude`.
+
+**From a phone or a browser:** pi ships no Remote Control and no web UI of its
+own, so the container runs [`pi-web-ui`](https://www.npmjs.com/package/pi-web-ui)
+as a second service on `CLAUDE_DEV_PI_PORT` (default `8791` — *not* pi-web-ui's
+own default `8787`, which solaris already occupies on this box). The port is
+published on the host's `127.0.0.1` only; `CLAUDE_DEV_PI_SUBDOMAIN` (default
+`pi.<your domain>`) puts it behind nginx + **Authelia**, gated on the same
+`CLAUDE_DEV_LDAP_GROUP` as SSH and the configuration UI.
+
+Two details that matter:
+
+- **Authelia is the only gate.** `PI_WEB_TOKEN` (pi-web-ui's optional shared
+  password) is deliberately **not** set — the entrypoint even `env -u`s it — so
+  there is no second credential to leak or rotate. This is why the port must
+  stay loopback-published: nothing else stands between a LAN host and an agent
+  with a shell in this container.
+- **The websocket needs the origin whitelisted.** pi-web-ui 403s a websocket
+  upgrade whose `Origin` does not match the `Host` it sees, which reads as "the
+  page loads but the chat keeps reconnecting". The pod passes the public
+  subdomain in as `CLAUDE_DEV_PI_ORIGIN` and the entrypoint hands it to
+  `PI_WEB_ALLOW_ORIGINS`.
+
+**Models.** pi is wired to exactly one source: this box's own
+OpenAI-compatible model server, as the `local-qwen` provider in
+`~/.pi/agent/models.json`. No cloud provider, no `ANTHROPIC_API_KEY`, no
+`OPENROUTER_API_KEY`, no pi OAuth — those may arrive later as optional
+`type: "secret"` variables. `pi/seed-models.mjs` **merges** that one provider
+into the file on every boot rather than rewriting it, so anything you add
+through pi-web-ui's model panel survives a restart. The model *ids* are not
+guessed: the seeder asks the server's `/models` endpoint, and
+`CLAUDE_DEV_PI_MODEL_ID` pins them when the server is not up at deploy time.
 
 ## Persistent session (tmux)
 
