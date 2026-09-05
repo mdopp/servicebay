@@ -118,8 +118,30 @@ function peelQuote(text: string): { quote: string; body: string } {
   return { quote: '', body: text };
 }
 
+/**
+ * Is this value already the `<N chars redacted>` marker?
+ *
+ * Redaction must be **idempotent** (#2836): the logger masks an entry once, at
+ * its single funnel, and the console rendering then passes the same body
+ * through `toSingleJournalLine` — i.e. through this redactor — a second time.
+ * Without this check the marker itself is treated as a fresh secret and its
+ * length is re-counted, so `PASSWORD=<29 chars redacted>` degrades to
+ * `PASSWORD=<3 chars redacted>` and the journal starts lying about the size of
+ * what was masked.
+ *
+ * Two forms, because the marker contains spaces and `ENV_ASSIGNMENT_TOKEN`
+ * splits on them: quoted, the whole marker is one token (`body`); unquoted,
+ * the token stops at `<N` and ` chars redacted>` is the text that follows it
+ * (`rest`). Checking `rest` rather than accepting a bare `<N` keeps a real
+ * three-character value of `<29` masked.
+ */
+function isRedactedMarker(body: string, rest: string): boolean {
+  if (/^<\d+ chars redacted>$/.test(body)) return true;
+  return /^<\d+$/.test(body) && /^ chars redacted>/.test(rest);
+}
+
 /** `NAME=VALUE` → `NAME=<N chars redacted>` when NAME is secret-shaped. */
-function redactEnvAssignmentToken(token: string): string {
+function redactEnvAssignmentToken(token: string, offset: number, whole: string): string {
   const outer = peelQuote(token);
   const m = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(outer.body);
   if (!m) return token;
@@ -129,6 +151,7 @@ function redactEnvAssignmentToken(token: string): string {
   // An empty value carries nothing to leak, and masking it would falsely
   // suggest a secret is set.
   if (inner.body === '') return token;
+  if (isRedactedMarker(inner.body, whole.slice(offset + token.length))) return token;
   return `${outer.quote}${name}=${inner.quote}<${inner.body.length} chars redacted>${inner.quote}${outer.quote}`;
 }
 
@@ -159,6 +182,12 @@ function redactEnvAssignmentToken(token: string): string {
  * is the only thing worth knowing about a masked value, `<0 chars redacted>`
  * would say "unset", and `scripts/check-journal-redaction.ts` already reads
  * that exact shape.
+ *
+ * It is **idempotent** (`isRedactedMarker`, #2836) — running it twice over the
+ * same text is a no-op. That is load-bearing: `logger.ts` masks an entry once
+ * at its own funnel so the SQLite row, the `onLog` broadcast and the journal
+ * line all carry the same masked body, and the console rendering then runs
+ * this redactor over that body again via `toSingleJournalLine`.
  */
 export function redactEnvironmentAssignments(text: string): string {
   if (!text || !/Environment[ \t]*=/i.test(text)) return text;
