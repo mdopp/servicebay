@@ -303,4 +303,57 @@ describe('useStackInstall', () => {
       expect(result.current.npmCredPrompt).toBe(false);
     });
   });
+
+  describe('runInstall — the /api/install/start response is validated, not cast (#2845)', () => {
+    /** Answer `/api/install/start` with a caller-supplied body; everything
+     *  else (the provider poll, the follow-up status fetch) gets `{}`. */
+    function startFetchMock(body: unknown, ok = true, status = 200) {
+      return vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/install/start')) {
+          return Promise.resolve({ ok, status, json: () => Promise.resolve(body) });
+        }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+      });
+    }
+
+    const ITEMS = [{ name: 'web', checked: true, yaml: 'apiVersion: v1' }] as any[];
+
+    it('starts and tracks the job when the response has the documented shape', async () => {
+      const fetchMock = startFetchMock({ jobId: 'job-9' });
+      global.fetch = fetchMock;
+
+      const { result } = renderHook(() => useStackInstall({ templateSource: 'Built-in' }));
+      await act(async () => { await result.current.runInstall({ items: ITEMS, variables: [] }); });
+
+      expect(result.current.error).toBeNull();
+      expect(result.current.phase).toBe('installing');
+      // `track(jobId)` pins the parsed id on the status poll.
+      expect(fetchMock.mock.calls.some(c => String(c[0]).includes('jobId=job-9'))).toBe(true);
+    });
+
+    it('fails loudly on a malformed response instead of propagating an unchecked value', async () => {
+      // `jobId` is a number — the shape drift the `as` cast used to hide.
+      const fetchMock = startFetchMock({ jobId: 123 });
+      global.fetch = fetchMock;
+
+      const { result } = renderHook(() => useStackInstall({ templateSource: 'Built-in' }));
+      await act(async () => { await result.current.runInstall({ items: ITEMS, variables: [] }); });
+
+      expect(result.current.phase).toBe('error');
+      expect(result.current.error).toMatch(/could not start install/i);
+      expect(result.current.error).toMatch(/invalid response format/i);
+      // Nothing was tracked: the bad id never reached the provider.
+      expect(fetchMock.mock.calls.some(c => String(c[0]).includes('jobId=123'))).toBe(false);
+    });
+
+    it('still surfaces a well-formed error body from a failed start', async () => {
+      global.fetch = startFetchMock({ error: 'install already in progress' }, false, 500);
+
+      const { result } = renderHook(() => useStackInstall({ templateSource: 'Built-in' }));
+      await act(async () => { await result.current.runInstall({ items: ITEMS, variables: [] }); });
+
+      expect(result.current.phase).toBe('error');
+      expect(result.current.error).toBe('install already in progress');
+    });
+  });
 });
