@@ -85,7 +85,7 @@ const UNIT_SECTION = /^[ \t]*\[(Unit|Service|Install|Container|Kube|Pod|Network|
  * The BARE shape (#2833) — the blind spot the structured-`content` scan above
  * could never see.
  *
- * The operator measured 10 unredacted `Environment=SERVICEBAY_PASSWORD=<value>`
+ * The operator measured 10 unredacted `Environment=<admin password var>=<value>`
  * lines and **zero** redacted `content` fields in the same window: the leak was
  * never in the `{files:{…:{content}}}` payload at all. The quadlet body reaches
  * the journal as a shell ARGUMENT — inside the agent's `Received command: …
