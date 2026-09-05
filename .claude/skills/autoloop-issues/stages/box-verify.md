@@ -39,10 +39,17 @@ The verify gate is two-sided and you own the second side:
 
 ### Step 0 — Classify the change: LIGHT vs FULL path (do this FIRST)
 
-Not every path-mandated change needs a `:dev` flip. A `:dev` flip-verify-flipback costs ~15–28 min (GHA build wait + two `podman pull`s + two restarts). Skip it when the app's request-handling code did not change. Inspect the merged diff (`git diff --name-only <last-green>..<sha>`) and pick a path:
+Not every path-mandated change needs a `:dev` flip. A `:dev` flip-verify-flipback costs ~15–28 min (GHA build wait + two `podman pull`s + two restarts). Skip it when the app's request-handling code did not change.
+
+**Run the classifier — do not re-derive this from prose (#2825):**
+```bash
+npm run autoloop:classify -- <last-green>..<sha>     # or: <last-green> <sha>
+```
+It reads the merged diff and emits a last line `AUTOLOOP_VERIFY_CLASS {"path":"light"|"full","reasons":[…],"files":{…}}`. **Take that `path` as the verdict and quote its `reasons` in your `detail`.** The rules (allowlist, denylist, and the `templates/**` discriminators below) live in `scripts/autoloop-verify-classify.ts` with its fixture matrix in `scripts/autoloop-verify-classify.test.ts` — change them there, not here. Only if the script cannot run (bad revs, exit 2) do you fall back to judging the two lists yourself, and then **if in doubt, go FULL**.
 
 - **LIGHT path** — the diff touches **only render/template/config** files and **no app request-handling** file. Render-only = NPM/proxy config is *rendered* differently but the running app handles requests identically.
-  - **Render-only allowlist** (LIGHT-eligible): `packages/backend/src/lib/stackInstall/forwardAuth.ts`, `packages/backend/src/lib/portal/provisioner.ts`, other pure config/template renderers, `templates/**`.
+  - **Render-only** (LIGHT-eligible): `packages/backend/src/lib/stackInstall/forwardAuth.ts`, `packages/backend/src/lib/portal/provisioner.ts`, other pure config/template renderers, and a `templates/` edit that only changes rendered output for an **already-installed** schema version.
+  - **`templates/**` is NOT LIGHT wholesale (#2825).** Templates ship *inside* the app image (`Dockerfile: COPY templates ./templates`), so an **upgrade-observable** template change does not exist on `:latest` at all and cannot be verified there — `POST /napi/services/<name>/upgrade` just answers `applied:false, reason:"no template upgrade pending"` (that circular verify is #2823). The classifier sends these to **FULL**: a `servicebay.schema-version` bump, a new/changed `templates/*/migrations/*` script, a container added to the pod, a brand-new template manifest.
   - **App request-path denylist** (any of these ⇒ FULL): `packages/frontend/src/proxy.ts`, `packages/frontend/src/app/**/route.ts`, any backend request handler / `lib/api/`, `lib/auth/` session/verify logic, `lib/install/`, `lib/config.ts`. **If in doubt, go FULL.**
   - LIGHT verify (no flip, box stays on `:latest`):
     1. **Render the config at the merged SHA in this dev-env** (the repo is already at `<sha>`): call `renderForwardAuthAdvancedConfig(...)` (`forwardAuth.ts:442`) — or the changed renderer — with representative inputs (the unit-test fixtures are the reference) to get the concrete nginx snippet.
@@ -51,7 +58,7 @@ Not every path-mandated change needs a `:dev` flip. A `:dev` flip-verify-flipbac
     4. Write the verdict (`box-verify.json`) with `detail` naming the scratch-`nginx -t` result + the verbatim probe statuses. **Do NOT flip channels.** Target **~2–3 min**.
   - Prod safety net that makes this sound: every live proxy-host write already runs `nginx -t` + auto-rollback/quarantine (`packages/frontend/src/app/api/system/nginx/proxy-hosts/route.ts`) and a periodic `nginx_config_valid` health probe — a bad render cannot silently strand the box, so the scratch check + `:latest` probes fully cover the render-only risk.
 
-- **FULL path** — the diff touches any app request-path file (denylist above), or it's a reinstall/auth/OIDC/install-path change, or you're unsure. Run Steps 1–6 below (the `:dev` flip verify), with the **pre-pull** and **wait-for-health** speedups noted inline. This is the only path that may flip channels.
+- **FULL path** — the classifier returned `full`: the diff touches an app request-path file (denylist above) or an upgrade-observable `templates/**` change, or it's a reinstall/auth/OIDC/install-path change, or you're unsure. Run Steps 1–6 below (the `:dev` flip verify), with the **pre-pull** and **wait-for-health** speedups noted inline. This is the only path that may flip channels.
 
 ### FULL path — run the harness, then judge
 

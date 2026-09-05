@@ -39,6 +39,7 @@
     "autoloop:queue": "tsx scripts/autoloop-queue.ts",
     "autoloop:box": "tsx scripts/autoloop-box.ts",
     "autoloop:dev-verify": "tsx scripts/autoloop-dev-verify.ts",
+    "autoloop:classify": "tsx scripts/autoloop-verify-classify.ts",
     "autoloop:journal-redaction": "tsx scripts/check-journal-redaction.ts"
   },
   "lint-staged": {
