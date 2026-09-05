@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.31.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.2...servicebay-v5.31.3) (2026-09-05)
+
+
+### Bug Fixes
+
+* **security:** keep the admin env-var name out of the journal-redaction script's doc comment ([ce6f290](https://github.com/mdopp/servicebay/commit/ce6f2903084cb83aad1185dea7fe8d846d7c47dc))
+* **security:** redact Environment= secrets at the journal sink ([#2833](https://github.com/mdopp/servicebay/issues/2833)) ([1a9f326](https://github.com/mdopp/servicebay/commit/1a9f3261c3910babeeff1da78ffebf9d6ee1abb4))
+
 ## [5.31.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.1...servicebay-v5.31.2) (2026-09-05)
 
 
