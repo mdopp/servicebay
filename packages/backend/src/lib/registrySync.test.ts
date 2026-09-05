@@ -1,5 +1,6 @@
 /**
- * #2610 — syncRegistries reports what happened, and stops retrying the hopeless.
+ * #2610 — syncRegistries reports what happened, and backs off from the hopeless
+ * (a cooldown, not a latch — #2809).
  *
  * The reference box has two registries: one that clones and one it has no
  * credentials for. Before this fix the second was re-cloned on every server
@@ -39,13 +40,13 @@ vi.mock('./config', async (importOriginal) => ({
 }));
 
 // Keep the real classification/formatting; hold the persisted counter in memory.
-const persisted = vi.hoisted(() => ({ state: {} as Record<string, { consecutiveFailures: number; name: string }> }));
+const persisted = vi.hoisted(() => ({ state: {} as Record<string, { consecutiveFailures: number; name: string; lastAttemptAt?: string }> }));
 vi.mock('./registrySyncState', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./registrySyncState')>();
   return {
     ...actual,
     loadRegistrySyncState: vi.fn(async () => persisted.state),
-    saveRegistrySyncState: vi.fn(async (s: Record<string, { consecutiveFailures: number; name: string }>) => {
+    saveRegistrySyncState: vi.fn(async (s: Record<string, { consecutiveFailures: number; name: string; lastAttemptAt?: string }>) => {
       persisted.state = s;
     }),
   };
@@ -121,6 +122,21 @@ describe('syncRegistries reports per registry (#2610)', () => {
 
     // The working registry keeps syncing regardless.
     expect(summary.results.find(r => r.name === 'servicebay')?.status).toBe('synced');
+  });
+
+  it('retries on its own once the cooldown has passed — no click required (#2809)', async () => {
+    for (let i = 0; i < REGISTRY_GIVE_UP_AFTER; i++) await syncRegistries();
+    expect((await syncRegistries()).skipped).toBe(1);
+
+    // Same box, two days later: the boot sync finds the record stale…
+    failureRecord().lastAttemptAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    const summary = await syncRegistries();
+
+    // …and tries again — counted as a failure, not silently skipped.
+    expect(summary.results.find(r => r.name === 'ServiceBay Templates')?.status).toBe('failed');
+    expect(failureRecord().consecutiveFailures).toBe(REGISTRY_GIVE_UP_AFTER + 1);
+    // Inside the (now longer) cooldown it is skipped again.
+    expect((await syncRegistries()).skipped).toBe(1);
   });
 
   it('retries anyway when the operator asks for it explicitly (force)', async () => {
