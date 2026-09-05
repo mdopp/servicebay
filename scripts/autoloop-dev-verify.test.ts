@@ -11,10 +11,16 @@ import {
   devVerifyExitCode,
   describeError,
   DEV_IMAGE_TIMEOUT_SEC,
+  DEV_PUSH_TIMEOUT_SEC,
   FLIP_BACK_TIMEOUT_SEC,
+  isPullInProgressTimeout,
+  pickReleaseRun,
+  waitForDevPush,
   type DevImageDeps,
   type DevImageResult,
   type DevVerifyOutcome,
+  type DevPushDeps,
+  type DevPushResult,
   type DevVerifyRunDeps,
   type DevVerifyStep,
   type FlipBackDeps,
@@ -416,6 +422,8 @@ describe('parseDevVerifyArgs (#2493)', () => {
       probeScript: '/tmp/probes.sh',
       imageTimeout: DEV_IMAGE_TIMEOUT_SEC,
       flipBackTimeout: FLIP_BACK_TIMEOUT_SEC,
+      pushTimeout: DEV_PUSH_TIMEOUT_SEC,
+      assumePushed: false,
     });
   });
 
@@ -436,6 +444,16 @@ describe('parseDevVerifyArgs (#2493)', () => {
     expect(err([SHORT, '--probe-script', '/tmp/p.sh', '--image-timeout'])).toContain('--image-timeout');
     expect(err([SHORT, '--probe-script', '/tmp/p.sh', '--image-timeout', 'soon'])).toContain('--image-timeout');
     expect(err([SHORT, '--probe-script', '/tmp/p.sh', '--flipback-timeout', '0'])).toContain('--flipback-timeout');
+  });
+
+  it('takes --push-timeout and the boolean --assume-pushed (#2820)', () => {
+    expect(ok([SHORT, '--probe-script', '/tmp/p.sh', '--push-timeout', '120', '--assume-pushed'])).toMatchObject({
+      pushTimeout: 120,
+      assumePushed: true,
+    });
+    expect(err([SHORT, '--probe-script', '/tmp/p.sh', '--push-timeout', 'later'])).toContain('--push-timeout');
+    // A value would silently be bound as the SHA positional instead.
+    expect(err([SHORT, '--probe-script', '/tmp/p.sh', '--assume-pushed=yes'])).toContain('takes no value');
   });
 
   it('rejects a non-SHA positional up front rather than after a 900s wait', () => {
@@ -484,11 +502,38 @@ const FLIPPED_BACK: FlipBackResult = {
   detail: 'confirmed :latest after 2 poll(s)',
 };
 
-const RUN_OPTS = { imageTimeout: DEV_IMAGE_TIMEOUT_SEC, flipBackTimeout: FLIP_BACK_TIMEOUT_SEC };
+const RUN_OPTS = {
+  imageTimeout: DEV_IMAGE_TIMEOUT_SEC,
+  flipBackTimeout: FLIP_BACK_TIMEOUT_SEC,
+  pushTimeout: DEV_PUSH_TIMEOUT_SEC,
+};
+
+const PUSHED: DevPushResult = {
+  pushed: true,
+  runId: 4242,
+  status: 'completed',
+  conclusion: 'success',
+  polls: 1,
+  lookupFailures: 0,
+  detail: `Release run 4242 for ${SHORT} completed success after 1 lookup(s) — :dev is on the registry`,
+};
+const NOT_PUSHED: DevPushResult = {
+  pushed: false,
+  runId: 4242,
+  status: 'in_progress',
+  conclusion: null,
+  polls: 60,
+  lookupFailures: 0,
+  detail: `Release run 4242 for ${SHORT} still in_progress after 900s (60 lookup(s), 0 failed lookup(s)) — the :dev image is not on the registry yet`,
+};
 
 function makeRunDeps(overrides: Partial<DevVerifyRunDeps> = {}) {
-  const calls = { flipBacks: 0, probes: 0, setChannel: 0 };
+  const calls = { flipBacks: 0, probes: 0, setChannel: 0, pushWaits: 0 };
   const deps: DevVerifyRunDeps = {
+    waitForDevPush: async () => {
+      calls.pushWaits++;
+      return PUSHED;
+    },
     setChannel: async () => {
       calls.setChannel++;
     },
@@ -709,7 +754,9 @@ describe('devVerifyResultLine — the last line of defence', () => {
   it('synthesises a named reason if a future edit ever produces the blind shape', () => {
     const blind: DevVerifyOutcome = {
       reachedDev: false,
+      devPush: PUSHED,
       devImage: null,
+      flipTimeout: null,
       probeExit: -1,
       probeOutput: '',
       failure: null, // the exact 08:03 shape
@@ -724,7 +771,9 @@ describe('devVerifyResultLine — the last line of defence', () => {
   it('carries the flip-back evidence and the configured channel through unchanged', () => {
     const line = devVerifyResultLine({
       reachedDev: true,
+      devPush: PUSHED,
       devImage: REACHED,
+      flipTimeout: null,
       probeExit: 0,
       probeOutput: 'ok',
       failure: null,
@@ -740,7 +789,9 @@ describe('devVerifyResultLine — the last line of defence', () => {
   it('truncates a huge probeOutput but keeps it non-empty', () => {
     const line = devVerifyResultLine({
       reachedDev: true,
+      devPush: PUSHED,
       devImage: REACHED,
+      flipTimeout: null,
       probeExit: 0,
       probeOutput: 'x'.repeat(10_000),
       failure: null,
@@ -805,5 +856,289 @@ describe('reachedDev never trusts get_channel', () => {
     expect(outcome.reachedDev).toBe(false);
     expect(devVerifyResultLine(outcome).channel).toBe('latest'); // the flip-back's configured read
     expect(JSON.stringify(devVerifyResultLine(outcome).devImage)).toContain(OLD);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #2820 — the harness used to flip BEFORE the SHA's `:dev` image existed.
+//
+// Live shape (2026-09-05, d3238343): flip at 13:02Z, the `:dev` push finished at
+// 13:03:51Z, so the box pulled the PREVIOUS digest and the harness read the old
+// revision 91× over the whole 900s budget before flipping back — one wasted
+// restart cycle, 17 min, and the wrong build live on the box meanwhile. The
+// second half of the same race: `set_channel dev` is awaited server-side through
+// a multi-minute `podman pull` while the client call gives up after 30s, and
+// that abort was treated as a failed flip → immediate flip-back → the `:dev`
+// container never started.
+//
+// Same fixture discipline as `confirmDevImage`: a simulated registry on a
+// virtual clock, so a 900s budget costs no wall time and there is no `gh`.
+// ---------------------------------------------------------------------------
+
+interface PushScript {
+  /** When the Release run flips to completed/success. */
+  successAtMs: number;
+  /** Lookups fail (`null` — gh offline/rate-limited) before this. */
+  lookupFailsUntilMs?: number;
+  /** No run exists at all before this (the workflow hasn't registered yet). */
+  runAppearsAtMs?: number;
+  /** A terminal non-success conclusion, from `runAppearsAtMs` on. */
+  failedConclusion?: string;
+  /** What one `gh run list` round-trip costs on the virtual clock. */
+  lookupCostMs?: number;
+}
+
+function makeFakePushRegistry(script: PushScript) {
+  let t = 0;
+  const stats = { lookups: 0, failures: 0 };
+  const deps: DevPushDeps = {
+    now: () => t,
+    sleep: async ms => {
+      t += ms;
+    },
+    listRuns: async () => {
+      t += script.lookupCostMs ?? 1_000; // a gh round-trip isn't free
+      if (t < (script.lookupFailsUntilMs ?? 0)) {
+        stats.failures++;
+        return null;
+      }
+      stats.lookups++;
+      if (t < (script.runAppearsAtMs ?? 0)) return [];
+      if (script.failedConclusion) {
+        return [{ databaseId: 77, status: 'completed', conclusion: script.failedConclusion }];
+      }
+      return t >= script.successAtMs
+        ? [{ databaseId: 77, status: 'completed', conclusion: 'success' }]
+        : [{ databaseId: 77, status: 'in_progress', conclusion: '' }]; // gh emits '' while running
+    },
+  };
+  return { deps, stats, elapsedMs: () => t };
+}
+
+describe('pickReleaseRun (#2820)', () => {
+  it('returns null for no runs at all — "not yet", never "it failed"', () => {
+    expect(pickReleaseRun([])).toBeNull();
+  });
+
+  it('lets a completed success win over a newer, still-running row', () => {
+    expect(
+      pickReleaseRun([
+        { databaseId: 2, status: 'in_progress', conclusion: '' },
+        { databaseId: 1, status: 'completed', conclusion: 'success' },
+      ]),
+    ).toMatchObject({ runId: 1, status: 'completed', conclusion: 'success' });
+  });
+
+  it('falls back to the newest row (gh lists newest first) when none succeeded', () => {
+    expect(
+      pickReleaseRun([
+        { databaseId: 2, status: 'in_progress', conclusion: '' },
+        { databaseId: 1, status: 'completed', conclusion: 'failure' },
+      ]),
+    ).toMatchObject({ runId: 2, status: 'in_progress' });
+  });
+});
+
+describe('waitForDevPush (#2820)', () => {
+  it('waits at least as long as the documented push budget', () => {
+    expect(DEV_PUSH_TIMEOUT_SEC).toBeGreaterThanOrEqual(900);
+  });
+
+  it('returns immediately when the image is already pushed — no wasted budget', async () => {
+    const reg = makeFakePushRegistry({ successAtMs: 0 });
+    const result = await waitForDevPush(SHORT, reg.deps);
+    expect(result).toMatchObject({ pushed: true, runId: 77, conclusion: 'success', polls: 1 });
+    expect(reg.elapsedMs()).toBeLessThan(5_000);
+  });
+
+  it('waits out the in-flight Release run instead of flipping onto the previous digest', async () => {
+    // The live case: the push lands 111s after the merge, i.e. long after the
+    // old harness had already flipped.
+    const reg = makeFakePushRegistry({ successAtMs: 111_000 });
+    const result = await waitForDevPush(SHORT, reg.deps);
+    expect(result.pushed).toBe(true);
+    expect(result.polls).toBeGreaterThan(1);
+    expect(reg.elapsedMs()).toBeGreaterThanOrEqual(111_000);
+  });
+
+  it('sees a push that lands inside the last poll gap — no blind trailing window', async () => {
+    const reg = makeFakePushRegistry({ successAtMs: 899_000 });
+    const result = await waitForDevPush(SHORT, reg.deps);
+    expect(result.pushed).toBe(true);
+  });
+
+  it('does not treat a failed gh lookup as a verdict', async () => {
+    const reg = makeFakePushRegistry({ successAtMs: 0, lookupFailsUntilMs: 120_000 });
+    const result = await waitForDevPush(SHORT, reg.deps);
+    expect(result.pushed).toBe(true);
+    expect(result.lookupFailures).toBeGreaterThan(0); // it really did hit the failing path
+  });
+
+  it('reports polls:0 with an explicit "UNKNOWN" detail when gh never answered', async () => {
+    const reg = makeFakePushRegistry({ successAtMs: 0, lookupFailsUntilMs: Number.MAX_SAFE_INTEGER });
+    const result = await waitForDevPush(SHORT, reg.deps);
+    expect(result).toMatchObject({ pushed: false, polls: 0, runId: null });
+    expect(result.detail).toContain('UNKNOWN');
+    expect(result.detail).toContain('NOT evidence');
+    expect(reg.elapsedMs()).toBeLessThanOrEqual((DEV_PUSH_TIMEOUT_SEC + 60) * 1000); // still bounded
+  });
+
+  it('says so plainly when no Release run ever appears for the sha', async () => {
+    const reg = makeFakePushRegistry({ successAtMs: 0, runAppearsAtMs: Number.MAX_SAFE_INTEGER });
+    const result = await waitForDevPush(SHORT, reg.deps);
+    expect(result).toMatchObject({ pushed: false, status: null });
+    expect(result.polls).toBeGreaterThan(0);
+    expect(result.detail).toContain('no Release workflow run');
+  });
+
+  it('gives up at once on a completed FAILURE — no image is coming, so the budget is not burnt', async () => {
+    const reg = makeFakePushRegistry({ successAtMs: 0, failedConclusion: 'failure' });
+    const result = await waitForDevPush(SHORT, reg.deps);
+    expect(result).toMatchObject({ pushed: false, status: 'completed', conclusion: 'failure', runId: 77 });
+    expect(result.detail).toContain('no :dev image was pushed');
+    expect(reg.elapsedMs()).toBeLessThan(5_000);
+  });
+
+  it('still reports pushed:false — and says which run — when the build never finishes', async () => {
+    const reg = makeFakePushRegistry({ successAtMs: Number.MAX_SAFE_INTEGER });
+    const result = await waitForDevPush(SHORT, reg.deps);
+    expect(result).toMatchObject({ pushed: false, status: 'in_progress' });
+    expect(result.detail).toContain('not on the registry yet');
+    expect(reg.elapsedMs()).toBeLessThanOrEqual((DEV_PUSH_TIMEOUT_SEC + 60) * 1000);
+  });
+
+  it('falls back to the default budget instead of skipping the wait on a non-finite timeout', async () => {
+    const reg = makeFakePushRegistry({ successAtMs: 100_000 });
+    const result = await waitForDevPush(SHORT, reg.deps, { timeoutSec: Number.NaN });
+    expect(result.pushed).toBe(true);
+    expect(reg.stats.lookups).toBeGreaterThan(0);
+  });
+});
+
+describe('isPullInProgressTimeout (#2820)', () => {
+  it('recognises the live client-side abort of the set_channel POST', () => {
+    // The exact 13:22Z message: the box is still inside its 5-min podman pull.
+    expect(isPullInProgressTimeout('The operation was aborted due to timeout')).toBe(true);
+    expect(isPullInProgressTimeout('TimeoutError: signal timed out')).toBe(true);
+  });
+
+  it('does NOT swallow a real refusal — those must still abort at flip-to-dev', () => {
+    expect(isPullInProgressTimeout('mcp set_channel failed (HTTP 502): bad gateway')).toBe(false);
+    expect(isPullInProgressTimeout('setChannel(dev) not accepted: {"ok":false}')).toBe(false);
+    expect(isPullInProgressTimeout('scope denied: lifecycle')).toBe(false);
+  });
+});
+
+describe('runDevVerify — the flip waits for the push (#2820)', () => {
+  it('never touches the channel when the sha has no :dev image', async () => {
+    const { deps, calls } = makeRunDeps({ waitForDevPush: async () => NOT_PUSHED });
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+
+    expect(calls.setChannel).toBe(0); // the whole point: the box is untouched
+    expect(calls.probes).toBe(0);
+    expect(outcome.failure).toMatchObject({ step: 'dev-image-not-pushed' });
+    expect(outcome.devImage).toBeNull();
+    expect(outcome.reachedDev).toBe(false);
+    expect(devVerifyExitCode(outcome)).toBe(2); // harness failure, NOT exit 5
+  });
+
+  it('keeps "the image was never pushed" distinct from "the flip POST was refused"', async () => {
+    const notPushed = devVerifyResultLine(
+      await runDevVerify(SHORT, makeRunDeps({ waitForDevPush: async () => NOT_PUSHED }).deps, RUN_OPTS),
+    );
+    const flipRefused = devVerifyResultLine(
+      await runDevVerify(SHORT, makeRunDeps({ setChannel: boom('mcp set_channel failed (HTTP 502)') }).deps, RUN_OPTS),
+    );
+
+    expect(notPushed.failure).toMatchObject({ step: 'dev-image-not-pushed' });
+    expect(flipRefused.failure).toMatchObject({ step: 'flip-to-dev' });
+    expect(JSON.stringify(notPushed.devPush)).toContain('not on the registry yet');
+    expect(String(notPushed.probeOutput)).toContain('dev-image-not-pushed');
+  });
+
+  it('does not issue a pointless flip-back when it never flipped', async () => {
+    // set_channel recreates + restarts the container even for the channel it is
+    // already on, so "flipping back" an untouched box is a wasted restart.
+    const { deps, calls } = makeRunDeps({ waitForDevPush: async () => NOT_PUSHED });
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(calls.flipBacks).toBe(0);
+    expect(outcome.flipBack.flippedBack).toBe(true); // nothing to strand ⇒ never a hard alert
+    expect(outcome.flipBack.detail).toContain('never flipped');
+  });
+
+  it('names the step when the push lookup itself throws — no blind failure', async () => {
+    const { deps, calls } = makeRunDeps({ waitForDevPush: boom('gh: exec format error') });
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(outcome.failure).toMatchObject({ step: 'dev-image-not-pushed', message: 'gh: exec format error' });
+    expect(calls.setChannel).toBe(0);
+    expect(devVerifyResultLine(outcome).probeOutput).not.toBe('');
+  });
+
+  it('waits for the push BEFORE flipping, not after', async () => {
+    const order: string[] = [];
+    const { deps } = makeRunDeps({
+      waitForDevPush: async () => {
+        order.push('push');
+        return PUSHED;
+      },
+      setChannel: async () => {
+        order.push('flip');
+      },
+    });
+    await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(order).toEqual(['push', 'flip']);
+  });
+
+  it('carries the push evidence into the result line on the happy path', async () => {
+    const line = devVerifyResultLine(await runDevVerify(SHORT, makeRunDeps().deps, RUN_OPTS));
+    expect(line.devPush).toMatchObject({ pushed: true, runId: 4242, conclusion: 'success' });
+    expect(line.flipTimeout).toBeNull();
+  });
+});
+
+describe('runDevVerify — a set_channel client timeout is pull-in-progress (#2820)', () => {
+  const CLIENT_TIMEOUT = 'mcp set_channel failed (HTTP 0): The operation was aborted due to timeout';
+
+  it('keeps polling for the image budget instead of flipping straight back', async () => {
+    const { deps, calls } = makeRunDeps({ setChannel: boom(CLIENT_TIMEOUT) });
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+
+    // The pre-fix run aborted here (failure:flip-to-dev, reissues:1) and the
+    // :dev container never started — which is why every fresh SHA needed two runs.
+    expect(outcome.failure).toBeNull();
+    expect(outcome.reachedDev).toBe(true);
+    expect(outcome.flipTimeout).toBe(CLIENT_TIMEOUT); // recorded, not swallowed
+    expect(calls.probes).toBe(1);
+    expect(calls.flipBacks).toBe(1); // the flip DID land server-side ⇒ still flip back
+    expect(devVerifyExitCode(outcome)).toBe(0);
+  });
+
+  it('surfaces the timeout in the result line without calling it a failure', async () => {
+    const line = devVerifyResultLine(
+      await runDevVerify(SHORT, makeRunDeps({ setChannel: boom(CLIENT_TIMEOUT) }).deps, RUN_OPTS),
+    );
+    expect(line.failure).toBeNull();
+    expect(line.flipTimeout).toBe(CLIENT_TIMEOUT);
+    expect(line.reachedDev).toBe(true);
+  });
+
+  it('still reports the image verdict when the pull was genuinely too slow', async () => {
+    const { deps } = makeRunDeps({
+      setChannel: boom(CLIENT_TIMEOUT),
+      confirmDevImage: async () => NOT_PUBLISHED,
+    });
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(outcome).toMatchObject({ reachedDev: false, failure: null });
+    expect(outcome.probeOutput).toContain('still in flight');
+    expect(devVerifyExitCode(outcome)).toBe(2);
+  });
+
+  it('still ABORTS at flip-to-dev on a genuine refusal — the timeout path is not a catch-all', async () => {
+    const { deps, calls } = makeRunDeps({ setChannel: boom('mcp set_channel failed (HTTP 403): scope denied') });
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(outcome.failure).toMatchObject({ step: 'flip-to-dev' });
+    expect(outcome.flipTimeout).toBeNull();
+    expect(calls.probes).toBe(0);
+    expect(calls.flipBacks).toBe(1);
   });
 });

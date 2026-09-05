@@ -16,13 +16,28 @@
  * same call with the same static authority, so a box the harness can flip to
  * `:dev` is by construction a box it can flip back.
  *
- *   tsx scripts/autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900] [--flipback-timeout 900]
+ *   tsx scripts/autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900]
+ *     [--flipback-timeout 900] [--push-timeout 900] [--assume-pushed]
  *
  * The probe script runs while the box is on `:dev @ <sha>`; its stdout/stderr +
  * exit code are captured and returned. Emits one machine-readable last line:
  *   AUTOLOOP_DEV_VERIFY_RESULT {"reachedDev":true,"probeExit":0,"flippedBack":true,"channel":"latest",
  *                               "devImage":{"revision":"…","reads":3,"readFailures":1,"detail":"…"},
- *                               "failure":null,"probeOutput":"…"}
+ *                               "devPush":{"runId":123,"status":"completed","conclusion":"success","detail":"…"},
+ *                               "flipTimeout":null,"failure":null,"probeOutput":"…"}
+ *
+ * **Nothing is flipped until the SHA's `:dev` image is actually on the registry
+ * (#2820).** The old first step was the flip, so a run started minutes after the
+ * merge pulled the *previous* `:dev` digest, then watched the wrong build for the
+ * whole 900s image budget and reported `reachedDev:false`. The run now waits for
+ * this SHA's `Release` workflow run to reach `completed`/`success` first, bounded
+ * by `--push-timeout` (`--assume-pushed` skips it for a re-run of a SHA already
+ * on the registry); "the image was never pushed" is its own named failure step,
+ * `dev-image-not-pushed`, never confused with `flip-to-dev`. The second half of
+ * that same race: `set_channel dev` is awaited server-side through a multi-minute
+ * `podman pull` while the client call times out after 30s — that timeout is
+ * **pull-in-progress**, not a refusal, so the run keeps polling for the image
+ * budget instead of flipping straight back (it is reported as `flipTimeout`).
  *
  * `reachedDev` and `flippedBack` are trustworthy on their own — both poll
  * through the whole restart window and carry their evidence (`devImage`,
@@ -58,6 +73,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { getChannel, setChannel, waitHealth, mcpCall, mcpExec } from './autoloop-box';
+import { gitEnv } from './autoloop-git';
 
 /**
  * Does the running image's OCI revision label identify `sha`?
@@ -338,14 +354,211 @@ export async function confirmFlipBack(
   };
 }
 
+// ---------- :dev image PUSH confirmation, before any flip (#2820) ----------
+
+/** One `gh run list --json status,conclusion,databaseId` row. */
+export interface ReleaseRunRow {
+  databaseId?: number;
+  status?: string;
+  conclusion?: string;
+}
+
+/** The run that decides whether this SHA's `:dev` image exists. */
+export interface ReleaseRunState {
+  runId: number | null;
+  status: string | null;
+  conclusion: string | null;
+}
+
+/**
+ * Pick the deciding `Release` run out of a `gh run list --commit <sha>` payload.
+ *
+ * A merge SHA can carry several runs (a re-run, a `workflow_dispatch` on top of
+ * the push). One completed **success** means the `:dev` tag was pushed for this
+ * SHA, whatever the others say — so a success wins outright; otherwise the newest
+ * row (gh lists newest first) is the one still deciding. `null` = no run at all
+ * yet, which is "not yet", never "it failed". Pure — exported for unit tests.
+ */
+export function pickReleaseRun(rows: readonly ReleaseRunRow[]): ReleaseRunState | null {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const success = rows.find(r => r.status === 'completed' && r.conclusion === 'success');
+  const row = (success ?? rows[0]) as ReleaseRunRow;
+  return {
+    runId: typeof row.databaseId === 'number' ? row.databaseId : null,
+    status: row.status ?? null,
+    conclusion: row.conclusion ?? null,
+  };
+}
+
+/** Registry I/O the push wait needs, injected so it is unit-testable on a
+ *  virtual clock with no `gh` and no network. */
+export interface DevPushDeps {
+  /** The SHA's `Release` workflow runs. `null` = the LOOKUP failed (`gh` missing,
+   *  rate-limited, offline) — categorically NOT "no run exists", exactly like
+   *  `readRevision`'s null (#2493). */
+  listRuns: (sha: string) => Promise<ReleaseRunRow[] | null>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+}
+
+export interface DevPushResult {
+  /** True only on a `completed`/`success` run — the one state that proves the
+   *  `:dev` tag now points at this SHA. */
+  pushed: boolean;
+  runId: number | null;
+  status: string | null;
+  conclusion: string | null;
+  /** Successful lookups vs. failed ones — the evidence behind the verdict. */
+  polls: number;
+  lookupFailures: number;
+  detail: string;
+}
+
+export const DEV_PUSH_TIMEOUT_SEC = 900;
+const DEV_PUSH_POLL_SEC = 15;
+
+/** `Release run 4242` — or an honest stand-in when gh gave no id. */
+function runLabel(state: ReleaseRunState | null): string {
+  return `Release run ${state?.runId ?? '(unknown id)'}`;
+}
+
+/** The verdict text for a run that has finished, either way. */
+function completedPushDetail(sha: string, state: ReleaseRunState, polls: number): string {
+  return state.conclusion === 'success'
+    ? `${runLabel(state)} for ${sha} completed success after ${polls} lookup(s) — :dev is on the registry`
+    : `${runLabel(state)} for ${sha} completed ${state.conclusion || '(no conclusion)'} — no :dev image was pushed`;
+}
+
+/** The verdict text for a budget that ran out — which `false` it is matters as
+ *  much here as it does for `confirmDevImage` (#2493). */
+function exhaustedPushDetail(sha: string, state: ReleaseRunState | null, spent: string, polls: number): string {
+  if (polls === 0) {
+    return `never got an answer from \`gh run list\` for ${sha} within ${spent} — the :dev push state is UNKNOWN, which is NOT evidence the image is missing`;
+  }
+  if (state === null) return `no Release workflow run for ${sha} within ${spent} — nothing pushed :dev for this SHA`;
+  return `${runLabel(state)} for ${sha} still ${state.status || '(no status)'} after ${spent} — the :dev image is not on the registry yet`;
+}
+
+/**
+ * Wait until the `Release` workflow has pushed `:dev` for `sha`, bounded.
+ *
+ * This is the fix for the head of the #2820 race: the harness used to flip
+ * first, so a run started before the push finished pulled the *previous* `:dev`
+ * digest, burned the whole 900s image budget reading the old revision, and
+ * reported a false `reachedDev:false` — while the box ran the wrong build for a
+ * quarter of an hour.
+ *
+ * Same verdict discipline as `confirmDevImage`/`confirmFlipBack`: a failed
+ * lookup and a missing run are both "not yet", only a *completed* run or budget
+ * exhaustion is a verdict, and the deadline is only checked **after** a lookup so
+ * there is no blind trailing window. A run that completed non-`success` is
+ * terminal immediately — no image is coming, so waiting out the budget would
+ * only waste it.
+ */
+export async function waitForDevPush(
+  sha: string,
+  deps: DevPushDeps,
+  opts: { timeoutSec?: number; pollEverySec?: number } = {},
+): Promise<DevPushResult> {
+  const requested = opts.timeoutSec ?? DEV_PUSH_TIMEOUT_SEC;
+  const timeoutSec = Number.isFinite(requested) && requested > 0 ? requested : DEV_PUSH_TIMEOUT_SEC;
+  const pollEverySec = opts.pollEverySec ?? DEV_PUSH_POLL_SEC;
+
+  const deadline = deps.now() + timeoutSec * 1000;
+  let state: ReleaseRunState | null = null;
+  let polls = 0;
+  let lookupFailures = 0;
+
+  for (;;) {
+    const rows = await deps.listRuns(sha);
+    if (rows === null) {
+      lookupFailures++;
+    } else {
+      polls++;
+      state = pickReleaseRun(rows);
+      if (state?.status === 'completed') {
+        const detail = completedPushDetail(sha, state, polls);
+        return { pushed: state.conclusion === 'success', ...state, polls, lookupFailures, detail };
+      }
+    }
+    if (deps.now() >= deadline) break;
+    await deps.sleep(Math.min(pollEverySec * 1000, deadline - deps.now()));
+  }
+
+  const spent = `${timeoutSec}s (${polls} lookup(s), ${lookupFailures} failed lookup(s))`;
+  const empty: ReleaseRunState = { runId: null, status: null, conclusion: null };
+  return {
+    pushed: false,
+    ...(state ?? empty),
+    polls,
+    lookupFailures,
+    detail: exhaustedPushDetail(sha, state, spent, polls),
+  };
+}
+
+/**
+ * Is this `set_channel` rejection the CLIENT-side timeout, i.e. the box is still
+ * pulling — not a refusal?
+ *
+ * `set_channel` is awaited server-side through `podman pull …:dev`
+ * (`lib/servicebayChannel.ts`, a multi-minute budget) while the harness's MCP
+ * call gives up after 30s. Treating that abort as a failed flip made the run
+ * flip straight back, so the `:dev` container never started and every fresh SHA
+ * needed two attempts (#2820). The POST was accepted; the pull is running. Pure
+ * — exported for unit tests.
+ */
+export function isPullInProgressTimeout(message: string): boolean {
+  return /timeout|timed out|operation was aborted|aborterror|timeouterror/i.test(message);
+}
+
+/** List the SHA's `Release` runs through `gh`, on the autoloop's own git/gh auth
+ *  path (`gitEnv()`, #2761) — no new dependency, `node:` only. `null` = the
+ *  lookup itself failed, which the wait treats as "not yet", never as a verdict. */
+export async function listReleaseRuns(sha: string): Promise<ReleaseRunRow[] | null> {
+  try {
+    const out = execFileSync(
+      'gh',
+      ['run', 'list', '--commit', sha, '--workflow', 'release.yml', '--limit', '20', '--json', 'status,conclusion,databaseId'],
+      { encoding: 'utf8', env: gitEnv(), stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000 },
+    );
+    const rows: unknown = JSON.parse(out);
+    return Array.isArray(rows) ? (rows as ReleaseRunRow[]) : null;
+  } catch {
+    return null; // gh missing / rate-limited / offline — NOT "no run exists"
+  }
+}
+
 export const DEV_VERIFY_USAGE =
-  'usage: autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900] [--flipback-timeout 900]';
+  'usage: autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900] [--flipback-timeout 900] [--push-timeout 900] [--assume-pushed]';
 
 export interface DevVerifyArgs {
   sha: string;
   probeScript: string;
   imageTimeout: number;
   flipBackTimeout: number;
+  /** Budget for the pre-flip wait on the SHA's `Release` run (#2820). */
+  pushTimeout: number;
+  /** Skip that wait entirely — for a re-run of a SHA already on the registry. */
+  assumePushed: boolean;
+}
+
+/** A positive number of seconds, or the loud reason it is not one. A missing or
+ *  garbage value used to reach the wait loops as `NaN` and collapse them to zero
+ *  iterations (#2493). */
+function parseSeconds(flag: string, value: string | undefined): { seconds: number } | { error: string } {
+  const n = Number(value);
+  if (value === undefined || !Number.isFinite(n) || n <= 0) {
+    return { error: `${flag} needs a positive number of seconds (got ${value ?? '<nothing>'})` };
+  }
+  return { seconds: n };
+}
+
+/** The SHA positional is compared against the image's OCI revision label, which
+ *  is hex — anything else can never match, so it is rejected up front rather
+ *  than after a 900s wait. Returns the reason, or null when it is fine. */
+function shaError(sha: string | undefined): string | null {
+  if (!sha) return 'missing <sha>';
+  return /^[0-9a-f]{7,40}$/i.test(sha) ? null : `<sha> must be a 7-40 char git SHA (got ${sha})`;
 }
 
 /**
@@ -363,7 +576,10 @@ export interface DevVerifyArgs {
 export function parseDevVerifyArgs(argv: string[]): { args: DevVerifyArgs } | { error: string } {
   let sha: string | undefined;
   let probeScript: string | undefined;
-  const numeric: Record<string, number> = { '--image-timeout': DEV_IMAGE_TIMEOUT_SEC, '--flipback-timeout': FLIP_BACK_TIMEOUT_SEC };
+  let assumePushed = false;
+  // prettier-ignore
+  const numeric: Record<string, number> =
+    { '--image-timeout': DEV_IMAGE_TIMEOUT_SEC, '--flipback-timeout': FLIP_BACK_TIMEOUT_SEC, '--push-timeout': DEV_PUSH_TIMEOUT_SEC };
 
   for (let i = 0; i < argv.length; i++) {
     const raw = argv[i] as string;
@@ -384,30 +600,31 @@ export function parseDevVerifyArgs(argv: string[]): { args: DevVerifyArgs } | { 
       const value = takeValue();
       if (!value) return { error: 'missing value for --probe-script' };
       probeScript = value;
+    } else if (flag === '--assume-pushed') {
+      // A boolean flag: a value would silently be read as the SHA positional.
+      if (inlineValue !== undefined) return { error: '--assume-pushed takes no value' };
+      assumePushed = true;
     } else if (flag in numeric) {
-      const value = takeValue();
-      const n = Number(value);
-      if (value === undefined || !Number.isFinite(n) || n <= 0) {
-        return { error: `${flag} needs a positive number of seconds (got ${value ?? '<nothing>'})` };
-      }
-      numeric[flag] = n;
+      const seconds = parseSeconds(flag, takeValue());
+      if ('error' in seconds) return seconds;
+      numeric[flag] = seconds.seconds;
     } else {
       return { error: `unknown option: ${flag}` };
     }
   }
 
-  if (!sha) return { error: 'missing <sha>' };
-  // The SHA is compared against the image's OCI revision label, which is hex —
-  // anything else can never match, so reject it here rather than after 900s.
-  if (!/^[0-9a-f]{7,40}$/i.test(sha)) return { error: `<sha> must be a 7-40 char git SHA (got ${sha})` };
+  const badSha = shaError(sha);
+  if (badSha) return { error: badSha };
   if (!probeScript) return { error: 'missing --probe-script <path>' };
 
   return {
     args: {
-      sha,
+      sha: sha as string,
       probeScript,
       imageTimeout: numeric['--image-timeout'] as number,
       flipBackTimeout: numeric['--flipback-timeout'] as number,
+      pushTimeout: numeric['--push-timeout'] as number,
+      assumePushed,
     },
   };
 }
@@ -420,6 +637,10 @@ export function parseDevVerifyArgs(argv: string[]): { args: DevVerifyArgs } | { 
  *  landed" (which is `failure:null` + a `devImage` verdict). */
 export type DevVerifyStep =
   | 'preflight-health'
+  // The SHA's `:dev` image never made it onto the registry (#2820) — the run
+  // stopped BEFORE any flip, so this can never be confused with `flip-to-dev`
+  // (the flip POST itself being refused), and the box was never touched.
+  | 'dev-image-not-pushed'
   | 'flip-to-dev'
   | 'health-after-flip'
   | 'confirm-dev-image'
@@ -450,6 +671,8 @@ export function describeError(e: unknown): string {
 /** Box I/O the run needs, injected so every abort path is unit-testable without
  *  a real box (the flip-back guarantee included). */
 export interface DevVerifyRunDeps {
+  /** Wait for the SHA's `:dev` image to be pushed, BEFORE anything is flipped. */
+  waitForDevPush: (sha: string, timeoutSec: number) => Promise<DevPushResult>;
   setChannel: (target: 'dev') => Promise<void>;
   waitHealth: (timeoutSec: number) => Promise<boolean>;
   confirmDevImage: (sha: string, timeoutSec: number) => Promise<DevImageResult>;
@@ -459,7 +682,13 @@ export interface DevVerifyRunDeps {
 
 export interface DevVerifyOutcome {
   reachedDev: boolean;
+  /** The pre-flip registry verdict (#2820); `null` only if the run never got
+   *  that far (it is the first step). */
+  devPush: DevPushResult | null;
   devImage: DevImageResult | null;
+  /** The `set_channel dev` client-timeout message, when the POST was accepted
+   *  but the server was still pulling — evidence, not a failure (#2820). */
+  flipTimeout: string | null;
   probeExit: number;
   probeOutput: string;
   /** `null` on a clean run *and* on a clean "image never landed" verdict; a
@@ -469,6 +698,28 @@ export interface DevVerifyOutcome {
 }
 
 const HEALTH_WAIT_SEC = 180;
+
+/** The mutable half of a run — what has been established so far, and the step
+ *  the run is currently in (which names a `failure` if it aborts there). */
+interface RunProgress {
+  step: DevVerifyStep;
+  reachedDev: boolean;
+  devPush: DevPushResult | null;
+  devImage: DevImageResult | null;
+  flipTimeout: string | null;
+  probeExit: number;
+  probeOutput: string;
+}
+
+/** The flip-back "result" of a run that never flipped, so `flippedBack:false`
+ *  keeps meaning "the box may be stranded" and nothing else (#2820). */
+const NEVER_FLIPPED: FlipBackResult = {
+  flippedBack: true,
+  channel: null,
+  reissues: 0,
+  polls: 0,
+  detail: 'no flip-back needed — the run never flipped to :dev (the :dev image was never pushed)',
+};
 
 /**
  * Flip to `:dev`, confirm the image, run the probes, **always flip back**.
@@ -491,61 +742,105 @@ const HEALTH_WAIT_SEC = 180;
 export async function runDevVerify(
   sha: string,
   deps: DevVerifyRunDeps,
-  opts: { imageTimeout: number; flipBackTimeout: number },
+  opts: { imageTimeout: number; flipBackTimeout: number; pushTimeout: number },
 ): Promise<DevVerifyOutcome> {
-  let reachedDev = false;
-  let devImage: DevImageResult | null = null;
-  let probeExit = -1;
-  let probeOutput = '';
+  // prettier-ignore
+  const run: RunProgress =
+    { step: 'dev-image-not-pushed', reachedDev: false, devPush: null, devImage: null, flipTimeout: null, probeExit: -1, probeOutput: '' };
   let failure: DevVerifyFailure | null = null;
-  let step: DevVerifyStep = 'flip-to-dev';
   let flipBack: FlipBackResult;
 
   try {
-    // Flip to :dev and wait for the SHA's image to be live + healthy.
-    await deps.setChannel('dev');
-    // Not a settle window: the OUTGOING container keeps answering /api/health
-    // right through the flip (#2387), so the revision poll below — not this
-    // wait — is the authority on whether the :dev image is actually live.
-    step = 'health-after-flip';
-    await deps.waitHealth(HEALTH_WAIT_SEC);
-    step = 'confirm-dev-image';
-    devImage = await deps.confirmDevImage(sha, opts.imageTimeout);
-    reachedDev = devImage.reached;
-    if (!reachedDev) {
-      probeOutput = `did not confirm :dev image with revision ${sha}: ${devImage.detail}`;
+    // FIRST, before touching the box: is this SHA's :dev image on the registry?
+    // Flipping ahead of the push pulls the PREVIOUS digest and verifies the
+    // wrong build (#2820).
+    run.devPush = await deps.waitForDevPush(sha, opts.pushTimeout);
+    if (run.devPush.pushed) {
+      await flipAndProbe(sha, deps, opts, run);
     } else {
-      step = 'health-on-dev';
-      await deps.waitHealth(HEALTH_WAIT_SEC);
-      // Run the agent-supplied probes against the box on :dev.
-      step = 'probe-script';
-      const probe = await deps.runProbe();
-      probeExit = probe.exit;
-      probeOutput = probe.output;
+      failure = { step: run.step, message: run.devPush.detail };
+      run.probeOutput = `run failed at step ${run.step}: ${run.devPush.detail}`;
     }
   } catch (e) {
-    failure = { step, message: describeError(e) };
-    probeOutput = probeOutput || `run failed at step ${step}: ${failure.message}`;
+    failure = { step: run.step, message: describeError(e) };
+    run.probeOutput = run.probeOutput || `run failed at step ${run.step}: ${failure.message}`;
   } finally {
     // STRUCTURAL INVARIANT: always flip back to :latest, whatever happened above.
     // Confirmation tolerates the full restart window (#2387) — a null/stale
     // read is "not yet", only budget exhaustion is a verdict.
-    try {
-      flipBack = await deps.flipBack(opts.flipBackTimeout);
-    } catch (e) {
-      const message = describeError(e);
-      flipBack = {
-        flippedBack: false,
-        channel: null,
-        reissues: 0,
-        polls: 0,
-        detail: `flip-back itself threw (${message}) — the box may be stranded on :dev`,
-      };
-      failure = failure ?? { step: 'flip-back', message };
+    //
+    // The ONE exception is a run that PROVABLY never flipped: the `:dev` image
+    // was never pushed, so `setChannel` was never called and the box was never
+    // touched. `set_channel` recreates + restarts the container even for the
+    // channel it is already on (`lib/servicebayChannel.ts`), so a "flip back"
+    // there is a pointless restart, not a safety net — the same reasoning as the
+    // preflight-health abort in `main`.
+    if (failure?.step === 'dev-image-not-pushed') {
+      flipBack = NEVER_FLIPPED;
+    } else {
+      try {
+        flipBack = await deps.flipBack(opts.flipBackTimeout);
+      } catch (e) {
+        const message = describeError(e);
+        // prettier-ignore
+        flipBack = { flippedBack: false, channel: null, reissues: 0, polls: 0, detail: `flip-back itself threw (${message}) — the box may be stranded on :dev` };
+        failure = failure ?? { step: 'flip-back', message };
+      }
     }
   }
 
-  return { reachedDev, devImage, probeExit, probeOutput, failure, flipBack };
+  const { reachedDev, devPush, devImage, flipTimeout, probeExit, probeOutput } = run;
+  return { reachedDev, devPush, devImage, flipTimeout, probeExit, probeOutput, failure, flipBack };
+}
+
+/**
+ * The half of the run that touches the box: flip, confirm the image, probe.
+ *
+ * Split out of `runDevVerify` so the flip-back `finally` stays readable at a
+ * glance; it records into `run` as it goes, so an abort at any step still
+ * carries the evidence gathered before it (the confirmed image, say) and the
+ * step it died at. It deliberately does NOT catch — a throw is the caller's
+ * `failure:{step,message}`, named by `run.step`.
+ */
+async function flipAndProbe(
+  sha: string,
+  deps: DevVerifyRunDeps,
+  opts: { imageTimeout: number },
+  run: RunProgress,
+): Promise<void> {
+  run.step = 'flip-to-dev';
+  try {
+    await deps.setChannel('dev');
+  } catch (e) {
+    // A CLIENT-side timeout is not a refused flip: the box awaits the `podman
+    // pull` server-side for minutes while this call gives up after 30s. The POST
+    // landed; the pull is running — so keep going and let the image budget below
+    // decide, instead of flipping straight back (#2820).
+    const message = describeError(e);
+    if (!isPullInProgressTimeout(message)) throw e;
+    run.flipTimeout = message;
+  }
+  // Not a settle window: the OUTGOING container keeps answering /api/health
+  // right through the flip (#2387), so the revision poll below — not this
+  // wait — is the authority on whether the :dev image is actually live.
+  run.step = 'health-after-flip';
+  await deps.waitHealth(HEALTH_WAIT_SEC);
+  run.step = 'confirm-dev-image';
+  const devImage = await deps.confirmDevImage(sha, opts.imageTimeout);
+  run.devImage = devImage;
+  const reachedDev = devImage.reached;
+  run.reachedDev = reachedDev;
+  if (!reachedDev) {
+    run.probeOutput = `did not confirm :dev image with revision ${sha}: ${devImage.detail}`;
+    return;
+  }
+  run.step = 'health-on-dev';
+  await deps.waitHealth(HEALTH_WAIT_SEC);
+  // Run the agent-supplied probes against the box on :dev.
+  run.step = 'probe-script';
+  const probe = await deps.runProbe();
+  run.probeExit = probe.exit;
+  run.probeOutput = probe.output;
 }
 
 /**
@@ -586,6 +881,23 @@ export function devVerifyResultLine(o: DevVerifyOutcome): Record<string, unknown
           detail: o.devImage.detail,
         }
       : null,
+    // Why the run was allowed to flip at all (#2820): the SHA's Release run had
+    // pushed `:dev`. A `pushed:false` here is the `dev-image-not-pushed` failure
+    // — the box was never touched, so this is "come back later", not red.
+    devPush: o.devPush
+      ? {
+          pushed: o.devPush.pushed,
+          runId: o.devPush.runId,
+          status: o.devPush.status,
+          conclusion: o.devPush.conclusion,
+          polls: o.devPush.polls,
+          lookupFailures: o.devPush.lookupFailures,
+          detail: o.devPush.detail,
+        }
+      : null,
+    // Non-null ⇒ the flip POST timed out CLIENT-side while the box kept pulling;
+    // the run carried on and the image budget decided. Not a failure (#2820).
+    flipTimeout: o.flipTimeout,
     // The named abort reason (#2622). null ⇒ the run completed its own steps.
     failure,
     flipBack: { reissues: o.flipBack.reissues, polls: o.flipBack.polls, detail: o.flipBack.detail },
@@ -608,7 +920,7 @@ async function main(): Promise<void> {
     console.error(`${parsed.error}\n${DEV_VERIFY_USAGE}`);
     process.exit(2);
   }
-  const { sha, probeScript, imageTimeout, flipBackTimeout } = parsed.args;
+  const { sha, probeScript, imageTimeout, flipBackTimeout, pushTimeout, assumePushed } = parsed.args;
 
   const emit = (o: Record<string, unknown>) => console.log(`AUTOLOOP_DEV_VERIFY_RESULT ${JSON.stringify(o)}`);
 
@@ -618,7 +930,9 @@ async function main(): Promise<void> {
     emit(
       devVerifyResultLine({
         reachedDev: false,
+        devPush: null,
         devImage: null,
+        flipTimeout: null,
         probeExit: -1,
         probeOutput: 'box not reachable before flip',
         failure: {
@@ -637,13 +951,36 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  // Pre-pull :dev in the background so the flip is a cache-hit (survives the
-  // exec caps — memory feedback_box_update_slow_pull_timeout).
-  await mcpExec('systemd-run --user --unit=sb-prepull-dev --quiet podman pull ghcr.io/mdopp/servicebay:dev || true').catch(() => {});
-
   const outcome = await runDevVerify(
     sha,
     {
+      waitForDevPush: async (s, timeoutSec) => {
+        const result = assumePushed
+          ? {
+              pushed: true,
+              runId: null,
+              status: null,
+              conclusion: null,
+              polls: 0,
+              lookupFailures: 0,
+              detail: '--assume-pushed: skipped the Release-run wait',
+            }
+          : await waitForDevPush(
+              s,
+              { listRuns: listReleaseRuns, sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now() },
+              { timeoutSec },
+            );
+        // Pre-pull :dev so the flip is a cache-hit (survives the exec caps —
+        // memory feedback_box_update_slow_pull_timeout). AFTER the push check,
+        // never before: pre-pulling ahead of the push caches the PREVIOUS digest
+        // (#2820).
+        if (result.pushed) {
+          await mcpExec(
+            'systemd-run --user --unit=sb-prepull-dev --quiet podman pull ghcr.io/mdopp/servicebay:dev || true',
+          ).catch(() => {});
+        }
+        return result;
+      },
       setChannel: target => setChannel(target),
       waitHealth: timeoutSec => waitHealth(timeoutSec),
       confirmDevImage: (s, timeoutSec) =>
@@ -678,7 +1015,7 @@ async function main(): Promise<void> {
           { timeoutSec },
         ),
     },
-    { imageTimeout, flipBackTimeout },
+    { imageTimeout, flipBackTimeout, pushTimeout },
   );
 
   emit(devVerifyResultLine(outcome));
