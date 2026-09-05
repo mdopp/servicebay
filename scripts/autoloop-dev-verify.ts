@@ -18,6 +18,21 @@
  *
  *   tsx scripts/autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900]
  *     [--flipback-timeout 900] [--push-timeout 900] [--assume-pushed]
+ *   tsx scripts/autoloop-dev-verify.ts --recover      # repair an abandoned flip
+ *
+ * **The `finally` is not enough when the CONTAINER dies (#2826).** The
+ * orchestrator and this harness run *inside* the `claude-dev` container on the
+ * box, so a FULL verify whose probes upgrade/restart that service recreate the
+ * container mid-flip and kill the harness's whole process tree — no `finally`,
+ * no flip-back, box left on `:dev` (2026-09-05, 17:23Z→17:54Z). Detaching the
+ * child (`setsid`/`spawn({detached})`) does not help either: the detached child
+ * dies with the container too. So the flip-back guarantee is extended with
+ * state that outlives the container: the run writes an **in-flight marker**
+ * (`.claude/state/dev-verify-inflight.json`, on the persistent `/workspace`
+ * volume) *before* the flip POST and drops it only once the flip-back is
+ * CONFIRMED, and `--recover` — wired into the orchestrator's Step 0 preflight —
+ * reads that marker plus `get_channel` and flips a `:dev` box back to `:latest`
+ * whenever no live harness owns the flip.
  *
  * The probe script runs while the box is on `:dev @ <sha>`; its stdout/stderr +
  * exit code are captured and returned. Emits one machine-readable last line:
@@ -72,6 +87,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { getChannel, setChannel, waitHealth, mcpCall, mcpExec } from './autoloop-box';
 import { gitEnv } from './autoloop-git';
 
@@ -529,7 +546,8 @@ export async function listReleaseRuns(sha: string): Promise<ReleaseRunRow[] | nu
 }
 
 export const DEV_VERIFY_USAGE =
-  'usage: autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900] [--flipback-timeout 900] [--push-timeout 900] [--assume-pushed]';
+  'usage: autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900] [--flipback-timeout 900] [--push-timeout 900] [--assume-pushed]\n' +
+  '       autoloop-dev-verify.ts --recover      # flip an orphaned :dev flip back to :latest (#2826)';
 
 export interface DevVerifyArgs {
   sha: string;
@@ -678,6 +696,14 @@ export interface DevVerifyRunDeps {
   confirmDevImage: (sha: string, timeoutSec: number) => Promise<DevImageResult>;
   runProbe: () => Promise<{ exit: number; output: string }>;
   flipBack: (timeoutSec: number) => Promise<FlipBackResult>;
+  /** Record "a flip to `:dev` is in flight" on a path that outlives this
+   *  container, BEFORE the flip POST (#2826). A throw here aborts the run at
+   *  `flip-to-dev` with the box untouched — fail closed: no marker means no
+   *  recovery if the container is recreated mid-flip. Optional so the many
+   *  existing dep fixtures stay valid. */
+  markFlipped?: (sha: string) => void;
+  /** Drop that marker — only ever after a CONFIRMED flip-back. */
+  clearMark?: () => void;
 }
 
 export interface DevVerifyOutcome {
@@ -787,6 +813,18 @@ export async function runDevVerify(
         failure = failure ?? { step: 'flip-back', message };
       }
     }
+    // The marker outlives this process on purpose, so it is dropped ONLY on a
+    // confirmed flip-back. A `flippedBack:false` leaves it standing — that is
+    // exactly the state `--recover` is there to repair (#2826). Clearing it must
+    // never turn a completed run into a throw.
+    if (flipBack.flippedBack) {
+      try {
+        deps.clearMark?.();
+      } catch {
+        /* the marker is a safety net, not a verdict — a failed unlink at worst
+           costs one redundant flip-back on the next recovery pass */
+      }
+    }
   }
 
   const { reachedDev, devPush, devImage, flipTimeout, probeExit, probeOutput } = run;
@@ -809,6 +847,9 @@ async function flipAndProbe(
   run: RunProgress,
 ): Promise<void> {
   run.step = 'flip-to-dev';
+  // BEFORE the POST: a marker written after it would miss the window where the
+  // flip landed but this process died (#2826).
+  deps.markFlipped?.(sha);
   try {
     await deps.setChannel('dev');
   } catch (e) {
@@ -914,7 +955,259 @@ export function devVerifyExitCode(o: DevVerifyOutcome): number {
   return 0;
 }
 
+// ---------- the in-flight marker + recovery (#2826) ----------
+
+/** Hard cap on the probe script, shared with the marker's expiry budget. */
+const PROBE_TIMEOUT_SEC = 15 * 60;
+/** Slack on top of the run's own budgets before a marker counts as abandoned. */
+const MARKER_GRACE_SEC = 300;
+
+/**
+ * Where the "a flip to `:dev` is in flight" marker lives.
+ *
+ * `.claude/state/` is gitignored (the existing `/.claude/*` rule) and lives in
+ * the **repo checkout**, which for the agent running this harness is a
+ * persistent volume — so the file survives the `claude-dev` container being
+ * recreated, which is precisely what kills the harness (#2826). The marker is
+ * the harness's own file: nothing else reads or writes it, and it is NOT the
+ * broker cache (`autoloop-cache.json`) or box-verify's result file.
+ */
+export const DEV_VERIFY_MARKER_PATH = '.claude/state/dev-verify-inflight.json';
+
+/** What a run records about the flip it is in the middle of. */
+export interface DevVerifyMarker {
+  /** the SHA being verified — carried so a recovery can say what it repaired */
+  sha: string;
+  /** the channel the box was flipped TO (always `dev` today) */
+  channel: 'dev';
+  flippedAt: string;
+  /** the flip time plus the run's own budgets: past this, the run cannot still
+   *  be honestly in flight even if a pid happens to match. */
+  expiresAt: string;
+  /** the harness process, so a later pass can ask "is that run still alive?" */
+  pid: number;
+  /** the argv fingerprint that pid must still carry — a bare pid is reused, and
+   *  a recreated container starts its pid numbering over. */
+  cmdlineMatch: string;
+}
+
+/** The total wall clock a run can legitimately hold the box on `:dev`. */
+export function markerBudgetSec(opts: { imageTimeout: number; flipBackTimeout: number }): number {
+  return opts.imageTimeout + opts.flipBackTimeout + PROBE_TIMEOUT_SEC + 2 * HEALTH_WAIT_SEC + MARKER_GRACE_SEC;
+}
+
+/** The marker for a run flipping `sha` now. Pure — the caller writes it. */
+export function buildDevVerifyMarker(
+  sha: string,
+  opts: { imageTimeout: number; flipBackTimeout: number },
+  ctx: { now: number; pid: number },
+): DevVerifyMarker {
+  return {
+    sha,
+    channel: 'dev',
+    flippedAt: new Date(ctx.now).toISOString(),
+    expiresAt: new Date(ctx.now + markerBudgetSec(opts) * 1000).toISOString(),
+    pid: ctx.pid,
+    cmdlineMatch: 'autoloop-dev-verify',
+  };
+}
+
+/** `null` = no marker (or an unreadable/corrupt one, which is the same thing:
+ *  nothing can be proven in flight from it). */
+export function readDevVerifyMarker(path = DEV_VERIFY_MARKER_PATH, cwd = process.cwd()): DevVerifyMarker | null {
+  try {
+    const parsed = JSON.parse(readFileSync(resolve(cwd, path), 'utf8')) as DevVerifyMarker;
+    return typeof parsed?.sha === 'string' && typeof parsed?.pid === 'number' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeDevVerifyMarker(marker: DevVerifyMarker, path = DEV_VERIFY_MARKER_PATH, cwd = process.cwd()): void {
+  const file = resolve(cwd, path);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(marker, null, 2)}\n`);
+}
+
+export function clearDevVerifyMarker(path = DEV_VERIFY_MARKER_PATH, cwd = process.cwd()): void {
+  rmSync(resolve(cwd, path), { force: true });
+}
+
+/** `/proc/<pid>/cmdline` with the NUL separators flattened, or null if the pid
+ *  is gone (the container-recreated case, and the ordinary exited case). */
+export function readProcCmdline(pid: number): string | null {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is the process that took the flip still running?
+ *
+ * The cmdline check is load-bearing, not belt-and-braces: after the container is
+ * recreated, pid numbering starts over, so the recorded pid is very likely to be
+ * *some* live process in the new container — matching on the pid alone would
+ * report a dead harness as in flight and skip the repair.
+ */
+export function isHarnessProcessAlive(marker: DevVerifyMarker, readCmdline: (pid: number) => string | null): boolean {
+  const cmdline = readCmdline(marker.pid);
+  return cmdline !== null && cmdline.includes(marker.cmdlineMatch);
+}
+
+export type ChannelRecoveryAction = 'repair' | 'harness-in-flight' | 'not-on-dev' | 'channel-unknown';
+
+export interface ChannelRecoveryInputs {
+  /** MCP `get_channel`; `null` = the box did not answer. */
+  channel: string | null;
+  marker: DevVerifyMarker | null;
+  harnessAlive: boolean;
+  now: number;
+}
+
+export interface ChannelRecoveryDecision {
+  action: ChannelRecoveryAction;
+  reason: string;
+  /** the marker is dead weight and should be dropped whatever else happens */
+  staleMarker: boolean;
+}
+
+/**
+ * Should this pass flip the box back to `:latest`?
+ *
+ * The whole class of #2826 in one pure function: **a box on `:dev` that no live
+ * harness owns is stranded**, whether the owner exited, its session died, or its
+ * container was recreated out from under it. A `null` channel is never a verdict
+ * (the box may just be mid-restart) — the recovery must not flip blind.
+ */
+export function decideChannelRecovery(input: ChannelRecoveryInputs): ChannelRecoveryDecision {
+  const { channel, marker, harnessAlive, now } = input;
+  if (channel === null) {
+    return { action: 'channel-unknown', reason: 'the box did not answer get_channel — no flip attempted', staleMarker: false };
+  }
+  if (channel !== 'dev') {
+    return {
+      action: 'not-on-dev',
+      reason: `the box reports channel ${channel} — nothing to repair`,
+      // A marker left behind by a run that did flip back (or never flipped) is
+      // just litter once the box is off :dev.
+      staleMarker: marker !== null,
+    };
+  }
+  if (!marker) {
+    return {
+      action: 'repair',
+      reason: 'the box is on :dev with no in-flight marker — no run owns this flip',
+      staleMarker: false,
+    };
+  }
+  const expiry = Date.parse(marker.expiresAt);
+  if (!Number.isFinite(expiry) || now > expiry) {
+    return {
+      action: 'repair',
+      reason: `the in-flight marker for ${marker.sha} is past its budget (expiresAt ${marker.expiresAt}) — the run cannot still be flipping`,
+      staleMarker: true,
+    };
+  }
+  if (!harnessAlive) {
+    return {
+      action: 'repair',
+      reason: `the harness that flipped ${marker.sha} (pid ${marker.pid}) is gone — its process tree died, most likely with its container`,
+      staleMarker: true,
+    };
+  }
+  return {
+    action: 'harness-in-flight',
+    reason: `pid ${marker.pid} is still verifying ${marker.sha} until ${marker.expiresAt} — leave the box on :dev`,
+    staleMarker: false,
+  };
+}
+
+export interface ChannelRecoveryDeps {
+  getChannel: () => Promise<string | null>;
+  setChannel: (target: 'latest') => Promise<void>;
+  readMarker: () => DevVerifyMarker | null;
+  clearMarker: () => void;
+  isAlive: (marker: DevVerifyMarker) => boolean;
+  now: () => number;
+}
+
+export interface ChannelRecoveryResult extends ChannelRecoveryDecision {
+  channel: string | null;
+  repaired: boolean;
+  /** why the repair flip itself failed, when it did */
+  error: string | null;
+  markerSha: string | null;
+}
+
+/** Read the channel + marker, decide, and flip back when the flip is orphaned. */
+export async function recoverStrandedChannel(deps: ChannelRecoveryDeps): Promise<ChannelRecoveryResult> {
+  const channel = await deps.getChannel();
+  const marker = deps.readMarker();
+  const decision = decideChannelRecovery({
+    channel,
+    marker,
+    harnessAlive: marker ? deps.isAlive(marker) : false,
+    now: deps.now(),
+  });
+
+  let repaired = false;
+  let error: string | null = null;
+  if (decision.action === 'repair') {
+    try {
+      await deps.setChannel('latest');
+      repaired = true;
+    } catch (e) {
+      error = describeError(e);
+    }
+  }
+  // Drop the marker once the flip-back landed, or when it was pure litter on a
+  // box that is not on `:dev` at all. A FAILED repair keeps it: the box is still
+  // stranded, and the marker is the only record of which run left it there.
+  if (repaired || (decision.action !== 'repair' && decision.staleMarker)) {
+    try {
+      deps.clearMarker();
+    } catch {
+      /* litter, not a verdict */
+    }
+  }
+  return { ...decision, channel, repaired, error, markerSha: marker?.sha ?? null };
+}
+
+/** 5 = the box is on `:dev` and the repair flip FAILED (same hard-alert code as
+ *  a failed flip-back), 2 = the channel could not be read, 0 = the box is known
+ *  not to be stranded (repaired, off `:dev`, or legitimately in flight). */
+export function recoverExitCode(r: ChannelRecoveryResult): number {
+  if (r.action === 'repair') return r.repaired ? 0 : 5;
+  return r.action === 'channel-unknown' ? 2 : 0;
+}
+
+/** `--recover`: the preflight repair pass (#2826). Reads `get_channel` + the
+ *  in-flight marker and flips an orphaned `:dev` back to `:latest`. */
+async function recoverMain(argv: string[]): Promise<void> {
+  const extra = argv.filter(a => a !== '--recover');
+  if (extra.length > 0) {
+    console.error(`--recover takes no other arguments (got ${extra.join(' ')})\n${DEV_VERIFY_USAGE}`);
+    process.exit(2);
+  }
+  const result = await recoverStrandedChannel({
+    getChannel,
+    setChannel: target => setChannel(target),
+    readMarker: () => readDevVerifyMarker(),
+    clearMarker: () => clearDevVerifyMarker(),
+    isAlive: marker => isHarnessProcessAlive(marker, readProcCmdline),
+    now: () => Date.now(),
+  });
+  console.log(`AUTOLOOP_DEV_VERIFY_RECOVER ${JSON.stringify(result)}`);
+  process.exit(recoverExitCode(result));
+}
+
 async function main(): Promise<void> {
+  if (process.argv.slice(2).includes('--recover')) {
+    await recoverMain(process.argv.slice(2));
+    return;
+  }
   const parsed = parseDevVerifyArgs(process.argv.slice(2));
   if ('error' in parsed) {
     console.error(`${parsed.error}\n${DEV_VERIFY_USAGE}`);
@@ -991,7 +1284,10 @@ async function main(): Promise<void> {
         ),
       runProbe: async () => {
         try {
-          return { exit: 0, output: execFileSync('bash', [probeScript], { encoding: 'utf8', timeout: 15 * 60 * 1000 }) };
+          return {
+            exit: 0,
+            output: execFileSync('bash', [probeScript], { encoding: 'utf8', timeout: PROBE_TIMEOUT_SEC * 1000 }),
+          };
         } catch (e) {
           // A probe that exits non-zero is a RED verdict, not a harness failure —
           // it is captured here rather than thrown, so `failure` stays reserved
@@ -1003,6 +1299,13 @@ async function main(): Promise<void> {
           };
         }
       },
+      // The flip-back that outlives this container (#2826): written before the
+      // flip POST, dropped only once `confirmFlipBack` succeeded.
+      markFlipped: s =>
+        writeDevVerifyMarker(
+          buildDevVerifyMarker(s, { imageTimeout, flipBackTimeout }, { now: Date.now(), pid: process.pid }),
+        ),
+      clearMark: () => clearDevVerifyMarker(),
       flipBack: timeoutSec =>
         confirmFlipBack(
           {
