@@ -772,6 +772,26 @@ app.prepare().then(() => {
         } catch (err) {
           logger.warn('Server', `servicebay.container UserNS reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
         }
+
+        // …and put the HOST half of that same reconcile on the box (#2808).
+        // The in-app reconciler above cannot cover the route that actually
+        // broke the box in #2805: `podman-auto-update.timer` pulls `:latest`
+        // and restarts the unit from the host, with no in-app hook anywhere on
+        // the path — and once the container is up with the wrong mapping it has
+        // lost the podman socket, /app/data and the agent key, so it cannot
+        // repair itself. This installs an `ExecStartPre=` self-heal that runs on
+        // the host before podman starts the container, on every route.
+        // Ignition writes it on fresh boxes; this is the delivery for boxes
+        // installed earlier, the same shape `updateWindow.ts` uses for the timer
+        // drop-in. Idempotent, diff-first, never fatal.
+        try {
+          const { getExecutor } = await import('./lib/executor');
+          const { installQuadletUserNsHostHook } = await import('./lib/quadletUserNsHostHook');
+          const res = await installQuadletUserNsHostHook(getExecutor());
+          logger.info('Server', `servicebay.container UserNS host hook: ${res.outcome} (${res.detail})`);
+        } catch (err) {
+          logger.warn('Server', `servicebay.container UserNS host hook failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
       })();
     }, 30_000);
 

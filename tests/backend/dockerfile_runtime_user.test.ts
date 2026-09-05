@@ -28,7 +28,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import yaml from 'js-yaml';
 import { describe, it, expect } from 'vitest';
+
+import { USERNS_SELFHEAL_SCRIPT } from '../../packages/backend/src/lib/quadletUserNsHostHook';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const DOCKERFILE = path.join(REPO_ROOT, 'Dockerfile');
@@ -122,8 +125,11 @@ describe('Dockerfile unprivileged runtime (#2789)', () => {
     // came up mapping-less and lost /app/data, the agent key and the podman
     // socket (#2805). Root is the self-healing state — the same timer repairs
     // the box, because quadletUserNs.ts strips a stray `UserNS=` under a root
-    // image. Flip this back to `USER nextjs` only together with a host-side
-    // reconcile on the auto-update path.
+    // image. #2808 landed the host half (the ExecStartPre self-heal, asserted
+    // by the cross-check block below), so what still gates the flip is release
+    // ORDERING: the host half has to be ON the box before an unprivileged image
+    // arrives, and it is delivered by the running app. Flip this one release
+    // later, not in the release that ships the host half.
     const active = lines().filter((l) => /^\s*USER\s+\S/.test(l));
     expect(active.map((l) => l.trim())).toEqual(['USER root']);
   });
@@ -184,5 +190,160 @@ describe('Dockerfile unprivileged runtime (#2789)', () => {
       '/root is unreadable to the unprivileged runtime user, so a default that ' +
         'points there is a silent failure waiting for the first caller.',
     ).toEqual([]);
+  });
+});
+
+/**
+ * The image half and the host half must be un-releasable apart (#2808).
+ *
+ * #2805 is the shape this block exists to stop: `USER nextjs` shipped in 5.28.0
+ * while the only thing that writes `UserNS=` onto a box ran nowhere near the
+ * delivery path that installs it (`podman-auto-update.timer`, host-side, no
+ * in-app hook). CI was green, every test passed, and the box lost its podman
+ * socket, its DATA_DIR and its agent key the moment the timer fired. Nothing in
+ * the repo could have caught it, because no test related the Dockerfile's
+ * `USER` to what ships on the host.
+ *
+ * So the pairing is now a *rule*, evaluated over both halves at once:
+ *
+ *   image runs as root      → nothing is owed. Root is the self-healing state:
+ *                             the reconciler strips a stray mapping.
+ *   image declares uid N≠0  → the host-side self-heal must ship in the butane
+ *                             template AND be wired into servicebay.container's
+ *                             [Service] without a leading `-`, and its uid must
+ *                             be derived (or agree with the image's `useradd`).
+ *
+ * `crossCheck` is deliberately a pure function of both halves, so the negative
+ * direction is testable: a synthetic "USER nextjs + host half missing" must come
+ * back with violations. A test that only asserted today's repo state would go
+ * green on exactly the release that breaks the box.
+ */
+describe('image ↔ quadlet cross-check (#2808)', () => {
+  const BUTANE = path.join(REPO_ROOT, 'tools', 'sb', 'internal', 'build', 'assets', 'fedora-coreos.bu');
+  const SELFHEAL_PATH = '/usr/local/bin/servicebay-userns-selfheal.sh';
+
+  interface HostHalf {
+    /** The self-heal script's text as it ships in the butane template, or null. */
+    script: string | null;
+    /** servicebay.container's `[Service]` wires it, without a leading `-`. */
+    wired: boolean;
+  }
+
+  /** Everything the rule needs from the image half. */
+  interface ImageHalf {
+    /** The active `USER` directive's argument. */
+    user: string;
+    /** uid/gid from the runner stage's `useradd`/`groupadd`, when it declares them. */
+    uid: number | null;
+    gid: number | null;
+  }
+
+  /** The pairing rule. Returns one string per violation; empty = the halves agree. */
+  function crossCheck(image: ImageHalf, host: HostHalf): string[] {
+    const bad: string[] = [];
+    if (image.user === 'root' || image.user === '0') return bad;
+
+    if (host.script === null) {
+      bad.push(
+        `the image declares \`USER ${image.user}\` but no host-side UserNS reconcile ships at ` +
+          `${SELFHEAL_PATH} — the podman-auto-update path would start it on a mapping-less quadlet (#2805)`,
+      );
+      return bad;
+    }
+    if (!host.wired) {
+      bad.push(
+        `${SELFHEAL_PATH} ships but servicebay.container does not run it as a plain ` +
+          '`ExecStartPre=` — an unwired (or `-`-prefixed) hook cannot abort the stale start',
+      );
+    }
+    const hardCoded = [...host.script.matchAll(/keep-id:uid=(\d+),gid=(\d+)/g)];
+    for (const [, uid, gid] of hardCoded) {
+      if (image.uid !== null && Number(uid) !== image.uid) {
+        bad.push(`the host half hard-codes uid ${uid}; the image's useradd says ${image.uid}`);
+      }
+      if (image.gid !== null && Number(gid) !== image.gid) {
+        bad.push(`the host half hard-codes gid ${gid}; the image's groupadd says ${image.gid}`);
+      }
+    }
+    return bad;
+  }
+
+  /** Butane is YAML with column-0 `${VAR}` placeholders that break block scalars. */
+  function butaneFiles(): Array<{ path: string; contents?: { inline?: string } }> {
+    const text = fs
+      .readFileSync(BUTANE, 'utf8')
+      .replace(/^\$\{[A-Z_]+\}[ \t]*$/gm, '          "STUBBED_INTERPOLATION"');
+    const doc = yaml.load(text) as { storage?: { files?: Array<{ path: string; contents?: { inline?: string } }> } };
+    return doc?.storage?.files ?? [];
+  }
+
+  function realHostHalf(): HostHalf {
+    const files = butaneFiles();
+    const script = files.find((f) => f.path === SELFHEAL_PATH)?.contents?.inline ?? null;
+    const quadlet =
+      files.find((f) => f.path.endsWith('/.config/containers/systemd/servicebay.container'))?.contents?.inline ?? '';
+    const wired = quadlet
+      .split('\n')
+      .some((l) => l.trim() === `ExecStartPre=/bin/bash ${SELFHEAL_PATH}`);
+    return { script, wired };
+  }
+
+  function realImageHalf(): ImageHalf {
+    const all = lines();
+    const user = all.find((l) => /^\s*USER\s+\S/.test(l))!.trim().replace(/^USER\s+/, '');
+    const stage = all.join('\n');
+    const uid = /useradd\s+--system\s+--uid\s+(\d+)/.exec(stage);
+    const gid = /groupadd\s+--system\s+--gid\s+(\d+)/.exec(stage);
+    return { user, uid: uid ? Number(uid[1]) : null, gid: gid ? Number(gid[1]) : null };
+  }
+
+  it('the repo as it stands satisfies the pairing rule', () => {
+    expect(crossCheck(realImageHalf(), realHostHalf())).toEqual([]);
+  });
+
+  it('FAILS for `USER nextjs` with the host half absent — the #2805 release', () => {
+    const bad = crossCheck({ user: 'nextjs', uid: 1001, gid: 1001 }, { script: null, wired: false });
+    expect(bad).toHaveLength(1);
+    expect(bad[0]).toContain(SELFHEAL_PATH);
+  });
+
+  it('FAILS for `USER nextjs` when the script ships but nothing runs it', () => {
+    const bad = crossCheck({ user: 'nextjs', uid: 1001, gid: 1001 }, { script: '#!/bin/bash\nexit 0\n', wired: false });
+    expect(bad).toHaveLength(1);
+    expect(bad[0]).toContain('ExecStartPre');
+  });
+
+  it('FAILS when the host half hard-codes a uid the image does not use', () => {
+    const bad = crossCheck(
+      { user: 'nextjs', uid: 1001, gid: 1001 },
+      { script: 'UserNS=keep-id:uid=1000,gid=1000\n', wired: true },
+    );
+    expect(bad).toEqual([
+      "the host half hard-codes uid 1000; the image's useradd says 1001",
+      "the host half hard-codes gid 1000; the image's groupadd says 1001",
+    ]);
+  });
+
+  it('PASSES for `USER nextjs` against the host half this repo actually ships', () => {
+    // The re-land gate: the day the Dockerfile flips, this must already be green.
+    expect(crossCheck({ user: 'nextjs', uid: 1001, gid: 1001 }, realHostHalf())).toEqual([]);
+  });
+
+  it('owes nothing while the image runs as root', () => {
+    expect(crossCheck({ user: 'root', uid: 1001, gid: 1001 }, { script: null, wired: false })).toEqual([]);
+  });
+
+  it('ships exactly one copy of the self-heal script, generated from the backend module', () => {
+    // Two divergent copies of the same reconcile is how the halves drift apart
+    // again: Ignition writes this one, the running app pushes the module's to
+    // boxes installed before #2808.
+    expect(realHostHalf().script).toBe(USERNS_SELFHEAL_SCRIPT);
+  });
+
+  it('keeps `UserNS=` out of the butane quadlet — it is derived, never templated', () => {
+    const quadlet =
+      butaneFiles().find((f) => f.path.endsWith('/.config/containers/systemd/servicebay.container'))?.contents
+        ?.inline ?? '';
+    expect(quadlet.split('\n').filter((l) => /^\s*UserNS\s*=/.test(l))).toEqual([]);
   });
 });
