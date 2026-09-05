@@ -32,7 +32,18 @@
  *   AUTOLOOP_VERIFY_CLASS {"path":"full","reasons":["templates/x/template.yml: …"],
  *                          "files":{"full":[…],"light":[…],"ignored":[…]}}
  *
- * Exit 0 with a verdict, exit 2 on a setup error (bad revs / not a git tree).
+ * `path` has THREE outcomes (#2829):
+ *   full   at least one file needs the `:dev` flip
+ *   light  nothing needs the flip, but something is observable on `:latest`
+ *   none   nothing box-observable changed AT ALL — every file landed in
+ *          `ignored` (playbooks/docs/scripts/tests, release-please noise, a
+ *          `package.json` change confined to `scripts`/`devDependencies`).
+ *          The orchestrator clears the verify gate on this without dispatching
+ *          Box-Verify (SKILL.md Step 1 rule 1).
+ *
+ * The verdict is on the JSON line, never in the exit code: exit 0 for ALL THREE
+ * outcomes, exit 2 on a setup error (bad revs / not a git tree). A `none` is a
+ * successful classification, not a failure, so callers must read `path`.
  * `node:` builtins only — it runs from a bare checkout, before any build, and
  * reads *two git revisions* of a template rather than the installed one, so it
  * deliberately does not import the backend's manifest parser.
@@ -40,7 +51,7 @@
 
 import { execFileSync } from 'node:child_process';
 
-export type VerifyPath = 'light' | 'full';
+export type VerifyPath = 'none' | 'light' | 'full';
 
 export interface ChangedFile {
   /** `git diff --name-status` letter: A(dded) M(odified) D(eleted) R(enamed)… */
@@ -54,8 +65,10 @@ export interface ChangedFile {
 }
 
 export interface Classification {
+  /** `full` if any file forces the flip, else `light` if anything is
+   *  box-observable at all, else `none` (everything was ignored). */
   path: VerifyPath;
-  /** one `<path>: <why>` line per file that forced FULL (empty ⇒ LIGHT) */
+  /** one `<path>: <why>` line per file that forced FULL (empty ⇒ LIGHT/NONE) */
   reasons: string[];
   files: { full: string[]; light: string[]; ignored: string[] };
 }
@@ -77,6 +90,26 @@ const NOT_BOX_OBSERVABLE: RegExp[] = [
   /(^|\/)[^/]*\.test\.tsx?$/,
   /(^|\/)[^/]*\.spec\.tsx?$/,
 ];
+
+/**
+ * Release-please's own output. A version bump is *what the release is* — it can
+ * never be the reason to verify that release. (`CHANGELOG.md` already matches
+ * the `.md$` rule above; it is named here for the reader, not for the match.)
+ */
+const RELEASE_NOISE: RegExp[] = [/^\.release-please-manifest\.json$/, /(^|\/)CHANGELOG\.md$/];
+
+/** Any workspace's `package.json`. */
+const PACKAGE_JSON = /(^|\/)package\.json$/;
+
+/**
+ * `package.json` top-level keys whose change cannot alter how the box handles a
+ * request: npm scripts and dev-only dependencies (neither is installed in the
+ * runtime image) plus release-please's `version` bump. Adding an
+ * `"autoloop:classify"` script used to classify FULL and cost a ~25 min `:dev`
+ * flip (#2829). A `dependencies` / `engines` / `workspaces` change is real
+ * runtime surface and still falls through to FULL.
+ */
+const PACKAGE_JSON_INERT_KEYS = new Set(['scripts', 'devDependencies', 'version']);
 
 /**
  * Render-only modules: the proxy/portal config comes out different, the running
@@ -181,6 +214,37 @@ function adoptNestedName(names: string[], pending: number, line: string): number
   return -1;
 }
 
+/** The top-level keys whose value differs between two JSON documents, or `null`
+ *  when either side does not parse as a JSON object (⇒ no opinion). */
+function changedTopLevelKeys(before: string, after: string): string[] | null {
+  const parse = (text: string): Record<string, unknown> | null => {
+    try {
+      const value: unknown = JSON.parse(text);
+      return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  };
+  const a = parse(before);
+  const b = parse(after);
+  if (!a || !b) return null;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...keys].filter(k => JSON.stringify(a[k]) !== JSON.stringify(b[k]));
+}
+
+/**
+ * Is this `package.json` diff confined to the inert keys? Conservative by
+ * construction: an added/deleted file, an unreadable revision or a document that
+ * does not parse all answer `false`, which sends the file down the normal
+ * "if in doubt, go FULL" path.
+ */
+export function packageJsonChangeIsInert(before: string | null | undefined, after: string | null | undefined): boolean {
+  if (before == null || after == null) return false;
+  const changedKeys = changedTopLevelKeys(before, after);
+  if (changedKeys === null) return false;
+  return changedKeys.every(k => PACKAGE_JSON_INERT_KEYS.has(k));
+}
+
 /**
  * FULL-or-LIGHT for a single `templates/**` file. Returns `null` for "no
  * opinion" (the caller treats it as LIGHT-eligible).
@@ -209,7 +273,9 @@ export function classifyTemplateFile(file: ChangedFile): string | null {
   return null;
 }
 
-/** The whole verdict for a diff. FULL wins over LIGHT; unknown paths are FULL. */
+/** The whole verdict for a diff. FULL wins over LIGHT, LIGHT over NONE; unknown
+ *  paths are FULL. NONE means every file was ignored — there is nothing on the
+ *  box to look at, so the gate clears without a Box-Verify dispatch (#2829). */
 export function classifyChanges(changes: ChangedFile[]): Classification {
   const files: Classification['files'] = { full: [], light: [], ignored: [] };
   const reasons: string[] = [];
@@ -220,7 +286,11 @@ export function classifyChanges(changes: ChangedFile[]): Classification {
   };
 
   for (const file of changes) {
-    if (matchesAny(file.path, NOT_BOX_OBSERVABLE)) {
+    if (matchesAny(file.path, NOT_BOX_OBSERVABLE) || matchesAny(file.path, RELEASE_NOISE)) {
+      record(file, null, 'ignored');
+      continue;
+    }
+    if (PACKAGE_JSON.test(file.path) && packageJsonChangeIsInert(file.before, file.after)) {
       record(file, null, 'ignored');
       continue;
     }
@@ -242,7 +312,8 @@ export function classifyChanges(changes: ChangedFile[]): Classification {
     record(file, 'not on the render-only allowlist', 'full');
   }
 
-  return { path: files.full.length > 0 ? 'full' : 'light', reasons, files };
+  const path: VerifyPath = files.full.length > 0 ? 'full' : files.light.length > 0 ? 'light' : 'none';
+  return { path, reasons, files };
 }
 
 // ---------------------------------------------------------------- git plumbing
@@ -269,8 +340,9 @@ export function collectChangedFiles(base: string, head: string, cwd = process.cw
     const path = parts[parts.length - 1];
     const file: ChangedFile = { status, path };
     // Content is only needed to tell a schema/container change from a render
-    // edit — don't pay for `git show` on anything else.
-    if (TEMPLATE_MANIFEST.test(path)) {
+    // edit, and an inert `package.json` key change from a real one — don't pay
+    // for `git show` on anything else.
+    if (TEMPLATE_MANIFEST.test(path) || PACKAGE_JSON.test(path)) {
       file.before = status.startsWith('A') ? null : showOrNull(base, parts[1], cwd);
       file.after = status.startsWith('D') ? null : showOrNull(head, path, cwd);
     }
@@ -308,7 +380,8 @@ function main(): void {
     process.exit(2);
   }
   const result = classifyChanges(changes);
-  console.log(`${range.base}..${range.head}: ${changes.length} changed file(s) → ${result.path.toUpperCase()} path`);
+  const verdict = result.path === 'none' ? 'NONE — nothing box-observable changed' : `${result.path.toUpperCase()} path`;
+  console.log(`${range.base}..${range.head}: ${changes.length} changed file(s) → ${verdict}`);
   for (const reason of result.reasons) console.log(`  FULL because ${reason}`);
   console.log(formatVerdict(result));
 }

@@ -119,6 +119,13 @@ export function isPathMandated(file: string): boolean {
 //                              the record of what is installed at what schema
 //                              version; a wrong write strands services.
 //
+// Each signature is additionally SCOPED to the paths the effect is about
+// (`EFFECT_SCOPES`): a marker is a literal string, so unscoped it fires on any
+// file that merely *mentions* it. That is #2829 — the seal of PR #2827 reported
+// `template-schema-migration @ scripts/autoloop-verify-classify.ts` (a
+// classifier that greps template YAML) and charged the batch a false ~25 min
+// `:dev` verify while nothing under `templates/` had changed at all.
+//
 // Keep both gates: the directory list still covers non-migration cases (the
 // proxy/forward-auth render, the /napi surface, the user-facing dashboards).
 // What changed is that a migration no longer *depends* on it.
@@ -173,6 +180,19 @@ const EFFECT_MARKERS: ReadonlyArray<{ kind: DurableEffectKind; re: RegExp; detai
   },
 ];
 
+/**
+ * WHERE each effect can actually happen — the path axis of the marker match.
+ * A template migration only exists under `templates/`; the secret-store and
+ * installed-manifest writes are app code that ships under `packages/`. A
+ * playbook, a doc, a script or a test that spells the marker out is *describing*
+ * the effect, not having it (#2829).
+ */
+const EFFECT_SCOPES: Record<DurableEffectKind, RegExp> = {
+  'template-schema-migration': /^templates\//,
+  'secret-store-write': /^packages\//,
+  'installed-manifest-write': /^packages\//,
+};
+
 /** Files that *describe* an effect rather than *have* one on the box: tests and
  *  fixtures, prose (a `.md` cannot migrate anything), and this file — the gate's
  *  own definition necessarily spells out every marker it looks for, and must not
@@ -202,6 +222,7 @@ export function durableStateEffects(changed: readonly ChangedFile[]): DurableSta
     }
     for (const line of addedLines ?? []) {
       for (const m of EFFECT_MARKERS) {
+        if (!EFFECT_SCOPES[m.kind].test(file)) continue; // a literal match outside the effect's own tree (#2829)
         if (m.re.test(line) && !out.some(e => e.path === file && e.kind === m.kind)) {
           out.push({ kind: m.kind, path: file, detail: m.detail });
         }
