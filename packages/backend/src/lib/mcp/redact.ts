@@ -100,8 +100,14 @@ const ASSIGNMENT_TOKEN = /(?:[^\s"']+|"[^"]*"|'[^']*')+/g;
 /** `FOO_PASSWORD` / `ACCOUNT_samba` / `clientSecret` — the union of the kube
  *  pass's convention regex and the structural word matcher `isSecretKey`
  *  already applies to `get_config` and the MCP audit log. One predicate, so a
- *  name that is secret in YAML is secret in a unit file too (#2792). */
-function isSecretEnvName(name: string): boolean {
+ *  name that is secret in YAML is secret in a unit file too (#2792).
+ *
+ *  Exported since #2833: the journal sink (`lib/log-format.ts`) asks the same
+ *  question about an `Environment=NAME=VALUE` assignment on its way to
+ *  `console.*`. A private copy of the name list per sink is exactly how this
+ *  leak class got reopened five times (#1211 → #2603 → #2616 → #2624 → #2833),
+ *  so there is one predicate and every sink imports it. */
+export function isSecretEnvName(name: string): boolean {
   return SENSITIVE_NAME.test(name) || isSecretKey(name);
 }
 

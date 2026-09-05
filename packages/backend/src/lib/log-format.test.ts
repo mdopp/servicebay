@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { renderLogArg, shouldColorize, toSingleJournalLine } from './log-format';
+import { redactEnvironmentAssignments, renderLogArg, shouldColorize, toSingleJournalLine } from './log-format';
 
 describe('shouldColorize — colour is a TTY feature (#2667)', () => {
   it('is false for a pipe: journald never renders the escapes', () => {
@@ -114,5 +114,89 @@ describe('renderLogArg — args are stringified here, not inspected by console (
   it('does not truncate a large blob — the size cap belongs at #2603 redaction', () => {
     const content = 'y'.repeat(20_000);
     expect(renderLogArg({ content })).toBe(JSON.stringify({ content }));
+  });
+});
+
+/**
+ * #2833 — the last line of defence against a secret `Environment=` assignment.
+ *
+ * Every "secret" below is the literal `PLACEHOLDER-NOT-A-REAL-SECRET` (CLAUDE.md,
+ * secret hygiene): no value from any live box belongs in a committed fixture.
+ */
+const FAKE_SECRET = 'PLACEHOLDER-NOT-A-REAL-SECRET';
+
+describe('redactEnvironmentAssignments — no Environment= secret reaches a sink (#2833)', () => {
+  it('masks a bare assignment and keeps the length, not the value', () => {
+    expect(redactEnvironmentAssignments(`Environment=SERVICEBAY_PASSWORD=${FAKE_SECRET}`)).toBe(
+      `Environment=SERVICEBAY_PASSWORD=<${FAKE_SECRET.length} chars redacted>`,
+    );
+  });
+
+  it('leaves a non-secret name alone — over-redacting the whole unit helps nobody', () => {
+    const line = 'Environment=NODE_ENV=production';
+    expect(redactEnvironmentAssignments(line)).toBe(line);
+  });
+
+  it('leaves an EMPTY value alone: masking it would claim a secret is set', () => {
+    expect(redactEnvironmentAssignments('Environment=SERVICEBAY_PASSWORD=')).toBe(
+      'Environment=SERVICEBAY_PASSWORD=',
+    );
+  });
+
+  it('handles several assignments on one directive, quoted or not', () => {
+    expect(redactEnvironmentAssignments(`Environment="SB_TOKEN=a b" TZ=Europe/Berlin`)).toBe(
+      'Environment="SB_TOKEN=<3 chars redacted>" TZ=Europe/Berlin',
+    );
+    expect(redactEnvironmentAssignments(`Environment=API_KEY="${FAKE_SECRET}" TZ=UTC`)).toBe(
+      `Environment=API_KEY="<${FAKE_SECRET.length} chars redacted>" TZ=UTC`,
+    );
+  });
+
+  it('uses the SHARED name predicate, so LLDAP_LDAP_USER_PASS is secret here too', () => {
+    expect(redactEnvironmentAssignments(`Environment=LLDAP_LDAP_USER_PASS=${FAKE_SECRET}`)).toContain(
+      'chars redacted>',
+    );
+  });
+
+  it('a value never swallows the next directive — real newline OR the literal \\n', () => {
+    const real = `Environment=SERVICEBAY_PASSWORD=${FAKE_SECRET}\nEnvironment=NODE_ENV=production`;
+    expect(redactEnvironmentAssignments(real)).toBe(
+      `Environment=SERVICEBAY_PASSWORD=<${FAKE_SECRET.length} chars redacted>\nEnvironment=NODE_ENV=production`,
+    );
+    const escaped = `Environment=SERVICEBAY_PASSWORD=${FAKE_SECRET}\\nEnvironment=NODE_ENV=production`;
+    expect(redactEnvironmentAssignments(escaped)).toBe(
+      `Environment=SERVICEBAY_PASSWORD=<${FAKE_SECRET.length} chars redacted>\\nEnvironment=NODE_ENV=production`,
+    );
+  });
+
+  it('reaches inside a JSON-escaped body — the shape the box actually leaked', () => {
+    // The agent's `Received command: exec (… Payload: {"command": …})` line:
+    // one JSON string carrying the whole quadlet, systemd quotes escaped.
+    const quadlet = [
+      '[Container]',
+      `Environment=SERVICEBAY_PASSWORD=${FAKE_SECRET}`,
+      `Environment="SB_TOKEN=${FAKE_SECRET}"`,
+    ].join('\n');
+    const line = `Received command: exec (ID: x, Payload: ${JSON.stringify({ command: `sh -c 'q' sh '${quadlet}'` })})`;
+    const out = redactEnvironmentAssignments(line);
+    expect(out).not.toContain(FAKE_SECRET);
+    expect(out.match(/<\d+ chars redacted>/g)).toHaveLength(2);
+  });
+
+  it('is a no-op on text with no Environment= directive at all', () => {
+    expect(redactEnvironmentAssignments('nothing to see')).toBe('nothing to see');
+    expect(redactEnvironmentAssignments('')).toBe('');
+  });
+});
+
+describe('toSingleJournalLine carries the #2833 mask — one funnel, both loggers', () => {
+  it('masks the multi-line CommandError body the quadlet write throws', () => {
+    // `agent/executor.ts` throws `Command failed: <the whole command>`, and the
+    // command is `sh -c '<WRITE_QUADLET_SH>' sh '<the whole quadlet file>'`.
+    const quadlet = ['[Container]', `Environment=SERVICEBAY_PASSWORD=${FAKE_SECRET}`, 'Image=x'].join('\n');
+    const out = toSingleJournalLine(`Command failed: sh -c 'q' sh '${quadlet}'\nmv: cannot move`);
+    expect(out).not.toContain(FAKE_SECRET);
+    expect(out).toContain(`Environment=SERVICEBAY_PASSWORD=<${FAKE_SECRET.length} chars redacted>`);
+    expect(out).not.toMatch(/[\r\n]/);
   });
 });

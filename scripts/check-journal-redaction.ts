@@ -31,6 +31,15 @@
  * and nothing else. This probe fails when a `content` field carries a unit body
  * verbatim instead of that marker.
  *
+ * Since #2833 it asserts a **second**, independent shape: no message body —
+ * structured or plain prose — may carry a bare
+ * `Environment=<NAME ending in PASSWORD|PASS|TOKEN|SECRET|KEY>=<value>` whose
+ * value is not a redaction marker. That was this probe's exact blind spot: the
+ * operator counted 10 such lines and 0 verbatim `content` fields in the same
+ * window, because the quadlet body travelled as a shell ARGUMENT inside a log
+ * sentence, with no `content` key anywhere to walk to. `lib/log-format.ts`
+ * masks it at the sink; this is the assertion that says so.
+ *
  * Note it keys on that **structural** signal, never on spotting a secret: the
  * read-scoped MCP `get_logs` tool already masks secret values on the way out
  * (`mcp/redact.ts`, #321), so the plaintext is not visible from here even when
@@ -53,8 +62,9 @@
  * fine), while entries written *after* it mean the leak is live. `--since`
  * scopes the read to the current run when only the live question matters.
  *
- * Exits 0 (clean), 1 (a unit body reached the journal verbatim), 2 (setup
- * error — no box address/token, or the box did not answer).
+ * Exits 0 (clean), 1 (a unit body — or a secret `Environment=` value —
+ * reached the journal verbatim), 2 (setup error — no box address/token, or the
+ * box did not answer).
  */
 
 import { mcpCall } from './autoloop-box';
@@ -70,6 +80,45 @@ const REDACTED_CONTENT = /^<\d+ chars redacted>$/;
 
 /** A systemd unit / quadlet body: a section header on a line of its own. */
 const UNIT_SECTION = /^[ \t]*\[(Unit|Service|Install|Container|Kube|Pod|Network|Volume|Image|Build)\][ \t]*$/m;
+
+/**
+ * The BARE shape (#2833) — the blind spot the structured-`content` scan above
+ * could never see.
+ *
+ * The operator measured 10 unredacted `Environment=<admin password var>=<value>`
+ * lines and **zero** redacted `content` fields in the same window: the leak was
+ * never in the `{files:{…:{content}}}` payload at all. The quadlet body reaches
+ * the journal as a shell ARGUMENT — inside the agent's `Received command: …
+ * Payload: {"command": …}` line, and inside a `Command failed: <command>`
+ * error message — so it carries no `content` key to walk to.
+ *
+ * So this pass asks the flat question of every message body, structured or not:
+ * does an `Environment=<secret-shaped NAME>=` assignment carry anything that is
+ * not a redaction marker? Not anchored to the start of a line, because the body
+ * arrives flattened, with the line breaks as the literal two chars `\n`.
+ */
+const BARE_ENV_ASSIGNMENT =
+  /Environment[ \t]*=[ \t]*\\?["']?([A-Za-z_][A-Za-z0-9_]*(?:PASSWORD|PASS|TOKEN|SECRET|KEY))=((?:(?!\\n)[^\n])*)/gi;
+
+/**
+ * The two renderings of a *masked* value that may legitimately follow, and why
+ * they have to be spelled out separately.
+ *
+ *  - `<N chars redacted>` — what `lib/log-format.ts` writes into the journal
+ *    (#2833). This is what a direct `journalctl` read shows.
+ *  - `<redacted> chars redacted>` — the SAME marker after `get_logs` has run
+ *    its own `redactLogText` over the line on the way out: that pass rewrites
+ *    `PASSWORD=<41` (it stops at the space) to `PASSWORD=<redacted>` and leaves
+ *    the rest of the marker standing. The surviving tail is precisely what
+ *    keeps this probe honest through the read tool — a genuine leak comes back
+ *    as a bare `<redacted>` with nothing after it, because the read tool had a
+ *    real value to mask. (This is also why the marker keeps a space in it: a
+ *    space-free marker would be swallowed whole and become indistinguishable
+ *    from a leak.)
+ *
+ * Anything else — a bare `<redacted>` included — is a finding.
+ */
+const ENV_VALUE_REDACTED = /^\\?["']?(?:<\d+ chars redacted>|<redacted> chars redacted>)/;
 
 /** Guard against a pathological payload while walking it — mirrors REDACT_MAX_DEPTH. */
 const WALK_MAX_DEPTH = 40;
@@ -121,12 +170,16 @@ export function reassembleMessages(journal: string): JournalMessage[] {
 }
 
 export interface Finding {
+  /** Which shape leaked: a structured `content` field (#2603) or a bare
+   *  `Environment=NAME=` assignment anywhere in the message (#2833). */
+  kind: 'content' | 'environment';
   line: number;
   /** When the leaking message was written — live leak vs. history the journal still holds. */
   ts: string | null;
   source: string | null;
   event: string | null;
-  /** Dotted key path to the offending `content` field — a file path, never content. */
+  /** `content`: dotted key path (a file path, never content). `environment`:
+   *  the variable NAME, which is not a secret — its value is. */
   keyPath: string;
   /** Length of the verbatim string. Its *value* is deliberately never reported. */
   length: number;
@@ -139,6 +192,10 @@ export interface Summary {
   contentFieldsVerbatim: number;
   /** Verbatim `content` fields that are recognisably a systemd unit body. */
   unitBodiesVerbatim: number;
+  /** Secret-shaped `Environment=NAME=` assignments carrying a redaction marker. */
+  envAssignmentsRedacted: number;
+  /** …and the ones carrying something else, i.e. the #2833 leak. */
+  envAssignmentsVerbatim: number;
   /** Timestamps of the first and last leaking message — is this live or history? */
   leakWindow: { first: string | null; last: string | null } | null;
   findings: Finding[];
@@ -179,7 +236,7 @@ function classify(msg: JournalMessage): { event: string | null; redacted: number
         } else {
           verbatim++;
           if (UNIT_SECTION.test(item)) {
-            findings.push({ line: msg.line, ts: msg.ts, source: msg.source, event, keyPath: [...path, key].join('.'), length: item.length });
+            findings.push({ kind: 'content', line: msg.line, ts: msg.ts, source: msg.source, event, keyPath: [...path, key].join('.'), length: item.length });
           }
         }
         continue;
@@ -192,6 +249,34 @@ function classify(msg: JournalMessage): { event: string | null; redacted: number
   return { event, redacted, verbatim, findings };
 }
 
+/**
+ * Scan ONE message body for the bare `Environment=<secret>=<value>` shape
+ * (#2833). Runs over every message — structured or not — because this leak
+ * class travels as prose (a shell command echoed in a log line), not as a
+ * payload field. Reports the variable NAME and the value's LENGTH only.
+ */
+export function scanEnvAssignments(msg: JournalMessage): { redacted: number; verbatim: number; findings: Finding[] } {
+  const findings: Finding[] = [];
+  let redacted = 0;
+  let verbatim = 0;
+  BARE_ENV_ASSIGNMENT.lastIndex = 0;
+  for (const m of msg.body.matchAll(BARE_ENV_ASSIGNMENT)) {
+    const [, name, rest] = m;
+    // The value proper: bounded by whitespace or a quote, as a shell/systemd
+    // token is. `rest` runs to the end of the logical line so the acceptance
+    // test above can see the marker's tail.
+    const value = /^\\?["']?([^\s"'\\]*)/.exec(rest)?.[1] ?? '';
+    if (value === '') continue; // `Environment=FOO_PASSWORD=` — nothing set, nothing leaked
+    if (ENV_VALUE_REDACTED.test(rest)) {
+      redacted++;
+      continue;
+    }
+    verbatim++;
+    findings.push({ kind: 'environment', line: msg.line, ts: msg.ts, source: msg.source, event: null, keyPath: `Environment=${name}`, length: value.length });
+  }
+  return { redacted, verbatim, findings };
+}
+
 /** Summarise a journal capture. Pure — takes the text, returns counts + shapes. */
 export function summarizeJournal(journal: string): Summary {
   const messages = reassembleMessages(journal);
@@ -201,17 +286,29 @@ export function summarizeJournal(journal: string): Summary {
     contentFieldsRedacted: 0,
     contentFieldsVerbatim: 0,
     unitBodiesVerbatim: 0,
+    envAssignmentsRedacted: 0,
+    envAssignmentsVerbatim: 0,
     leakWindow: null,
     findings: [],
   };
   for (const msg of messages) {
     const c = classify(msg);
-    if (!c) continue;
-    summary.structuredMessages++;
-    summary.contentFieldsRedacted += c.redacted;
-    summary.contentFieldsVerbatim += c.verbatim;
-    summary.unitBodiesVerbatim += c.findings.length;
-    summary.findings.push(...c.findings);
+    if (c) {
+      summary.structuredMessages++;
+      summary.contentFieldsRedacted += c.redacted;
+      summary.contentFieldsVerbatim += c.verbatim;
+      summary.unitBodiesVerbatim += c.findings.length;
+      summary.findings.push(...c.findings);
+    }
+    // The bare-`Environment=` pass runs over EVERY message, structured or not:
+    // the #2833 leak sat in a plain prose line, which `classify` returns null
+    // for. Appended AFTER the `content` findings so the older shape stays first
+    // in the list — one message can legitimately carry both (a verbatim quadlet
+    // body IS a run of `Environment=` lines).
+    const env = scanEnvAssignments(msg);
+    summary.envAssignmentsRedacted += env.redacted;
+    summary.envAssignmentsVerbatim += env.verbatim;
+    summary.findings.push(...env.findings);
   }
   const stamps = summary.findings.map(f => f.ts).filter((t): t is string => t !== null);
   if (stamps.length) summary.leakWindow = { first: stamps[0], last: stamps[stamps.length - 1] };
@@ -245,17 +342,26 @@ async function cli(): Promise<void> {
   // Cap the printed findings: the counts carry the verdict, and a red box can
   // hold hundreds of them.
   console.log(JSON.stringify({ unit, requestedLines: lines, since, ...summary, findings: summary.findings.slice(0, 20) }, null, 2));
-  if (summary.unitBodiesVerbatim > 0) {
+  if (summary.unitBodiesVerbatim > 0 || summary.envAssignmentsVerbatim > 0) {
+    const parts: string[] = [];
+    if (summary.unitBodiesVerbatim > 0) {
+      parts.push(`${summary.unitBodiesVerbatim} systemd unit bodies reached the journal verbatim where a "<N chars redacted>" marker belongs (#2603 shape)`);
+    }
+    if (summary.envAssignmentsVerbatim > 0) {
+      parts.push(`${summary.envAssignmentsVerbatim} bare "Environment=<NAME>=<value>" assignments carried an unredacted secret value (#2833 shape — the one the structured-content scan cannot see)`);
+    }
     console.error(
-      `FAIL: ${summary.unitBodiesVerbatim} systemd unit bodies reached the journal verbatim where a "<N chars redacted>" marker belongs, ` +
-        `between ${summary.leakWindow?.first} and ${summary.leakWindow?.last}. ` +
-        `This is the #2603 leak class — the box is running an image without that sink redaction, or a new unredacted sink was added. ` +
+      `FAIL: ${parts.join('; and ')}, between ${summary.leakWindow?.first} and ${summary.leakWindow?.last}. ` +
+        `The box is running an image without that sink redaction, or a new unredacted sink was added. ` +
         `Check that window against when the box last picked up an image: entries older than the fix are history, not a live leak. ` +
         `Either way the journal still holds them, and no fix undoes that — rotate them (assists/recipe-rotate-a-service-secret.md).`,
     );
     process.exit(1);
   }
-  console.log(`OK: no unit body reached the journal verbatim (${summary.contentFieldsRedacted} content fields redacted).`);
+  console.log(
+    `OK: no unit body and no Environment= secret reached the journal verbatim ` +
+      `(${summary.contentFieldsRedacted} content fields + ${summary.envAssignmentsRedacted} Environment= assignments redacted).`,
+  );
 }
 
 const invoked = process.argv[1] ?? '';

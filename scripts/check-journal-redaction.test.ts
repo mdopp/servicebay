@@ -209,3 +209,91 @@ describe('parseArgs', () => {
     });
   });
 });
+
+/**
+ * #2833 — the bare `Environment=NAME=VALUE` shape, which the structured
+ * `content` scan above is blind to by construction: the quadlet body reaches
+ * the journal as a shell ARGUMENT inside a log sentence, so there is no
+ * `content` key anywhere to walk to. The operator's measurement was exactly
+ * that asymmetry — 10 leaking lines, 0 verbatim `content` fields.
+ */
+describe('summarizeJournal — bare Environment= assignments (#2833)', () => {
+  const leakingLine = `Command failed: sh -c 'q' sh '[Container]\\nEnvironment=SERVICEBAY_PASSWORD=PLACEHOLDER-NOT-A-REAL-SECRET\\nEnvironment=NODE_ENV=production'`;
+
+  it('flags a secret assignment in a plain prose line — no structured payload needed', () => {
+    const s = summarizeJournal(entry(app('Server', leakingLine)));
+    expect(s.envAssignmentsVerbatim).toBe(1);
+    expect(s.structuredMessages).toBe(0); // the #2603 scan sees nothing here
+    expect(s.unitBodiesVerbatim).toBe(0);
+    expect(s.findings[0].kind).toBe('environment');
+    expect(s.findings[0].keyPath).toBe('Environment=SERVICEBAY_PASSWORD');
+  });
+
+  it('reports the NAME and the LENGTH, never the value', () => {
+    const printed = JSON.stringify(summarizeJournal(entry(app('Server', leakingLine))));
+    expect(printed).not.toContain('PLACEHOLDER-NOT-A-REAL-SECRET');
+    expect(printed).toContain('Environment=SERVICEBAY_PASSWORD');
+    expect(summarizeJournal(entry(app('Server', leakingLine))).findings[0].length).toBe(
+      'PLACEHOLDER-NOT-A-REAL-SECRET'.length,
+    );
+  });
+
+  it('a value never runs past the escaped line break into the next directive', () => {
+    // `Environment=NODE_ENV=production` follows a literal `\n`; if the value
+    // swallowed it the reported length would be far larger than the secret.
+    expect(summarizeJournal(entry(app('Server', leakingLine))).findings[0].length).toBeLessThan(40);
+  });
+
+  it('passes the marker lib/log-format.ts writes', () => {
+    const clean = `Command failed: sh -c 'q' sh '[Container]\\nEnvironment=SERVICEBAY_PASSWORD=<29 chars redacted>'`;
+    const s = summarizeJournal(entry(app('Server', clean)));
+    expect(s.envAssignmentsVerbatim).toBe(0);
+    expect(s.envAssignmentsRedacted).toBe(1);
+    expect(s.findings).toEqual([]);
+  });
+
+  it('passes that same marker after get_logs has masked it on the way out', () => {
+    // `redactLogText` rewrites `PASSWORD=<29` (it stops at the space) to
+    // `PASSWORD=<redacted>`, leaving the tail of the marker standing. That tail
+    // is what keeps a masked value distinguishable from a real one here.
+    const throughReadTool = `Environment=SERVICEBAY_PASSWORD=<redacted> chars redacted>`;
+    const s = summarizeJournal(entry(app('Server', throughReadTool)));
+    expect(s.envAssignmentsVerbatim).toBe(0);
+    expect(s.envAssignmentsRedacted).toBe(1);
+  });
+
+  it('FLAGS a bare <redacted>: the read tool only masks what was really there', () => {
+    const s = summarizeJournal(entry(app('Server', 'Environment=SERVICEBAY_PASSWORD=<redacted>')));
+    expect(s.envAssignmentsVerbatim).toBe(1);
+  });
+
+  it('ignores a non-secret name and an unset value', () => {
+    const s = summarizeJournal(
+      [
+        entry(app('Server', 'Environment=NODE_ENV=production')),
+        entry(app('Server', 'Environment=SERVICEBAY_PASSWORD=')),
+      ].join('\n'),
+    );
+    expect(s.envAssignmentsVerbatim).toBe(0);
+    expect(s.envAssignmentsRedacted).toBe(0);
+    expect(s.findings).toEqual([]);
+  });
+
+  it('catches ...TOKEN= and ...KEY= too, not only ...PASSWORD=', () => {
+    const s = summarizeJournal(
+      [
+        entry(app('Agent:Local', 'Environment=SB_TOKEN=PLACEHOLDER-NOT-A-REAL-SECRET')),
+        entry(app('Agent:Local', 'Environment=RESTIC_KEY=PLACEHOLDER-NOT-A-REAL-SECRET')),
+        entry(app('Agent:Local', 'Environment=CLIENT_SECRET=PLACEHOLDER-NOT-A-REAL-SECRET')),
+      ].join('\n'),
+    );
+    expect(s.envAssignmentsVerbatim).toBe(3);
+  });
+
+  it('finds it inside the agent JSON-escaped command payload — the measured shape', () => {
+    const quadlet = '[Container]\nEnvironment=SERVICEBAY_PASSWORD=PLACEHOLDER-NOT-A-REAL-SECRET\nImage=x';
+    const payload = JSON.stringify({ command: `sh -c 'q' sh '${quadlet}'` });
+    const s = summarizeJournal(entry(app('Agent:Local', `Received command: exec (ID: x, Payload: ${payload})`)));
+    expect(s.envAssignmentsVerbatim).toBe(1);
+  });
+});

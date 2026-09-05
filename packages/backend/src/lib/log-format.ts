@@ -4,8 +4,10 @@
  *
  * It lives in its own module for the same reason `logger-client.ts` exists at
  * all (#905): the client bundle must never reach `logger.ts`'s server-only
- * `require('fs')`. These helpers are pure — no Node built-ins, no imports — so
- * both loggers can share one implementation, and one test suite pins it.
+ * `require('fs')`. These helpers are pure — no Node built-ins — so both loggers
+ * can share one implementation, and one test suite pins it. Its one import
+ * (`isSecretEnvName` from `mcp/redact.ts`, #2833) keeps that property: that
+ * module has no imports and no Node built-ins either.
  *
  * Why it exists: ServiceBay runs as a systemd unit, so its stdout is a journald
  * pipe, not a terminal. It wrote ~48% of its lines with ANSI escapes nobody
@@ -33,6 +35,7 @@
  * Next.js SSR runs inside that same process, so the client logger's output
  * reaches the same journal and needs the same treatment.
  */
+import { isSecretEnvName } from './mcp/redact';
 
 /**
  * Render one `console.*` extra argument to a string, ourselves.
@@ -75,6 +78,97 @@ export function renderLogArg(value: unknown, seen: WeakSet<object> = new WeakSet
 }
 
 /**
+ * One shell-ish token inside an `Environment=` value list: a bare run, a quoted
+ * run, or any concatenation of those — `KEY="a b"` and `"KEY=a b"` are each ONE
+ * token. Same shape as `mcp/redact.ts`'s `ASSIGNMENT_TOKEN`; the *name*
+ * predicate is imported rather than copied, which is the part that goes stale.
+ */
+const ENV_ASSIGNMENT_TOKEN = /(?:\\"[^"\\]*\\"|\\'[^'\\]*\\'|"[^"]*"|'[^']*'|[^\s"']+)+/g;
+
+/**
+ * An `Environment=` directive and the rest of its logical line.
+ *
+ * Deliberately NOT anchored to the start of a line, and deliberately without a
+ * word boundary: the shape this closes is a unit body that has already been
+ * flattened into ONE string, where the directive sits mid-line behind the
+ * literal two characters `\n` (see `redactEnvironmentAssignments`). `\b` would
+ * not even fire there — the character before `E` is the `n` of `\n`. The cost
+ * is that a hypothetical `MyEnvironment=FOO_PASSWORD=x` is redacted too, which
+ * is the direction to err in (`mcp/redact.ts`: "we'd rather over-redact").
+ *
+ * The value list ends at a real newline OR at the literal `\n` that
+ * `toSingleJournalLine` and `JSON.stringify` both use for one — so a value is
+ * never allowed to swallow the next directive.
+ */
+const ENV_DIRECTIVE = /(Environment[ \t]*=[ \t]*)((?:(?!\\n)[^\n])*)/gi;
+
+/**
+ * Peel one layer of quoting off a token, keeping the delimiter so the rewritten
+ * token reads exactly as the original did. `\"…\"` is a delimiter here too: a
+ * body that reached this sink through `JSON.stringify` carries its systemd
+ * quotes escaped, and dropping that case is what let `Environment="TOK=a b"`
+ * through in the flattened form.
+ */
+function peelQuote(text: string): { quote: string; body: string } {
+  const escaped = /^\\(["'])([\s\S]*)\\\1$/.exec(text);
+  if (escaped) return { quote: `\\${escaped[1]}`, body: escaped[2] };
+  if (text.length >= 2 && (text[0] === '"' || text[0] === "'") && text.at(-1) === text[0]) {
+    return { quote: text[0], body: text.slice(1, -1) };
+  }
+  return { quote: '', body: text };
+}
+
+/** `NAME=VALUE` → `NAME=<N chars redacted>` when NAME is secret-shaped. */
+function redactEnvAssignmentToken(token: string): string {
+  const outer = peelQuote(token);
+  const m = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(outer.body);
+  if (!m) return token;
+  const [, name, rawValue] = m;
+  if (!isSecretEnvName(name)) return token;
+  const inner = peelQuote(rawValue);
+  // An empty value carries nothing to leak, and masking it would falsely
+  // suggest a secret is set.
+  if (inner.body === '') return token;
+  return `${outer.quote}${name}=${inner.quote}<${inner.body.length} chars redacted>${inner.quote}${outer.quote}`;
+}
+
+/**
+ * Last line of defence: no `Environment=<SECRET_NAME>=<value>` reaches a log
+ * sink, whatever wrote it (#2833).
+ *
+ * #2603 masked the *structured* agent payload (`{files:{…:{content}}}`), and
+ * that held. The line the operator measured on 2026-09-04/05 is a different
+ * shape entirely: the servicebay quadlet body travels as a shell ARGUMENT —
+ * `sh -c '<WRITE_QUADLET_SH>' sh '<the whole file>'` — every time
+ * `quadletUserNs.ts` / `quadletUserNsHostHook.ts` rewrite it, and the host
+ * agent logs its command payloads verbatim (`agent/v4/agent.py`'s
+ * `Received command: … Payload: {json.dumps(_redact_for_log(payload))}`, whose
+ * redactor masks the key `content` and secret-NAMED keys — `command` is
+ * neither). The backend relays that stderr line into the journal, so it lands
+ * as one JSON-escaped string with `Environment=SERVICEBAY_PASSWORD=<value>\n…`
+ * inside it. The same body rides `CommandError`'s `Command failed: <command>`
+ * message when that write fails (`agent/executor.ts`), which `server.ts` and
+ * `servicebayChannel.ts` log as a warning.
+ *
+ * Chasing that emitter alone would be the fifth per-sink patch in this class
+ * (#1211 → #2603 → #2616 → #2624). So the mask goes at the funnel every log
+ * line already passes through instead — see `toSingleJournalLine`. It is a
+ * backstop, not a licence for a new emitter to hand the sink a secret.
+ *
+ * The marker keeps #2603's `<N chars redacted>` shape on purpose: the length
+ * is the only thing worth knowing about a masked value, `<0 chars redacted>`
+ * would say "unset", and `scripts/check-journal-redaction.ts` already reads
+ * that exact shape.
+ */
+export function redactEnvironmentAssignments(text: string): string {
+  if (!text || !/Environment[ \t]*=/i.test(text)) return text;
+  return text.replace(
+    ENV_DIRECTIVE,
+    (_m, prefix: string, values: string) => prefix + values.replace(ENV_ASSIGNMENT_TOKEN, redactEnvAssignmentToken),
+  );
+}
+
+/**
  * Flatten a rendered console line so ONE log call produces exactly ONE journal
  * entry (#2667).
  *
@@ -88,9 +182,17 @@ export function renderLogArg(value: unknown, seen: WeakSet<object> = new WeakSet
  * This does NOT remove the blank line `journalctl -o cat` shows after every
  * entry: that terminator lives in MESSAGE, put there by podman's log driver,
  * and every service on the box has it. See the module header.
+ *
+ * It is ALSO where secret `Environment=` assignments are masked (#2833). Both
+ * loggers funnel every console emission through this one function, so putting
+ * `redactEnvironmentAssignments` here is what makes the guarantee independent
+ * of the emitter — a second call site is a second place to forget. It runs
+ * BEFORE the flattening so a value is still bounded by its real newline; the
+ * escaped `\n` form (a body that arrived pre-flattened, e.g. through
+ * `JSON.stringify`) is bounded by `ENV_DIRECTIVE` itself.
  */
 export function toSingleJournalLine(text: string): string {
-  return text
+  return redactEnvironmentAssignments(text)
     .replace(/\r\n?/g, '\n')
     .split('\n')
     .map(line => line.replace(/[ \t]+$/, ''))
