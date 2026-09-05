@@ -17,8 +17,9 @@
  *   - `scripts/bootstrap-service-repo.ts` — `--write` / `--check` / `--print`
  *     for a target repo, so the mechanics are a command, not prose.
  *   - `scripts/check-invariants.ts` + the test suite — assert the step still
- *     exists in the `create-service` recipe and that the pasteable copy has not
- *     drifted from this generator.
+ *     exists in the `create-service` recipe and that the recipe points at the
+ *     served `repoBootstrap.claudeMdBlock` rather than pasting a second copy of
+ *     this generator's output (#2812).
  *
  * No imports: consumed by `tsx scripts/*.ts` (no path aliases) as well as by the
  * backend.

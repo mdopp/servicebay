@@ -31,9 +31,10 @@ hard-coded hex, so a theme change is one place.
 > `sb/no-raw-ui-primitive` ESLint rules flag raw colour literals (hex / `rgb()` /
 > `hsl()` / raw Tailwind ramps like `text-blue-500`) and raw
 > `<button>`/`<table>`/`<input>` in favour of the `@/components/ui` primitives +
-> `@theme` tokens (`components/ui/` itself is exempt). See
-> `docs/ARCHITECTURE_INVARIANTS.md` § *UI-primitive and design-token reuse*
-> (#2353). Adopt the same discipline in your own service and drift stays out.
+> `@theme` tokens (`components/ui/` itself is exempt) (#2353). Those rules are
+> **repo-internal** — they live in `mdopp/servicebay`'s own eslint config and
+> cannot be switched on from another repo. Copy the *discipline*, in whatever
+> linter your service already runs, and drift stays out.
 
 ## Don't hand-copy the palette — generate it
 
@@ -46,18 +47,21 @@ For a page that can't import ServiceBay's frontend build (a standalone static UI
 served from inside its own container, say), make the values **travel**
 mechanically:
 
-- `scripts/gen-service-ui-tokens.ts` reads `packages/frontend/src/app/globals.css`
-  and writes a `tokens.css` next to the service's own stylesheet, keeping the
-  source's **names** (`--surface`, `--accent`, `--status-*`), so the service
-  stylesheet says exactly what the admin UI says. Add your target to its
-  `TARGETS` list.
-- `npm run gen:service-ui-tokens -- --check` is the drift gate, asserted by the
-  suite (`tests/backend/claude_dev_config_ui_tokens.test.ts`). A token change in
-  globals.css that isn't regenerated fails CI instead of ageing apart quietly.
+- Keep the token **names** the source uses (`--surface`, `--accent`,
+  `--status-*`) in a `tokens.css` of your own, separate from your stylesheet, so
+  the service says exactly what the admin UI says and a value swap is one file.
+- Make the copy a **generated artefact with a `--check` mode**, and run that
+  check in CI — a hand-typed table is right on the day you type it and silently
+  apart a release later. Whatever generates it, the gate is what matters.
 - The service stylesheet then holds layout only, and a scan for hex/`rgb()`
   literals in it is a cheap, honest test — write that scan too.
 
-Worked example: `templates/claude-dev/config-ui/public/{tokens.css,shell.css}`.
+> Inside `mdopp/servicebay` this is already wired: `scripts/gen-service-ui-tokens.ts`
+> reads `packages/frontend/src/app/globals.css` and `npm run gen:service-ui-tokens
+> -- --check` is the CI gate. Both are **repo-internal** — a target has to live in
+> that checkout to join the script's `TARGETS` list, so from another repo they are
+> the pattern to reimplement, not a command to run. Worked example in-repo:
+> `templates/claude-dev/config-ui/public/{tokens.css,shell.css}`.
 
 ## Per-service identity colour ≠ accent
 

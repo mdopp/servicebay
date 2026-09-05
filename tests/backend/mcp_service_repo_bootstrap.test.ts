@@ -8,8 +8,8 @@
  * What must therefore hold, and is asserted here:
  *   1. The tool serves a `repoBootstrap` block with the finished CLAUDE.md text
  *      (both flavors — the repo that failed was bootstrapped with `generic`).
- *   2. The pasteable copy in the `create-service` recipe is byte-identical to
- *      the generator, so the three copies (module / tool / recipe) can't drift.
+ *   2. The `create-service` recipe points at the served `repoBootstrap.claudeMdBlock`
+ *      and does NOT carry a second copy of it (#2812) — one source, no drift.
  *   3. The `check`/`write` mechanics really fail a repo without the pointer —
  *      including the RED path of the `check:arch` invariant.
  *   4. The MCP initialize instructions name the tool, which is the one channel
@@ -153,20 +153,20 @@ describe('get_service_standards serves the bootstrap step (#2513)', () => {
   });
 });
 
-describe('the pasteable copies cannot drift (#2513)', () => {
-  it('the create-service recipe embeds the generated block byte-for-byte', () => {
+describe('the recipe points at the block instead of copying it (#2812)', () => {
+  it('the create-service recipe carries no second copy of the generated block', () => {
     const doc = fs.readFileSync(CREATE_SERVICE, 'utf-8');
-    const start = doc.indexOf(BOOTSTRAP_MARKER_BEGIN);
-    const end = doc.indexOf(BOOTSTRAP_MARKER_END);
-    expect(start, 'create-service.md carries the pointer block').toBeGreaterThanOrEqual(0);
-    expect(doc.slice(start, end + BOOTSTRAP_MARKER_END.length)).toBe(renderStandardsPointerBlock());
+    expect(doc).not.toContain(BOOTSTRAP_MARKER_BEGIN);
+    expect(doc).not.toContain(BOOTSTRAP_MARKER_END);
+    // …and routes the reader to the field that serves those same bytes.
+    expect(doc).toContain('repoBootstrap.claudeMdBlock');
   });
 
   it('check:arch passes on the real recipe', () => {
     expect(auditServiceRepoBootstrap(fs.readFileSync(CREATE_SERVICE, 'utf-8'))).toEqual([]);
   });
 
-  it('check:arch fails when the bootstrap step is demoted or the block deleted', () => {
+  it('check:arch fails when the bootstrap step is demoted or the pointer is dropped', () => {
     const doc = fs.readFileSync(CREATE_SERVICE, 'utf-8');
 
     // Someone re-orders the recipe so "Image" is step 1 again.
@@ -176,9 +176,13 @@ describe('the pasteable copies cannot drift (#2513)', () => {
     );
     expect(auditServiceRepoBootstrap(demoted).join(' ')).toMatch(/FIRST ordered action/);
 
-    // Someone drops the pointer block.
-    const stripped = doc.replace(BOOTSTRAP_MARKER_BEGIN, 'x').replace(BOOTSTRAP_MARKER_END, 'x');
-    expect(auditServiceRepoBootstrap(stripped).join(' ')).toMatch(/no longer carries/);
+    // Someone drops the pointer at the served field.
+    const unlinked = doc.replace(/repoBootstrap\.claudeMdBlock/g, 'the block');
+    expect(auditServiceRepoBootstrap(unlinked).join(' ')).toMatch(/no longer mentions/);
+
+    // Someone pastes the generated block back in.
+    const repasted = `${doc}\n${renderStandardsPointerBlock()}\n`;
+    expect(auditServiceRepoBootstrap(repasted).join(' ')).toMatch(/embeds a copy/);
   });
 });
 

@@ -15,12 +15,16 @@ describe a state the user cannot act on.
 
 ## The principle already exists — this is how it applies to a service UI
 
-ServiceBay's own rule is **`docs/UX_PHILOSOPHY.md` §5 "User-facing language, not
-infra language"**, plus the locked decision *"Progress and capacity displays
-answer the household question"* in `docs/UX_DECISIONS.md`. Read those first —
-they carry the bad/good pairs and the reasoning, and they are the source this
-assist points at, not a parallel version of it. (Both ship inside the ServiceBay
-image under `/app/docs/`.)
+This assist carries the whole rule — read it and you have what a service repo
+needs. It is the service-facing form of ServiceBay's own §5 *"User-facing
+language, not infra language"* and the locked decision *"Progress and capacity
+displays answer the household question"*.
+
+> Those two live in `docs/UX_PHILOSOPHY.md` / `docs/UX_DECISIONS.md`, which are
+> **repo-internal**: they ship inside the image under `/app/docs/` and no MCP
+> tool serves them. Background for someone working in a `mdopp/servicebay`
+> checkout — not required reading for a remote client, and every `docs/…`
+> reference below is the same kind of citation.
 
 The short form: **the reader is a family-homelab operator, not the person who
 wrote the service.** They are deciding something household-shaped ("is this
@@ -55,9 +59,9 @@ file paths inside the container. They belong in logs and in a diagnostics panel,
 never in a user-facing state.
 
 Make it a test, not a review habit — the same way ServiceBay machine-enforces
-its token rule with `sb/no-raw-color-literal` (see
-`docs/ARCHITECTURE_INVARIANTS.md` § *UI-primitive and design-token reuse*). The
-cheap version, in the service's own suite:
+its own token rule with the `sb/no-raw-color-literal` ESLint rule (which is
+scoped to `packages/frontend/`, so it is the *shape* to copy, not a rule your
+repo can enable). The cheap version, in the service's own suite:
 
 ```
 render every page/state that has user-visible copy → assert the rendered text
