@@ -79,8 +79,10 @@ describe('reconcileContainerQuadletShadow (#2174)', () => {
         const cmds = execCommands();
 
         // Shadowing units moved into the trash bucket (recoverable, not rm).
-        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/llama\.kube '.*\.trash\/.*-llama-shadow\/'/.test(c))).toBe(true);
-        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/llama\.yml '.*\.trash\/.*-llama-shadow\/'/.test(c))).toBe(true);
+        // #2859/#2862 — `$HOME` inside double quotes (never a quoted `~`), and
+        // the destination is the systemd-trash SIBLING, not `systemd/.trash`.
+        expect(cmds.some(c => /mv -f "\$HOME\/\.config\/containers\/systemd\/llama\.kube" "\$HOME\/\.config\/containers\/systemd-trash\/.*-llama-shadow\/"/.test(c))).toBe(true);
+        expect(cmds.some(c => /mv -f "\$HOME\/\.config\/containers\/systemd\/llama\.yml" "\$HOME\/\.config\/containers\/systemd-trash\/.*-llama-shadow\/"/.test(c))).toBe(true);
 
         // daemon reloaded so `.service` re-resolves to the `.container`.
         expect(cmds.some(c => /systemctl --user daemon-reload/.test(c))).toBe(true);
@@ -248,8 +250,8 @@ describe('reconcileContainerQuadletShadow — warm state survives an unchanged r
         boxWith();
         await reconcile();
         const cmds = execCommands();
-        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/llama\.kube '.*\.trash\//.test(c))).toBe(true);
-        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/llama\.yml '.*\.trash\//.test(c))).toBe(true);
+        expect(cmds.some(c => /mv -f "\$HOME\/\.config\/containers\/systemd\/llama\.kube" "\$HOME\/\.config\/containers\/systemd-trash\//.test(c))).toBe(true);
+        expect(cmds.some(c => /mv -f "\$HOME\/\.config\/containers\/systemd\/llama\.yml" "\$HOME\/\.config\/containers\/systemd-trash\//.test(c))).toBe(true);
         expect(cmds.some(c => /systemctl --user daemon-reload/.test(c))).toBe(true);
     });
 
@@ -320,7 +322,7 @@ describe('deployKubeService — a .container service is not restarted by the sha
         );
         const cmds = execCommands();
         // Positive control: the deploy really did run through to the reconcile.
-        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/llama\.kube '.*\.trash\//.test(c))).toBe(true);
+        expect(cmds.some(c => /mv -f "\$HOME\/\.config\/containers\/systemd\/llama\.kube" "\$HOME\/\.config\/containers\/systemd-trash\//.test(c))).toBe(true);
         expect(cmds.some(c => /--no-block restart llama\.service/.test(c))).toBe(false);
         // …and the reconcile still ran and still decided not to recreate.
         expect(cmds.some(c => /podman rm -f/.test(c))).toBe(false);

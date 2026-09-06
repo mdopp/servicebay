@@ -44,6 +44,7 @@ export class ServiceManager {
     static getServiceLogs = ServiceListing.getServiceLogs;
     static getPodmanLogs = ServiceListing.getPodmanLogs;
     static listTrashedServices = ServiceListing.listTrashedServices;
+    static listQuadletBaseNames = ServiceListing.listQuadletBaseNames;
     static findHostPortCollisions = ServiceListing.findHostPortCollisions;
     static extractHostPorts = ServiceListing.extractHostPorts;
     static getServiceStatus = ServiceListing.getServiceStatus;

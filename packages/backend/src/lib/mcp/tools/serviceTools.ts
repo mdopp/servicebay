@@ -247,7 +247,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
   // --- Delete Service (soft) ---
   server.tool(
     'delete_service',
-    'Soft-delete a service: stops the unit, moves its files to the trash bucket, and removes its cross-service registrations (Authelia OIDC client, NPM proxy host, AdGuard rewrite, credentials entry, LAN-block firewall rule). Restorable via restore_trashed_service for 7 days — restore re-provisions those registrations. Then auto-purged; use purge_trashed_service to delete immediately.',
+    'Soft-delete a service: stops the unit, moves its Quadlet files (.kube/.container plus the pod spec) into the trash bucket outside the Quadlet scan path, and drops its installedTemplates record. Cross-service registrations (Authelia OIDC client, NPM proxy host, AdGuard rewrite, credentials entry, LAN-block firewall rule) are torn down only for a service whose template manifest is still available — for anything else the journal logs that they were left in place and you remove them yourself (e.g. remove_proxy_route). Restorable via restore_trashed_service for 7 days, which puts the files, the installedTemplates record and those registrations back. Then auto-purged; use purge_trashed_service to delete immediately.',
     { name: ServiceName.describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
       const nodeName = await resolveNode(node);

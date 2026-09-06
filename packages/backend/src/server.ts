@@ -62,6 +62,39 @@ import { drainSockets } from './lib/runtime/drain';
 // Fail-fast at startup so misconfigured deploys don't appear to work.
 assertAuthSecret();
 
+/**
+ * Boot reconcile for `config.installedTemplates` (#2863).
+ *
+ * A record whose service has neither a Quadlet unit on disk nor a trash entry
+ * to restore from is drift: upgrade planning, migration chains, backup gating
+ * and `autoRestoreServiceOnReinstall` all key on this map, so an orphan makes
+ * every one of them plan for a service that does not exist. It only ever
+ * REMOVES — a missing record is the install path's business. The legacy-trash
+ * sweep runs inside `listTrashedServices`, so a service soft-deleted by an
+ * older build counts as trashed (recoverable) rather than being dropped here.
+ * Never fatal: a node it cannot read is skipped, not emptied.
+ */
+async function reconcileInstalledTemplatesOnBoot(): Promise<void> {
+  try {
+    const { listNodes: lN } = await import('./lib/nodes');
+    const { ServiceManager: SM } = await import('./lib/services/ServiceManager');
+    const { reconcileInstalledTemplates } = await import('./lib/install/reconcileInstalledTemplates');
+    for (const n of await lN()) {
+      const quadletBaseNames = await SM.listQuadletBaseNames(n.Name);
+      const trashed = await SM.listTrashedServices(n.Name).catch(() => []);
+      const dropped = await reconcileInstalledTemplates({
+        quadletBaseNames,
+        trashedServices: trashed.map(t => t.service),
+      });
+      if (dropped.length > 0) {
+        logger.info('Server', `installedTemplates reconcile on ${n.Name}: dropped ${dropped.map(d => d.name).join(', ')}`);
+      }
+    }
+  } catch (err) {
+    logger.warn('Server', `installedTemplates reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 // Helper: collect request body as parsed JSON
 function collectBody(req: import('http').IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -756,6 +789,10 @@ app.prepare().then(() => {
           // independently re-checks the live ruleset either way.
           logger.warn('Server', `Host firewall reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
         }
+
+        // #2863 — drop `installedTemplates` records whose service exists nowhere
+        // any more. Same deferred window, same idempotent shape (body below).
+        await reconcileInstalledTemplatesOnBoot();
 
         // Keep `servicebay.container`'s user-namespace mapping in step with
         // the uid the image declares (#2788). Same deferred window, same

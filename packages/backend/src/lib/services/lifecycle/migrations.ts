@@ -26,7 +26,7 @@ import { deleteService } from './trash';
  * wizard surfaces them as restart-looping ghosts (because the *new* pod
  * grabs the host ports the old one wanted) and the operator has to
  * clean up by hand. The trashed predecessor files are recoverable from
- * `~/.config/containers/systemd/.trash/` for 7 days, so this is safe.
+ * `~/.config/containers/systemd-trash/` for 7 days, so this is safe.
  */
 export const STACK_MIGRATIONS: Record<string, string[]> = {
     'auth':           ['authelia', 'lldap'],

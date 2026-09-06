@@ -38,7 +38,7 @@ const MANIFEST = JSON.stringify({
     service: SERVICE,
     deletedAt: '2026-09-03T09:15:00.000Z',
     originalYamlPath: '.config/containers/systemd/radicale.yml',
-    originalKubePath: '~/.config/containers/systemd/radicale.kube',
+    originalKubePath: '.config/containers/systemd/radicale.kube',
 });
 
 /** `systemctl show` stdout for a given run-state. */
@@ -64,6 +64,12 @@ function agentWithStates(states: Partial<ServiceRunState>[]): void {
         const command = args?.command ?? '';
         if (action === 'exec' && command.includes('.manifest.json') && command.startsWith('cat ')) {
             return { code: 0, stdout: MANIFEST, stderr: '' };
+        }
+        // #2859 — restore now moves back EVERY file in the trash entry (the
+        // `.kube`, a `.container` sibling, the pod spec), so it lists the entry
+        // first instead of assuming a kube+yaml pair.
+        if (action === 'exec' && command.startsWith('ls -1 ') && command.includes(TRASH_ID)) {
+            return { code: 0, stdout: `.manifest.json\n${SERVICE}.kube\n${SERVICE}.yml\n`, stderr: '' };
         }
         if (action === 'exec' && command.includes('systemctl --user show')) {
             const state = states[Math.min(shown, states.length - 1)];
@@ -167,7 +173,13 @@ describe('restoreTrashedService — a unit that has not come up is reported as c
             if (action === 'exec' && command.includes('.manifest.json') && command.startsWith('cat ')) {
                 return { code: 0, stdout: MANIFEST, stderr: '' };
             }
-            if (action === 'exec' && command.includes('systemctl --user show')) {
+            // #2859 — restore now moves back EVERY file in the trash entry (the
+        // `.kube`, a `.container` sibling, the pod spec), so it lists the entry
+        // first instead of assuming a kube+yaml pair.
+        if (action === 'exec' && command.startsWith('ls -1 ') && command.includes(TRASH_ID)) {
+            return { code: 0, stdout: `.manifest.json\n${SERVICE}.kube\n${SERVICE}.yml\n`, stderr: '' };
+        }
+        if (action === 'exec' && command.includes('systemctl --user show')) {
                 shown++;
                 return { code: 0, stdout: showOutput(DEAD), stderr: '' };
             }

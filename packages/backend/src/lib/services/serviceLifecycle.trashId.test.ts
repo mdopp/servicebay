@@ -58,7 +58,9 @@ describe('purgeTrash — trash id validation (#2452, pre-existing check kept)', 
     const res = await ServiceLifecycle.purgeTrash('local', { trashId });
     expect(res.purged).toEqual([trashId]);
     const cmd = mockSendCommand.mock.calls.find(([action]) => action === 'exec')?.[1]?.command as string;
-    expect(cmd).toContain(`.trash/${trashId}`);
+    // #2862 — the bucket is the sibling `systemd-trash/`, not `systemd/.trash/`.
+    expect(cmd).toContain(`containers/systemd-trash/${trashId}`);
+    expect(cmd).not.toContain('systemd/.trash');
     expect(cmd).not.toContain('..');
   });
 });
