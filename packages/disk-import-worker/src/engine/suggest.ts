@@ -1,6 +1,6 @@
 // Disk-import engine — LLM suggestion paths feeding the REVIEW PLAN (issue #1695).
 //
-// Two paths that consult the local Ollama classifier (ollama.ts) on the residue
+// Two paths that consult the local LLM classifier (llm.ts) on the residue
 // the deterministic rules in classify.ts can't resolve:
 //   1. Ambiguous media   — a folder the music-vs-audiobook heuristic left
 //                          undecided → music | audiobooks | podcasts.
@@ -13,13 +13,14 @@
 //     NOTHING here mutates an ImportPlanItem, writes a target, or changes a
 //     record's category. The classifier proposes; the human-approved plan
 //     decides. There is no apply path in this module.
-//   * Ollama is consulted only when a determinstic answer is absent (the caller
-//     gates on the heuristic residue / the documents category). A pure
-//     heuristic hit never reaches the LLM.
-//   * If Ollama yields no valid suggestion (unreachable, timeout, malformed),
-//     the function returns `null` — no suggestion, no throw. Degrade gracefully.
+//   * The model server is consulted only when a determinstic answer is absent
+//     (the caller gates on the heuristic residue / the documents category). A
+//     pure heuristic hit never reaches the LLM.
+//   * If the model server yields no valid suggestion (unreachable, timeout,
+//     malformed), the function returns `null` — no suggestion, no throw.
+//     Degrade gracefully.
 
-import { requestLabel, type LabelSuggestion, type OllamaClientOptions } from './ollama';
+import { requestLabel, type LabelSuggestion, type LlmClientOptions } from './llm';
 import type { Category } from './types';
 
 /** Which residue path produced a suggestion (for the review-plan grouping). */
@@ -84,12 +85,12 @@ export interface DocumentSignature {
 
 /**
  * Suggest a media category for a folder the heuristic left ambiguous. Returns a
- * ReviewSuggestion (for the review plan) or `null` (Ollama gave no valid
- * answer). NEVER applies the category to any record — advisory only.
+ * ReviewSuggestion (for the review plan) or `null` (the model server gave no
+ * valid answer). NEVER applies the category to any record — advisory only.
  */
 export async function suggestAmbiguousMedia(
   sig: MediaFolderSignature,
-  opts?: OllamaClientOptions,
+  opts?: LlmClientOptions,
 ): Promise<ReviewSuggestion | null> {
   const result = await requestLabel(
     { prompt: buildMediaPrompt(sig), allowed: MEDIA_LABELS },
@@ -105,7 +106,7 @@ export async function suggestAmbiguousMedia(
  */
 export async function suggestDocumentTopic(
   sig: DocumentSignature,
-  opts?: OllamaClientOptions,
+  opts?: LlmClientOptions,
 ): Promise<ReviewSuggestion | null> {
   const result = await requestLabel(
     { prompt: buildDocumentPrompt(sig), allowed: DOCUMENT_TOPICS },

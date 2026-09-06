@@ -6,17 +6,17 @@ import {
   DOCUMENT_TOPICS,
   type ReviewSuggestion,
 } from './suggest';
-import * as ollama from './ollama';
+import * as llm from './llm';
 
-// The suggestion paths consult the Ollama client (ollama.ts). We mock that
+// The suggestion paths consult the local-LLM client (llm.ts). We mock that
 // client so these tests assert the WIRING + the review-plan contract, never a
 // real HTTP call.
-vi.mock('./ollama', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./ollama')>();
+vi.mock('./llm', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./llm')>();
   return { ...actual, requestLabel: vi.fn() };
 });
 
-const requestLabel = vi.mocked(ollama.requestLabel);
+const requestLabel = vi.mocked(llm.requestLabel);
 
 beforeEach(() => {
   requestLabel.mockReset();
@@ -42,7 +42,7 @@ describe('suggestAmbiguousMedia — review-plan suggestion only', () => {
     expect(out).not.toHaveProperty('action');
   });
 
-  it('Ollama unreachable (null) → null, degrades gracefully', async () => {
+  it('model server unreachable (null) → null, degrades gracefully', async () => {
     requestLabel.mockResolvedValue(null);
     const out = await suggestAmbiguousMedia({ folder: '/disk/x', sampleNames: ['a.mp3'] });
     expect(out).toBeNull();
