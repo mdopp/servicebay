@@ -29,7 +29,7 @@ describe('mergeFlows', () => {
   });
 
   it('counts a flow at most once per tick even if sampled twice', () => {
-    const flow = { srcService: 'hermes', dstService: 'ollama', dstPort: 11434 };
+    const flow = { srcService: 'hermes', dstService: 'llama', dstPort: 11435 };
     const merged = mergeFlows([], [flow, flow, flow], T0);
     expect(merged).toHaveLength(1);
     expect(merged[0].count).toBe(1);

@@ -94,7 +94,7 @@ function renderProxyConfig(
   // host takes down the ENTIRE reverse proxy on the next reload/reboot.
   // This happens whenever the `auth` template isn't part of the same
   // install batch as the gated service (so `view` has no AUTHELIA_PORT),
-  // e.g. ollama installed on its own. Always seed a concrete default so
+  // e.g. llama installed on its own. Always seed a concrete default so
   // the placeholder can never resolve to empty.
   const safeView = expanded.includes('{{AUTHELIA_PORT}}') && !view.AUTHELIA_PORT
     ? { ...view, AUTHELIA_PORT: DEFAULT_AUTHELIA_PORT }

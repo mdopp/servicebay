@@ -11,9 +11,9 @@ import type { NetworkEdge, NetworkNode } from './types';
 
 describe('parseEnvHostPort (#2175)', () => {
   it('parses http URLs, capturing scheme + port', () => {
-    expect(parseEnvHostPort('http://ollama:11434')).toEqual({
-      host: 'ollama',
-      port: 11434,
+    expect(parseEnvHostPort('http://llama:11435')).toEqual({
+      host: 'llama',
+      port: 11435,
       protocol: 'http',
     });
   });
@@ -27,9 +27,9 @@ describe('parseEnvHostPort (#2175)', () => {
   });
 
   it('parses a bare host:port as tcp', () => {
-    expect(parseEnvHostPort('localhost:11434')).toEqual({
+    expect(parseEnvHostPort('localhost:11435')).toEqual({
       host: 'localhost',
-      port: 11434,
+      port: 11435,
       protocol: 'tcp',
     });
   });
@@ -45,7 +45,7 @@ describe('parseEnvHostPort (#2175)', () => {
   });
 
   it('rejects out-of-range ports', () => {
-    expect(parseEnvHostPort('http://ollama:99999')).toBeNull();
+    expect(parseEnvHostPort('http://llama:99999')).toBeNull();
   });
 });
 
@@ -57,44 +57,44 @@ const target = (nodeId: string, aliases: string[], hostPorts: number[] = []): En
 
 describe('inferEnvEdges — host-named resolution (#2175)', () => {
   const targets = [
-    target('service-ollama.service', ['ollama']),
+    target('service-llama.service', ['llama']),
     target('service-solaris-tts.service', ['solaris-tts']),
   ];
 
   it('emits a kind:"inferred" edge labelled with the env var name', () => {
     const env: EnvSource[] = [
-      { nodeId: 'service-solaris-tts.service', name: 'OLLAMA_URL', value: 'http://ollama:11434' },
+      { nodeId: 'service-solaris-tts.service', name: 'OLLAMA_URL', value: 'http://llama:11435' },
     ];
     const edges = inferEnvEdges(env, targets, []);
     expect(edges).toHaveLength(1);
     expect(edges[0]).toMatchObject({
       source: 'service-solaris-tts.service',
-      target: 'service-ollama.service',
+      target: 'service-llama.service',
       label: 'OLLAMA_URL',
       kind: 'inferred',
       protocol: 'http',
-      port: 11434,
+      port: 11435,
     });
   });
 
   it('does not resolve an env host to the source node itself', () => {
     const env: EnvSource[] = [
-      { nodeId: 'service-ollama.service', name: 'SELF', value: 'http://ollama:11434' },
+      { nodeId: 'service-llama.service', name: 'SELF', value: 'http://llama:11435' },
     ];
     expect(inferEnvEdges(env, targets, [])).toHaveLength(0);
   });
 
   it('skips an inferred edge when a prior source already covers the pair (dedupe)', () => {
     const env: EnvSource[] = [
-      { nodeId: 'service-solaris-tts.service', name: 'OLLAMA_URL', value: 'http://ollama:11434' },
+      { nodeId: 'service-solaris-tts.service', name: 'OLLAMA_URL', value: 'http://llama:11435' },
     ];
     const existing: NetworkEdge[] = [
       {
         id: 'declared-x',
         source: 'service-solaris-tts.service',
-        target: 'service-ollama.service',
+        target: 'service-llama.service',
         protocol: 'tcp',
-        port: 11434,
+        port: 11435,
         state: 'active',
         kind: 'declared',
       },
@@ -104,8 +104,8 @@ describe('inferEnvEdges — host-named resolution (#2175)', () => {
 
   it('collapses two env vars naming the same target into one edge', () => {
     const env: EnvSource[] = [
-      { nodeId: 'service-solaris-tts.service', name: 'A', value: 'http://ollama:11434' },
-      { nodeId: 'service-solaris-tts.service', name: 'B', value: 'ollama:11434' },
+      { nodeId: 'service-solaris-tts.service', name: 'A', value: 'http://llama:11435' },
+      { nodeId: 'service-solaris-tts.service', name: 'B', value: 'llama:11435' },
     ];
     expect(inferEnvEdges(env, targets, [])).toHaveLength(1);
   });
@@ -113,13 +113,13 @@ describe('inferEnvEdges — host-named resolution (#2175)', () => {
 
 describe('inferEnvEdges — localhost port-only resolution (#2175)', () => {
   it('resolves a loopback host by unique host-port match', () => {
-    const targets = [target('service-ollama.service', ['ollama'], [11434])];
+    const targets = [target('service-llama.service', ['llama'], [11435])];
     const env: EnvSource[] = [
-      { nodeId: 'service-ha.service', name: 'OLLAMA', value: 'http://localhost:11434' },
+      { nodeId: 'service-ha.service', name: 'OLLAMA', value: 'http://localhost:11435' },
     ];
     const edges = inferEnvEdges(env, targets, []);
     expect(edges).toHaveLength(1);
-    expect(edges[0].target).toBe('service-ollama.service');
+    expect(edges[0].target).toBe('service-llama.service');
   });
 
   it('does not guess when the loopback port matches multiple targets', () => {

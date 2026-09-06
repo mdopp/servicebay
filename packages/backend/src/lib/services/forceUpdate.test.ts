@@ -57,10 +57,10 @@ spec:
 `;
 
 const CONTAINER_UNIT = `[Unit]
-Description=ollama
+Description=llama
 [Container]
-Image=docker.io/ollama/ollama:latest
-ContainerName=ollama
+Image=docker.io/llama/llama:latest
+ContainerName=llama
 [Install]
 WantedBy=default.target
 `;
@@ -110,10 +110,10 @@ describe('collectServiceImages (#2397)', () => {
   });
 
   it('reads the Image= directive of a single-container .container Quadlet', () => {
-    // The ollama shape the issue named — no pod spec exists at all, so a
+    // The llama shape the issue named — no pod spec exists at all, so a
     // pod-spec-only reader would have found nothing to pull.
     expect(collectServiceImages({ quadletKind: 'container', kubeContent: CONTAINER_UNIT }))
-      .toEqual(['docker.io/ollama/ollama:latest']);
+      .toEqual(['docker.io/llama/llama:latest']);
   });
 
   it('dedupes and survives an unparseable pod spec without throwing', () => {
@@ -160,10 +160,10 @@ describe('forceUpdateService (#2397 criterion 1: an operator can force-update a 
 
   it('accepts a .container service and pulls its Image= directive', async () => {
     mockListing.files = { quadletKind: 'container', kubeContent: CONTAINER_UNIT, yamlContent: '' };
-    mockTwin.containers = [container({ names: ['ollama'], image: 'docker.io/ollama/ollama:latest', labels: { PODMAN_SYSTEMD_UNIT: 'ollama.service' } })];
-    const result = await forceUpdateService('Local', 'ollama');
-    expect(result.images.map((i) => i.image)).toEqual(['docker.io/ollama/ollama:latest']);
-    expect(ran()).toContain('podman rm -f --ignore ollama');
+    mockTwin.containers = [container({ names: ['llama'], image: 'docker.io/llama/llama:latest', labels: { PODMAN_SYSTEMD_UNIT: 'llama.service' } })];
+    const result = await forceUpdateService('Local', 'llama');
+    expect(result.images.map((i) => i.image)).toEqual(['docker.io/llama/llama:latest']);
+    expect(ran()).toContain('podman rm -f --ignore llama');
   });
 
   it('reports an unchanged image as unchanged instead of a cheerful success', async () => {

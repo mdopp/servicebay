@@ -101,7 +101,7 @@ export interface CheckConfig {
   /**
    * A ServiceBay self-created check of a *known-local* hostNetwork service
    * (#1670) — e.g. the template-registered `home-assistant-api`
-   * (`http://127.0.0.1:8123/`) or `ollama-api` (`http://127.0.0.1:11434/`)
+   * (`http://127.0.0.1:8123/`) or `llama-api` (`http://127.0.0.1:11435/`)
    * probes a stack's post-deploy registers via the internal-token POST.
    * These legitimately target loopback, so the monitoring SSRF guard (which
    * exists to stop a *user-supplied* check from reaching internal hosts) must

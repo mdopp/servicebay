@@ -3,7 +3,8 @@
 // Maps a record → canonical category via the extension index plus deterministic
 // heuristics (music-vs-audiobook). The LLM-residue path is NOT implemented here
 // — this module only exposes the SEAM (a classifier hook interface) that a later
-// issue (#1695, Ollama classifier) plugs into. No LLM is called from here.
+// issue (#1695, the local-LLM classifier in llm.ts) plugs into. No LLM is
+// called from here.
 
 import {
   EXTENSION_INDEX,
@@ -158,7 +159,7 @@ export function buildSubtreeHints(
  * can't decide (returns `null`), an implementation of this interface — wired in
  * a LATER issue — may suggest a category. It is never called from this module;
  * `classifyRecord` accepts it only as an injected dependency so callers can
- * pass an Ollama-backed impl without this module importing one.
+ * pass an llm.ts-backed impl without this module importing one.
  */
 export interface ResidueClassifier {
   /** Return a category suggestion, or `null` to leave it unclassified. */

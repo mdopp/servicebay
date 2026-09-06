@@ -116,13 +116,13 @@ describe('nginx_config_valid probe.run', () => {
       'fetch',
       vi.fn(async () => ({
         ok: true,
-        json: async () => [{ id: 19, domain_names: ['ollama.dopp.cloud'] }],
+        json: async () => [{ id: 19, domain_names: ['llama.dopp.cloud'] }],
       } as unknown as Response)),
     );
 
     const res = (await probe.run(check(), ctx)) as { status: string; payload: { domain?: string; detail: string } };
-    expect(res.payload.domain).toBe('ollama.dopp.cloud');
-    expect(res.payload.detail).toContain('ollama.dopp.cloud');
+    expect(res.payload.domain).toBe('llama.dopp.cloud');
+    expect(res.payload.detail).toContain('llama.dopp.cloud');
   });
 
   it('info (not fail) when no NPM container is running', async () => {

@@ -30,6 +30,22 @@ authentication_backend:
 
 session:
   secret: '{{AUTHELIA_SESSION_SECRET}}'
+  # Session lifetime — a deliberate operator trade-off, not an oversight (#2830).
+  # Authelia's built-in defaults (expiration 1h, inactivity 5m) signed residents
+  # out of a household dashboard every five minutes of not touching it. The
+  # operator chose "practically never has to sign in again": at a one-month
+  # session the phone's DEVICE LOCK is the effective protection in front of
+  # Solaris — door lock and garage door included — not the Authelia login.
+  # Decided 2026-09-06; do not "correct" this back to the defaults.
+  #
+  # inactivity is 1M and NOT 0: Authelia resets any `inactivity <= 0` to its
+  # 5-minute default while validating the config
+  # (internal/configuration/validator/session.go, v4.39.x), so 0 would silently
+  # restore exactly the symptom above. Matching inactivity to expiration is what
+  # actually retires the inactivity logout.
+  expiration: '1M'
+  inactivity: '1M'
+  remember_me: '1M'
   cookies:
     - domain: '{{PUBLIC_DOMAIN}}'
       authelia_url: 'https://auth.{{PUBLIC_DOMAIN}}'

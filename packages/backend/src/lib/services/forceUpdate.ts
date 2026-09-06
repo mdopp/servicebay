@@ -103,7 +103,7 @@ function baseName(name: string): string {
  * Two artifact shapes (the same split `get_service_files` documents): a `.kube`
  * service keeps its images in the pod spec (`yamlContent`), while a
  * single-container `.container` Quadlet declares one `Image=` directive in the
- * unit body itself (`kubeContent`) and has no pod spec at all — the ollama GPU
+ * unit body itself (`kubeContent`) and has no pod spec at all — the llama GPU
  * fixup, and exactly the service the issue named as stuck.
  *
  * Pure + exported so the parsing is unit-testable without a node.

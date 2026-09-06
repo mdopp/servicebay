@@ -2,7 +2,7 @@
 title: Retrofitting NVIDIA GPU passthrough onto a box that was built without it
 whenToUse: A box is already installed and running, an NVIDIA card is in it, but podman has no GPU — the image was built without GPU support, or first-boot GPU setup gave up. Also when the CDI config is missing or `install-nvidia-cdi.timer` is still firing every minute after the work is done.
 kind: recipe
-tags: [nvidia, gpu, cdi, podman, passthrough, rpm-ostree, fedora-coreos, driver, ollama, retrofit]
+tags: [nvidia, gpu, cdi, podman, passthrough, rpm-ostree, fedora-coreos, driver, llama, llm, retrofit]
 ---
 
 # Retrofitting NVIDIA GPU passthrough on a running box
@@ -122,9 +122,18 @@ podman run --rm --device nvidia.com/gpu=all <a CUDA-capable image> nvidia-smi
 
 Seeing the card listed from *inside* a container is the proof; `nvidia-smi` on
 the host only proves the driver, not the passthrough. When installing a
-GPU-hungry template (the AI stack), set the template's GPU-passthrough variable
-so the generated pod requests the device — a box with a working CDI spec still
-runs on CPU if nothing asks for the GPU.
+GPU-hungry template, set the template's GPU-passthrough variable so the
+generated pod requests the device — a box with a working CDI spec still runs on
+CPU if nothing asks for the GPU.
+
+The reference GPU workload on this box is the solarisbay **`llama`** template:
+one llama.cpp `llama-server`, host network, port **11435**, OpenAI-compatible
+`/v1`, GGUF models under `${DATA_DIR}/llama/models`. A quick end-to-end check
+once the card is through — `curl -s http://127.0.0.1:11435/props` from the host
+(an isolated pod would use `host.containers.internal:11435` per ADR 0007, never
+a LAN IP) — tells you the server came up on the GPU rather than falling back.
+*(Until 2026-09 that reference service was the `ollama` template on 11434;
+Ollama is retired — solarisbay#1332 — so don't set a new box up against it.)*
 
 ## Footguns
 

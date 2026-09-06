@@ -49,17 +49,17 @@ describe('buildForwardAuthPatch', () => {
         expect(content).not.toContain('include conf.d/include/proxy.conf;');
     });
 
-    // #1683 — ollama's anti-DNS-rebind guard only accepts a LOCAL Host.
+    // #1683 — llama's anti-DNS-rebind guard only accepts a LOCAL Host.
     // The patch must send exactly ONE Host (the local one), REPLACING
     // proxy.conf's `Host $host` — not appending a second Host line
-    // (which makes nginx forward two Hosts and ollama 400s).
+    // (which makes nginx forward two Hosts and llama 400s).
     it('sends a SINGLE local Host to the upstream — no duplicate Host header (#1683)', () => {
-        const res = buildForwardAuthPatch(FORWARD_AUTH_CONF, '127.0.0.1:11434');
+        const res = buildForwardAuthPatch(FORWARD_AUTH_CONF, '127.0.0.1:11435');
         expect('content' in res).toBe(true);
         const content = (res as { content: string }).content;
         // Exactly one Host header, and it's the local one.
         const hostLines = content.match(/proxy_set_header\s+Host\s+\S+;/g) ?? [];
-        expect(hostLines).toEqual(['proxy_set_header Host 127.0.0.1:11434;']);
+        expect(hostLines).toEqual(['proxy_set_header Host 127.0.0.1:11435;']);
         // proxy.conf (which would re-add `Host $host`) is inlined out.
         expect(content).not.toContain('include conf.d/include/proxy.conf;');
         expect(content).not.toContain('Host $host');

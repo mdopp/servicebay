@@ -10,8 +10,9 @@
  *      solaris holds) behind nginx + Authelia on a second subdomain, with the
  *      websocket origin whitelisted and NO `PI_WEB_TOKEN` — Authelia is the gate.
  *   2. The model source is ONLY `local-qwen`, an OpenAI-compatible provider at
- *      `host.containers.internal:18080/v1` in pi's models.json. No cloud secret
- *      of any kind ships in this template.
+ *      `host.containers.internal:11435/v1` in pi's models.json — the solarisbay
+ *      `llama` template's LLAMA_PORT (#2851; 18080 had no listener). No cloud
+ *      secret of any kind ships in this template.
  *   3. `start-claude` / Remote Control are untouched; pi is additive.
  *
  * The runtime behaviour of the entrypoint (what pi-web-ui is actually launched
@@ -117,9 +118,12 @@ describe('#2803 (1): pi extends claude-dev rather than forking a second template
 // ─── 2. one model source: local-qwen, no cloud secrets ─────────────────────
 
 describe('#2803 (2): the only model source is the box\'s own local-qwen', () => {
-  it('defaults the endpoint to host.containers.internal:18080/v1 (ADR 0007)', () => {
+  it('defaults the endpoint to host.containers.internal:11435/v1 (ADR 0007)', () => {
     const def = variables().CLAUDE_DEV_PI_MODEL_BASE_URL?.default;
-    expect(def).toBe('http://host.containers.internal:18080/v1');
+    // 11435 is the solarisbay `llama` template's LLAMA_PORT. It was 18080,
+    // where nothing on the box ever listened, so every fresh install got an
+    // empty /model picker (#2851). Reverting the port re-breaks that.
+    expect(def).toBe('http://host.containers.internal:11435/v1');
     // Never the pod's own loopback and never a LAN address — an isolated pod
     // cannot reach the host's LAN IP at all under rootless podman.
     expect(def).not.toMatch(/localhost|127\.0\.0\.1|\{\{LAN_IP\}\}/);
@@ -158,7 +162,7 @@ describe('#2803 (2): the models.json seeder', () => {
     mod = await import(/* @vite-ignore */ SEEDER);
   });
 
-  const BASE = 'http://host.containers.internal:18080/v1';
+  const BASE = 'http://host.containers.internal:11435/v1';
 
   it('writes local-qwen as an OpenAI-compatible provider at the configured endpoint', () => {
     const { config } = mod.mergeLocalQwenProvider(null, { baseUrl: BASE, modelIds: ['qwen'] });

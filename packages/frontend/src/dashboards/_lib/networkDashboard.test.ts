@@ -15,7 +15,7 @@ import {
 
 // Minimal graph mirroring the map's shape:
 //   internet → router → nginx → {hermes, auth, immich}
-//   hermes also talks to ollama (a 1-hop neighbour off the public path)
+//   hermes also talks to llama (a 1-hop neighbour off the public path)
 //   abs is unrelated (router → nginx → abs)
 const node = (id: string, type = 'service'): Node =>
   ({ id, type: 'custom', position: { x: 0, y: 0 }, data: { type, label: id } });
@@ -30,7 +30,7 @@ const nodes: Node[] = [
   node('auth'),
   node('immich'),
   node('abs'),
-  node('ollama'),
+  node('llama'),
 ];
 
 const edges: Edge[] = [
@@ -40,7 +40,7 @@ const edges: Edge[] = [
   edge('nginx', 'auth'),
   edge('nginx', 'immich'),
   edge('nginx', 'abs'),
-  edge('hermes', 'ollama'),
+  edge('hermes', 'llama'),
 ];
 
 describe('edge-kind styling — inferred is visually distinct (#2175)', () => {
@@ -76,8 +76,8 @@ describe('computeEgoNodeIds', () => {
 
   it('keeps the focus node, its direct neighbours, and the internet→focus path', () => {
     const ego = computeEgoNodeIds(nodes, edges, 'hermes');
-    // focus + 1-hop neighbours (nginx, ollama) + internet→hermes path (internet, router, nginx)
-    expect(ego).toEqual(new Set(['hermes', 'nginx', 'ollama', 'internet', 'router']));
+    // focus + 1-hop neighbours (nginx, llama) + internet→hermes path (internet, router, nginx)
+    expect(ego).toEqual(new Set(['hermes', 'nginx', 'llama', 'internet', 'router']));
     // unrelated siblings are dropped — this is what makes the hub readable
     expect(ego.has('auth')).toBe(false);
     expect(ego.has('immich')).toBe(false);
@@ -87,8 +87,8 @@ describe('computeEgoNodeIds', () => {
   it('keeps every direct sibling when the hub itself is focused', () => {
     const ego = computeEgoNodeIds(nodes, edges, 'nginx');
     expect(ego).toEqual(new Set(['nginx', 'router', 'hermes', 'auth', 'immich', 'abs', 'internet']));
-    // ollama is 2 hops from nginx and off the public path → dropped
-    expect(ego.has('ollama')).toBe(false);
+    // llama is 2 hops from nginx and off the public path → dropped
+    expect(ego.has('llama')).toBe(false);
   });
 
   it('treats edges as undirected (focus reachable via reversed orientation)', () => {
@@ -106,7 +106,7 @@ describe('computeEgoNodeIds', () => {
     const ego = computeEgoNodeIds(noInternet, noInternetEdges, 'hermes');
     expect(ego.has('hermes')).toBe(true);
     expect(ego.has('nginx')).toBe(true);
-    expect(ego.has('ollama')).toBe(true);
+    expect(ego.has('llama')).toBe(true);
   });
 });
 
@@ -134,7 +134,7 @@ describe('computeEgoNodeIds — suppressed ubiquitous hub deps (#1792)', () => {
     svc('service-immich', { behindAuth: true }),
     svc('service-vault', { behindAuth: true, usesDns: true }),
     svc('service-abs', { usesDns: true }),
-    svc('service-ollama'), // no hub deps
+    svc('service-llama'), // no hub deps
   ];
 
   // Only the infrastructure spine survives suppression — no hub-spoke edges.
@@ -146,7 +146,7 @@ describe('computeEgoNodeIds — suppressed ubiquitous hub deps (#1792)', () => {
     edge('service-nginx', 'service-immich'),
     edge('service-nginx', 'service-vault'),
     edge('service-nginx', 'service-abs'),
-    edge('service-nginx', 'service-ollama'),
+    edge('service-nginx', 'service-llama'),
   ];
 
   it('focusing the auth hub pulls in every service carrying the SSO badge', () => {
@@ -156,7 +156,7 @@ describe('computeEgoNodeIds — suppressed ubiquitous hub deps (#1792)', () => {
     expect(ego.has('service-vault')).toBe(true);
     // A DNS-only / no-dep service is NOT pulled in by the auth hub.
     expect(ego.has('service-abs')).toBe(false);
-    expect(ego.has('service-ollama')).toBe(false);
+    expect(ego.has('service-llama')).toBe(false);
     expect(ego.has('service-auth')).toBe(true);
   });
 
@@ -181,7 +181,7 @@ describe('computeEgoNodeIds — suppressed ubiquitous hub deps (#1792)', () => {
   });
 
   it('a service with no suppressed hub deps gains no extra hub neighbours', () => {
-    const ego = computeEgoNodeIds(hubNodes, hubEdges, 'service-ollama');
+    const ego = computeEgoNodeIds(hubNodes, hubEdges, 'service-llama');
     expect(ego.has('service-auth')).toBe(false);
     expect(ego.has('service-adguard')).toBe(false);
   });

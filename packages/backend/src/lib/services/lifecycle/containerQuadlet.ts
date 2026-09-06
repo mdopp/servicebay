@@ -88,12 +88,12 @@ export async function decideContainerQuadletRecreate(nodeName: string, name: str
  * that `deployKubeService` writes on every deploy (#2174).
  *
  * A template's post-deploy.py can swap a service to a `.container` unit so
- * `AddDevice=nvidia.com/gpu=all` survives (ollama's CDI fixup, #1026 —
+ * `AddDevice=nvidia.com/gpu=all` survives (llama's CDI fixup, #1026 —
  * `podman kube play` silently drops `resources.limits.nvidia.com/gpu` on
  * rootless). But `deployKubeService` unconditionally (re)writes
  * `${name}.kube` + `${name}.yml` earlier in the deploy. **Both units
  * generate `${name}.service`** — and systemd's generator may pick the
- * `.kube` (kube-play, CPU) over the `.container`, so ollama silently drops
+ * `.kube` (kube-play, CPU) over the `.container`, so llama silently drops
  * to CPU with no error, and even when the `.container` does win, the old
  * CPU container keeps the container name so a plain `start`/`restart`
  * never re-creates it with the CDI device.
@@ -144,12 +144,12 @@ export async function reconcileContainerQuadletShadow(
 
         // #2618 — the force-recreate below is what makes the GPU device
         // stick, and it is also what evicts every bit of warm state the
-        // container holds (ollama's VRAM-resident models). Only pay it when
+        // container holds (llama's VRAM-resident models). Only pay it when
         // the running container isn't already the one this unit describes.
         // The check errs toward recreating: see containerQuadletState.ts.
         const decision = await decideContainerQuadletRecreate(nodeName, name);
         if (!decision.recreate) {
-            onProgress?.(`${name}: left running, NOT recreated — ${decision.reason}. Warm in-container state (e.g. ollama's VRAM-resident models) survives this deploy.`);
+            onProgress?.(`${name}: left running, NOT recreated — ${decision.reason}. Warm in-container state (e.g. llama's VRAM-resident models) survives this deploy.`);
             logger.info('ServiceManager', `${name}: .container matches the running container — skipping the force-recreate (#2618)`);
             return;
         }
@@ -159,7 +159,7 @@ export async function reconcileContainerQuadletShadow(
         // name (the old CPU container survives a restart by holding the
         // name), then start so the `.container` unit recreates it with the
         // CDI device. Candidate names come from the shadowing pod spec
-        // plus the standard Quadlet name shapes (`ollama-ollama` etc.).
+        // plus the standard Quadlet name shapes (`llama-llama` etc.).
         try {
             await agent.sendCommand('exec', { command: `systemctl --user stop ${name}.service` });
         } catch { /* may already be stopped */ }
@@ -190,7 +190,7 @@ export async function reconcileContainerQuadletShadow(
  *
  * Unlike a `.kube` Quadlet — which is a thin wrapper that
  * `deployKubeService` regenerates around a separate pod-spec `.yml` —
- * a `.container` unit IS the deploy artifact (the ollama GPU fixup,
+ * a `.container` unit IS the deploy artifact (the llama GPU fixup,
  * #1026, swaps to `.container` so `AddDevice=nvidia.com/gpu=all`
  * survives). So the read/update contract for `.container` is: the
  * caller edits the `.container` unit body itself (the `kubeContent`

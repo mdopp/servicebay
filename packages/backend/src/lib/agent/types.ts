@@ -120,7 +120,7 @@ export interface ServiceUnit {
   /**
    * True if backed by a `.kube`/`.container` Quadlet, or whose base name is in
    * config.installedTemplates (#1733 — single-container GPU Quadlets like
-   * ollama.container).
+   * llama.container).
    *
    * NOT proof ServiceBay installed it (#2395): the agent's `is_managed` only
    * inspects the unit's file extension, so a hand-rolled Quadlet the operator

@@ -27,7 +27,7 @@ verbatim) — they're just not searchable by structured fields.
 One JSON object per line, on stdout, no log framework required:
 
 ```json
-{"ts": "2026-05-16T10:24:18.512+02:00", "level": "info", "tag": "ollama-pull", "message": "model gemma3:4b ready", "args": {"trace_id": "8f12…", "bytes": 2810421824}}
+{"ts": "2026-05-16T10:24:18.512+02:00", "level": "info", "tag": "llama-model", "message": "model gemma-4-e4b ready", "args": {"trace_id": "8f12…", "bytes": 2810421824}}
 ```
 
 | Field     | Required | Notes |
@@ -58,8 +58,8 @@ line.
 A `tag` should describe **what produced the log line**, not what it's
 about. Good tags:
 
-- `ollama` — the Ollama container itself
-- `ollama-pull` — the post-deploy.py model-pull step
+- `llama` — the llama-server container itself
+- `llama-model` — the post-deploy.py GGUF-staging step
 - `nginx-proxy-manager` — the NPM container
 - `hermes:gateway:signal` — Hermes' Signal gateway sub-component
 
@@ -114,7 +114,7 @@ def jlog(level: str, tag: str, message: str, **args: object) -> None:
     }) + "\n")
     sys.stdout.flush()
 
-jlog("info", "ollama-pull", "starting model pull", model="gemma3:4b")
+jlog("info", "llama-model", "staging GGUF", model="gemma-4-e4b")
 ```
 
 No helper package. No dependency. Eight lines of Python that any

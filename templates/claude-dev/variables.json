@@ -62,8 +62,8 @@
   },
   "CLAUDE_DEV_PI_MODEL_BASE_URL": {
     "type": "text",
-    "description": "The OpenAI-compatible endpoint pi talks to — this box's own local model server (`local-qwen`). It is the only model source this template configures: no cloud provider, no API key, no OAuth. `host.containers.internal` is how an isolated pod reaches an on-box sibling (ADR 0007); `localhost` would be this pod's own loopback and a LAN IP is refused outright by rootless podman. Change the port here if your model server listens elsewhere.",
-    "default": "http://host.containers.internal:18080/v1"
+    "description": "The OpenAI-compatible endpoint pi talks to — this box's own local model server. It is the only model source this template configures: no cloud provider, no API key, no OAuth. The default points at the solarisbay `llama` template's llama-server (its `LLAMA_PORT`, 11435). That listener has to be reachable from an isolated pod, which lands with mdopp/solarisbay#1344 — until then nothing answers here and pi's model picker stays empty. `host.containers.internal` is how an isolated pod reaches an on-box sibling (ADR 0007); `localhost` would be this pod's own loopback and a LAN IP is refused outright by rootless podman. Change the port here if your model server listens elsewhere.",
+    "default": "http://host.containers.internal:11435/v1"
   },
   "CLAUDE_DEV_PI_MODEL_ID": {
     "type": "text",

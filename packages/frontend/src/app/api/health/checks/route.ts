@@ -109,7 +109,7 @@ const CheckPostBody = z.object({
 
 export const POST = withApiHandler({ body: CheckPostBody }, async ({ body, auth }) => {
   // #1670: a ServiceBay self-created check of a known-local hostNetwork
-  // service (HA `127.0.0.1:8123`, Ollama `:11434`) bypasses the monitoring
+  // service (HA `127.0.0.1:8123`, Ollama `:11435`) bypasses the monitoring
   // SSRF guard. Only the internal-token path (a stack's post-deploy, `auth.user
   // === 'internal'`) targeting a recognised loopback service earns the flag —
   // a user-supplied check (cookie session / UI) never does, so a user can't
@@ -126,7 +126,7 @@ export const POST = withApiHandler({ body: CheckPostBody }, async ({ body, auth 
   //     round-trips the row's own id; the results file is already there.
   //   - the caller is ServiceBay itself (`auth.user === 'internal'`, the same
   //     mechanism #1670 uses on this route) → a stack's post-deploy registering
-  //     its stable slug id (`home-assistant-api`, `ollama-api`, #1551), which
+  //     its stable slug id (`home-assistant-api`, `llama-api`, #1551), which
   //     init.ts's orphan-prune keys on.
   // Anything else — including a session-authenticated body picking its own id —
   // gets a fresh UUID, so an untrusted caller cannot choose a file name at all.

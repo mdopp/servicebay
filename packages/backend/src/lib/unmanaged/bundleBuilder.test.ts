@@ -4,16 +4,16 @@ import type { ServiceUnit, EnrichedContainer } from '@/lib/agent/types';
 
 function makeService(overrides: Partial<ServiceUnit> = {}): ServiceUnit {
   return {
-    name: 'ollama.service',
+    name: 'llama.service',
     active: true,
     activeState: 'active',
     subState: 'running',
     loadState: 'loaded',
     description: '',
-    path: '/var/home/core/.config/containers/systemd/ollama.container',
-    fragmentPath: '/var/home/core/.config/containers/systemd/ollama.container',
+    path: '/var/home/core/.config/containers/systemd/llama.container',
+    fragmentPath: '/var/home/core/.config/containers/systemd/llama.container',
     isManaged: false,
-    associatedContainerIds: ['c-ollama'],
+    associatedContainerIds: ['c-llama'],
     ports: [],
     ...overrides,
   };
@@ -21,13 +21,13 @@ function makeService(overrides: Partial<ServiceUnit> = {}): ServiceUnit {
 
 function makeContainer(overrides: Partial<EnrichedContainer> = {}): EnrichedContainer {
   return {
-    id: 'c-ollama',
-    names: ['ollama'],
-    image: 'docker.io/ollama/ollama:latest',
+    id: 'c-llama',
+    names: ['llama'],
+    image: 'docker.io/llama/llama:latest',
     state: 'running',
     status: 'Up',
     ports: [],
-    labels: { PODMAN_SYSTEMD_UNIT: 'ollama.service' },
+    labels: { PODMAN_SYSTEMD_UNIT: 'llama.service' },
     ...overrides,
   } as unknown as EnrichedContainer;
 }
@@ -39,12 +39,12 @@ describe('buildServiceBundlesForNode — installedTemplates managed detection (#
       services: [makeService()],
       containers: [makeContainer()],
       files: {},
-      installedTemplates: new Set(['ollama']),
+      installedTemplates: new Set(['llama']),
     });
-    // installedTemplates says ollama is a managed service -> it must not show up
+    // installedTemplates says llama is a managed service -> it must not show up
     // in the Standalone/unmanaged bundle list.
-    const ollamaBundle = bundles.find(b => b.services?.some(s => s.serviceName === 'ollama.service'));
-    expect(ollamaBundle).toBeUndefined();
+    const llamaBundle = bundles.find(b => b.services?.some(s => s.serviceName === 'llama.service'));
+    expect(llamaBundle).toBeUndefined();
   });
 
   it('DOES bundle the same unit when its base name is NOT in installedTemplates', () => {
@@ -55,8 +55,8 @@ describe('buildServiceBundlesForNode — installedTemplates managed detection (#
       files: {},
       installedTemplates: new Set(['something-else']),
     });
-    const ollamaBundle = bundles.find(b => b.services?.some(s => s.serviceName === 'ollama.service'));
-    expect(ollamaBundle).toBeDefined();
+    const llamaBundle = bundles.find(b => b.services?.some(s => s.serviceName === 'llama.service'));
+    expect(llamaBundle).toBeDefined();
   });
 
   it('still bundles an unmanaged unit when no installedTemplates set is supplied', () => {
@@ -66,8 +66,8 @@ describe('buildServiceBundlesForNode — installedTemplates managed detection (#
       containers: [makeContainer()],
       files: {},
     });
-    const ollamaBundle = bundles.find(b => b.services?.some(s => s.serviceName === 'ollama.service'));
-    expect(ollamaBundle).toBeDefined();
+    const llamaBundle = bundles.find(b => b.services?.some(s => s.serviceName === 'llama.service'));
+    expect(llamaBundle).toBeDefined();
   });
 
   it('respects the agent isManaged flag regardless of installedTemplates', () => {
@@ -78,8 +78,8 @@ describe('buildServiceBundlesForNode — installedTemplates managed detection (#
       files: {},
       installedTemplates: new Set(),
     });
-    const ollamaBundle = bundles.find(b => b.services?.some(s => s.serviceName === 'ollama.service'));
-    expect(ollamaBundle).toBeUndefined();
+    const llamaBundle = bundles.find(b => b.services?.some(s => s.serviceName === 'llama.service'));
+    expect(llamaBundle).toBeUndefined();
   });
 });
 

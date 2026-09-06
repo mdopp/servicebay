@@ -71,7 +71,7 @@ export function InstallProgressCardView({
       </div>
 
       {/* Post-deploy progress bar (#1288). A template's post-deploy step
-          (e.g. OSCAR ollama's multi-GB model pull) emits structured
+          (e.g. OSCAR llama's multi-GB model pull) emits structured
           progress on the install-log stream; we render it on the same bar
           as image pulls so the longest install phase no longer looks like
           a silent hang. Shows only while a tick is in flight. */}

@@ -56,11 +56,11 @@ const SET_PASSWORD_TIMEOUT_MS = 15_000;
  * body so the check also catches "200 with the wrong content" (a half-broken
  * proxy).
  *
- * `ollama` was added (#1685): its proxy host now carries Authelia
+ * `llama` was added (#1685): its proxy host now carries Authelia
  * forward-auth (`auth_request /authelia`) — the old "no auth, opt-in host"
  * premise (#1180) is false, and a real authorized user got a 403 this run.
  * It's only *probed* when its host actually carries forward-auth (derived
- * at runtime via `hostHasForwardAuth`), so a future un-gated ollama host
+ * at runtime via `hostHasForwardAuth`), so a future un-gated llama host
  * won't false-fail. The authed root answers `Ollama is running`.
  *
  * `hermes` was dropped (#1591): it's an external OSCAR service with no
@@ -81,8 +81,8 @@ export const USER_APP_SIGNATURES: Readonly<Record<string, string>> = {
   // is verified end-to-end instead by the dedicated Jellyfin LDAP-login check
   // below (probeJellyfinLogin) — that's what would have caught the missing
   // LDAP-Auth plugin that locked everyone out 2026-06-21.
-  // ollama is intentionally absent: it's admin-only, not a family-reachable app
-  // (the chat uses ollama over internal loopback, not this gated host). See
+  // llama is intentionally absent: it's admin-only, not a family-reachable app
+  // (the chat uses llama over internal loopback, not this gated host). See
   // FORWARD_AUTH_DERIVED_SUBDOMAINS.
 };
 
@@ -108,13 +108,13 @@ export const SUBDOMAIN_TEMPLATE: Readonly<Record<string, string>> = {
  * `installedTemplates`, like `hermes` #1591) but which ARE forward-auth
  * proxy hosts when the operator opted them in. They're probed iff their
  * proxy host carries `auth_request /authelia` (derived at runtime via
- * `hostHasForwardAuth`) — never by template presence. `ollama` (#1685) is
+ * `hostHasForwardAuth`) — never by template presence. `llama` (#1685) is
  * the first: it's installed by an external OSCAR-side stack and got a
  * forward-auth NPM host this run.
  */
-// Empty by operator decision: `ollama.dopp.cloud` is ADMIN-ONLY, not a family app.
-// The solaris chat reaches ollama over internal loopback (`OLLAMA_URL=
-// http://127.0.0.1:11434`), NOT this Authelia-gated public host — so a family user
+// Empty by operator decision: `llama.dopp.cloud` is ADMIN-ONLY, not a family app.
+// The solaris chat reaches llama over internal loopback (`OLLAMA_URL=
+// http://127.0.0.1:11435`), NOT this Authelia-gated public host — so a family user
 // never needs it and probing it as a family-reachable app was wrong (it returns 403
 // to family). Genuinely enforcing admin-only on it (an Authelia access rule) +
 // verifying via the admin-reject check is a follow-up tied to the auth template.
@@ -803,7 +803,7 @@ async function probeOidcHost(deps: SsoVerifyDeps, run: SsoRun, host: string, coo
   run.userDomains.push(classifyOidcAuthorization(`${host}.${run.publicDomain}`, clientId, probe));
 }
 
-/** The forward-auth-derived hosts (no backing template, like ollama #1685) to
+/** The forward-auth-derived hosts (no backing template, like llama #1685) to
  *  probe on this install: only those whose NPM proxy host actually carries
  *  `auth_request /authelia`. A host that exists but isn't forward-auth-gated,
  *  or doesn't exist, is silently skipped — never false-failed. */
@@ -821,7 +821,7 @@ async function forwardAuthDerivedHosts(deps: SsoVerifyDeps, run: SsoRun): Promis
  *  Templated user apps split by auth model (#1685): an OIDC-backed app
  *  (vault/photos/books) gets the real OIDC-authorization handshake check;
  *  a forward-auth app (files/sync/home/music/caldav) gets the login→cookie→
- *  access check. Forward-auth-derived hosts (ollama) are added iff their NPM
+ *  access check. Forward-auth-derived hosts (llama) are added iff their NPM
  *  host actually carries `auth_request`. */
 async function probeAllDomains(deps: SsoVerifyDeps, run: SsoRun, cookie: string): Promise<void> {
   for (const host of probeableUserSubdomains(run.installedTemplates)) {

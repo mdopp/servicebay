@@ -242,12 +242,12 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ollama
+  name: llama
 spec:
   hostNetwork: true
   containers:
-  - name: ollama
-    image: docker.io/ollama/ollama:latest
+  - name: llama
+    image: docker.io/llama/llama:latest
     resources:
       limits:
         nvidia.com/gpu: "1"
@@ -269,7 +269,7 @@ spec:
         expect(msg).toMatch(/TEMPLATE_AUTHORING\.md/);
     });
 
-    it('accepts a single-container pod that requests a GPU (the ollama shape)', () => {
+    it('accepts a single-container pod that requests a GPU (the llama shape)', () => {
         expect(validatePodManifest(SINGLE_GPU).ok).toBe(true);
     });
 

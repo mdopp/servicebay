@@ -15,7 +15,7 @@ export interface InstallMonitorState {
   logs: string[];
   /**
    * Latest structured progress emitted by the current item's post-deploy
-   * script (e.g. an OSCAR `ollama` model pull), parsed out of the log tail.
+   * script (e.g. an OSCAR `llama` model pull), parsed out of the log tail.
    * `null` when no progress line is in flight — the card renders the bar
    * only while a post-deploy phase is reporting (#1288).
    */

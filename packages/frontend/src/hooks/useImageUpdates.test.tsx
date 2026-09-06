@@ -40,12 +40,12 @@ describe('useImageUpdates', () => {
   });
 
   it('exposes pending updates from the on-mount fetch', async () => {
-    fetchMock.mockResolvedValue(respond([upd('ollama', true), upd('immich', false)]));
+    fetchMock.mockResolvedValue(respond([upd('llama', true), upd('immich', false)]));
     const { result } = await mount();
 
     expect(result.current.loaded).toBe(true);
-    expect(result.current.available.map(u => u.service)).toEqual(['ollama']);
-    expect([...result.current.availableServices]).toEqual(['ollama']);
+    expect(result.current.available.map(u => u.service)).toEqual(['llama']);
+    expect([...result.current.availableServices]).toEqual(['llama']);
   });
 
   it('verifyAfterUpdate hides the banner once a later re-poll reports the report clean (registry lag, #2106)', async () => {
@@ -53,8 +53,8 @@ describe('useImageUpdates', () => {
     // STILL reports it (registry lags the restart); only the delayed re-poll
     // sees it cleared. The banner must end empty without a reload.
     fetchMock
-      .mockResolvedValueOnce(respond([upd('ollama', true)])) // on-mount
-      .mockResolvedValueOnce(respond([upd('ollama', true)])) // immediate refresh — still stale
+      .mockResolvedValueOnce(respond([upd('llama', true)])) // on-mount
+      .mockResolvedValueOnce(respond([upd('llama', true)])) // immediate refresh — still stale
       .mockResolvedValue(respond([])); // delayed re-poll — now clean
 
     const { result } = await mount();
@@ -74,7 +74,7 @@ describe('useImageUpdates', () => {
 
   it('verifyAfterUpdate stops early once the report is clean (no spinning)', async () => {
     fetchMock
-      .mockResolvedValueOnce(respond([upd('ollama', true)])) // on-mount
+      .mockResolvedValueOnce(respond([upd('llama', true)])) // on-mount
       .mockResolvedValue(respond([])); // immediate refresh is already clean
 
     const { result } = await mount();
@@ -95,7 +95,7 @@ describe('useImageUpdates', () => {
     // The update genuinely failed/didn't propagate: every poll still reports it.
     // The banner must STAY (feedback_dont_mask_failures) — never hide on a
     // persistent report.
-    fetchMock.mockResolvedValue(respond([upd('ollama', true)]));
+    fetchMock.mockResolvedValue(respond([upd('llama', true)]));
 
     const { result } = await mount();
 
@@ -111,7 +111,7 @@ describe('useImageUpdates', () => {
 
   it('refresh leaves existing state intact on a failed fetch (never falsely clears)', async () => {
     fetchMock
-      .mockResolvedValueOnce(respond([upd('ollama', true)])) // on-mount: populate
+      .mockResolvedValueOnce(respond([upd('llama', true)])) // on-mount: populate
       .mockResolvedValueOnce(new Response('boom', { status: 500 })); // refresh fails
 
     const { result } = await mount();

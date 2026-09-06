@@ -193,7 +193,7 @@ describe('buildProxyHosts', () => {
     // crashes the whole proxy on reload. The default (9091) is seeded.
     const { hosts } = buildProxyHosts([
       v('PUBLIC_DOMAIN', 'example.com'),
-      v('OLLAMA_SUBDOMAIN', 'ollama', subdomain('public', '11434', {
+      v('OLLAMA_SUBDOMAIN', 'llama', subdomain('public', '11435', {
         proxyConfig: { advanced_config: '__authelia_forward_auth__' },
       })),
     ]);
@@ -208,7 +208,7 @@ describe('buildProxyHosts', () => {
     const { hosts } = buildProxyHosts([
       v('PUBLIC_DOMAIN', 'example.com'),
       v('AUTHELIA_PORT', '9095'),
-      v('OLLAMA_SUBDOMAIN', 'ollama', subdomain('public', '11434', {
+      v('OLLAMA_SUBDOMAIN', 'llama', subdomain('public', '11435', {
         proxyConfig: { advanced_config: '__authelia_forward_auth__' },
       })),
     ]);

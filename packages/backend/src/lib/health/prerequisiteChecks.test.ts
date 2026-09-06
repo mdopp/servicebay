@@ -111,15 +111,15 @@ describe('serviceOfCheck — template http slug binding (#1663)', () => {
   // service name; the service itself has a container check.
   const haSvc = chk({ id: 'svc-home-assistant', type: 'service', target: 'home-assistant', name: 'Service: home-assistant' });
   const haApi = chk({ id: 'home-assistant-api', type: 'http', target: 'http://ha:8123', name: 'home-assistant-api' });
-  const ollamaSvc = chk({ id: 'svc-ollama', type: 'service', target: 'ollama', name: 'Service: ollama' });
-  const ollamaApi = chk({ id: 'ollama-api', type: 'http', target: 'http://ollama:11434', name: 'ollama-api' });
+  const llamaSvc = chk({ id: 'svc-llama', type: 'service', target: 'llama', name: 'Service: llama' });
+  const llamaApi = chk({ id: 'llama-api', type: 'http', target: 'http://llama:11435', name: 'llama-api' });
   // A template probe whose id slug is the bare service name (#2535: this used
   // to be a `script` row; the type is gone, the slug-binding rule is unchanged).
-  const bareSlug = chk({ id: 'ollama', type: 'http', target: 'http://ollama:11434/', name: 'ollama' });
+  const bareSlug = chk({ id: 'llama', type: 'http', target: 'http://llama:11435/', name: 'llama' });
   const orphanApi = chk({ id: 'nonexistent-api', type: 'http', target: 'http://x', name: 'nonexistent-api' });
 
   const ctx = makePrerequisiteContext({
-    checks: [haSvc, haApi, ollamaSvc, ollamaApi, bareSlug, orphanApi],
+    checks: [haSvc, haApi, llamaSvc, llamaApi, bareSlug, orphanApi],
     serviceDeps: new Map(),
     config: undefined,
     isFailing: () => false,
@@ -129,11 +129,11 @@ describe('serviceOfCheck — template http slug binding (#1663)', () => {
     // home-assistant-api → home-assistant (not "home"); the hyphenated
     // service name must win the longest-prefix match.
     expect(serviceOfCheck(haApi, ctx)).toBe('home-assistant');
-    expect(serviceOfCheck(ollamaApi, ctx)).toBe('ollama');
+    expect(serviceOfCheck(llamaApi, ctx)).toBe('llama');
   });
 
   it('binds a bare-slug template probe to a same-named service', () => {
-    expect(serviceOfCheck(bareSlug, ctx)).toBe('ollama');
+    expect(serviceOfCheck(bareSlug, ctx)).toBe('llama');
   });
 
   it('returns null when no container-checked service owns the slug', () => {

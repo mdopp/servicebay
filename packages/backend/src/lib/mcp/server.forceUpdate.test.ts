@@ -72,8 +72,8 @@ describe('manage_service force-update (#2397)', () => {
 
   it('passes fresh: true through for the stuck-image fallback', async () => {
     const { client } = await connectClient();
-    await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'ollama', fresh: true } });
-    expect(forceUpdateService).toHaveBeenCalledWith('Local', 'ollama', { fresh: true });
+    await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'llama', fresh: true } });
+    expect(forceUpdateService).toHaveBeenCalledWith('Local', 'llama', { fresh: true });
     await client.close();
   });
 

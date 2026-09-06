@@ -46,14 +46,14 @@ describe('initializeDefaultChecks service-check reconciliation (#1506)', () => {
   beforeEach(() => { state.checks = []; state.deployed = []; });
 
   it('prunes a per-service check whose target is no longer deployed', async () => {
-    state.checks = [serviceCheck('ollama'), serviceCheck('vaultwarden')];
+    state.checks = [serviceCheck('llama'), serviceCheck('vaultwarden')];
     state.deployed = ['vaultwarden'];
 
     await initializeDefaultChecks();
 
     const targets = state.checks.filter(c => c.type === 'service').map(c => c.target);
     expect(targets).toContain('vaultwarden');
-    expect(targets).not.toContain('ollama');
+    expect(targets).not.toContain('llama');
   });
 
   it('keeps the podman.socket singleton even though it is not a deployed stack', async () => {
@@ -82,13 +82,13 @@ describe('initializeDefaultChecks template-registered check prune (#1551)', () =
   beforeEach(() => { state.checks = []; state.deployed = []; });
 
   it('prunes a template-registered http check whose owning service is not deployed', async () => {
-    state.checks = [httpCheck('ollama-api'), httpCheck('home-assistant-api')];
+    state.checks = [httpCheck('llama-api'), httpCheck('home-assistant-api')];
     state.deployed = ['home-assistant'];
 
     await initializeDefaultChecks();
 
     const ids = state.checks.map(c => c.id);
-    expect(ids).not.toContain('ollama-api');     // owner not deployed → pruned
+    expect(ids).not.toContain('llama-api');     // owner not deployed → pruned
     expect(ids).toContain('home-assistant-api'); // owner deployed → kept
   });
 
@@ -117,7 +117,7 @@ describe('initializeDefaultChecks retires a stored script check (#2535)', () => 
     name: 'Ollama model loaded',
     // `script` is no longer a CheckType — this is a row that predates the removal.
     type: 'script' as unknown as CheckConfig['type'],
-    target: 'const r = await fetch("http://127.0.0.1:11434/api/tags"); if (!r.ok) throw new Error("down")',
+    target: 'const r = await fetch("http://127.0.0.1:11435/api/tags"); if (!r.ok) throw new Error("down")',
     interval: 60,
     enabled: true,
     created_at: '2026-01-01T00:00:00.000Z',

@@ -876,7 +876,7 @@ interface ProxyConfig {
   strictUpstreamHost?: boolean;
   /**
    * #1683 — Set to true for upstreams that enforce an anti-DNS-rebind
-   * Host check and only accept a *local* Host (ollama: `127.0.0.1:11434`,
+   * Host check and only accept a *local* Host (llama: `127.0.0.1:11435`,
    * `localhost`, or its `OLLAMA_HOST`). Like `strictUpstreamHost` the
    * patcher inlines NPM's proxy.conf and sends a SINGLE Host header
    * (replacing proxy.conf's `Host $host` — never appending a second

@@ -106,7 +106,7 @@ describe('isServiceReady', () => {
 
 describe('waitForDependencies', () => {
   it('returns immediately when the item declares no dependencies', async () => {
-    await waitForDependencies('job1', { name: 'ollama', dependencies: [] }, 'Local');
+    await waitForDependencies('job1', { name: 'llama', dependencies: [] }, 'Local');
     // No twin read, no health bootstrap when there is nothing to gate on.
     expect(bootstrapMock).not.toHaveBeenCalled();
   });

@@ -5,8 +5,8 @@
  * pi reads custom providers from `<agent dir>/models.json` (default
  * `~/.pi/agent/models.json`). The operator decision on #2803 is that this
  * template configures EXACTLY ONE model source — the box's own
- * OpenAI-compatible llama-server, reached at
- * `http://host.containers.internal:18080/v1` per ADR 0007 (never a LAN IP,
+ * OpenAI-compatible llama-server (the solarisbay `llama` template), reached at
+ * `http://host.containers.internal:11435/v1` per ADR 0007 (never a LAN IP,
  * never `localhost`: since claude-dev moved into its own netns that is the
  * pod's own loopback). No cloud provider, no `ANTHROPIC_API_KEY`, no
  * `OPENROUTER_API_KEY`, no pi OAuth — those may come later as optional
@@ -162,7 +162,9 @@ async function main() {
     console.error(
       `claude-dev: WARNING — ${baseUrl} listed no models and CLAUDE_DEV_PI_MODEL_ID is unset, ` +
       "so pi's /model picker will be empty. Start the model server and restart this container, " +
-      'or set CLAUDE_DEV_PI_MODEL_ID to the id it serves.',
+      'or set CLAUDE_DEV_PI_MODEL_ID to the id it serves. The model server this box ships is ' +
+      "the solarisbay `llama` template (its LLAMA_PORT, 11435); point " +
+      'CLAUDE_DEV_PI_MODEL_BASE_URL at whatever host/port yours listens on.',
     );
   }
   if (preserved.length > 0) {

@@ -5,7 +5,7 @@
  * on an older, already-loaded config.
  *
  * This is the early-warning half of the #1677 defense: a single
- * malformed proxy-host config (e.g. ollama's empty Authelia port
+ * malformed proxy-host config (e.g. llama's empty Authelia port
  * `proxy_pass http://127.0.0.1:/api/authz/...` → `nginx: [emerg]
  * invalid port`) is tolerated by the *running* config but CRASHES the
  * entire proxy on the next reload/reboot. `nginx -t` validates the

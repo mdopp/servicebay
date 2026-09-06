@@ -223,7 +223,7 @@ let nvidiaCdiCache: boolean | null = null;
  * Returns true when install-nvidia.sh stage 3 dropped its CDI-ready
  * marker file in ServiceBay's data dir (`/app/data/.has-nvidia-cdi`).
  * Used to flip OLLAMA_GPU_PASSTHROUGH's wizard default to "yes" on
- * hosts where the GPU is set up, so ollama runs on GPU without the
+ * hosts where the GPU is set up, so llama runs on GPU without the
  * operator having to find the toggle.
  */
 async function hostHasNvidiaCdi(): Promise<boolean> {
@@ -549,7 +549,7 @@ export async function assembleManifest(
     // baked config.json). Pre-fill from there so the operator isn't
     // re-typing a value the system already knows (#1252). Otherwise the
     // wizard surfaced PUBLIC_DOMAIN as a blank "Other" field, which is
-    // exactly the value templates like OSCAR's ollama/hermes need for
+    // exactly the value templates like OSCAR's llama/hermes need for
     // their subdomain FQDNs.
     if (name === 'PUBLIC_DOMAIN' && !value && config.reverseProxy?.publicDomain) {
       value = config.reverseProxy.publicDomain;
@@ -562,7 +562,7 @@ export async function assembleManifest(
     // Default OLLAMA_GPU_PASSTHROUGH to "yes" on hosts where the FCoS
     // install layered the NVIDIA driver + CDI (install-nvidia.sh stage 3
     // drops `.has-nvidia-cdi` into ServiceBay's data dir). Without this
-    // the wizard's prefilled default stays empty - ollama renders without
+    // the wizard's prefilled default stays empty - llama renders without
     // `resources.limits.nvidia.com/gpu: "1"` and runs on CPU even though
     // a working GPU is right there. Observed during the 2026-05-25 test:
     // gemma3:4b took ~8 s for a one-line response.
