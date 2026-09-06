@@ -1,6 +1,16 @@
 /**
  * `dangling_proxy` — what KIND of dangling a route actually is (#2611).
  *
+ * #2860 added a fourth: the forward `host:port` has no LISTENER at all,
+ * even though a service entry of that name still exists on the node. A
+ * removed service that leaves a `.container` quadlet behind keeps its
+ * declared PublishPort in the twin, so the twin-only check rated
+ * `ollama.dopp.cloud` → `127.0.0.1:11434` healthy with ollama long gone.
+ * That verdict is `no-listener`, and it is kept separate from
+ * `target-gone` on purpose: the row has to say WHICH check failed —
+ * "no listener on 127.0.0.1:11434" is a different repair from "no
+ * service named ollama".
+ *
  * "The forward target isn't served" collapsed three different situations
  * into one finding with one offered fix, "Delete route":
  *
@@ -55,6 +65,13 @@ export interface DanglingRoute {
   domain?: string;
   targetHost?: string;
   targetPort: number;
+  /**
+   * Does anything actually have `targetHost:targetPort` open right now
+   * (#2860)? From the run's single `ss -ltn` snapshot — see
+   * `lib/diagnose/listenSnapshot.ts`. `undefined` means the snapshot
+   * could not answer, and is never read as "closed".
+   */
+  listening?: boolean;
 }
 
 /**
@@ -70,6 +87,7 @@ export type DanglingRouteVerdict =
   | { kind: 'port-moved'; service: string; to: number; forwardHost?: string }
   | { kind: 'port-ambiguous'; service: string; candidates: number[] }
   | { kind: 'service-silent'; service: string }
+  | { kind: 'no-listener'; service?: string }
   | { kind: 'target-gone'; service?: string };
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -106,6 +124,33 @@ function servableTcpPorts(service: RouteTargetService): PublishedPort[] {
  * reaches a published port is not this module's business.
  */
 export function classifyDanglingRoute(
+  route: DanglingRoute,
+  owners: RouteOwner[],
+  services: RouteTargetService[],
+): DanglingRouteVerdict {
+  const verdict = classifyFromServices(route, owners, services);
+  // #2860 — the entry claims to publish this very port and nothing is
+  // listening on it: the service record is stale, not merely stopped.
+  // Deliberately narrow. `target-gone` keeps its own reason ("no service
+  // named X" is sharper, and it is what the operator acts on); a live
+  // service on another port stays a repoint; and a service that
+  // publishes NO port is #2611's `service-silent` — stopped, not
+  // orphaned, and deleting its domain is still the wrong fix.
+  if (route.listening === false && verdict.kind === 'service-silent' && declaresPort(services, verdict.service, route.targetPort)) {
+    return { kind: 'no-listener', service: verdict.service };
+  }
+  return verdict;
+}
+
+/** Does this service's record claim to publish `port` over TCP? */
+function declaresPort(services: RouteTargetService[], name: string, port: number): boolean {
+  const target = services.find(s => s.name === name);
+  return !!target && servableTcpPorts(target).some(p => p.hostPort === port);
+}
+
+/** The twin-only half of the classification: what the recorded owner and
+ *  its published ports say about this route. */
+function classifyFromServices(
   route: DanglingRoute,
   owners: RouteOwner[],
   services: RouteTargetService[],
@@ -171,6 +216,10 @@ export function describeRouteVerdict(route: DanglingRoute, verdict: DanglingRout
       return `${target} — ${verdict.service} is running but publishes ${verdict.candidates.join(', ')}; none of them is ${route.targetPort}, and no single one is the obvious replacement.`;
     case 'service-silent':
       return `${target} — ${verdict.service} still exists but publishes no port right now, so nothing can answer here.`;
+    case 'no-listener':
+      return verdict.service
+        ? `${target} — no listener on ${route.targetHost ?? '?'}:${route.targetPort}. A service entry called ${verdict.service} is still on the node, but nothing has the port open.`
+        : `${target} — no listener on ${route.targetHost ?? '?'}:${route.targetPort}. Nothing has the port open.`;
     case 'target-gone':
       return verdict.service
         ? `${target} — no service called ${verdict.service} on this node any more.`
@@ -190,6 +239,7 @@ export function actionIdsForVerdict(verdict: DanglingRouteVerdict): string[] {
     case 'port-ambiguous':
       return [];
     case 'service-silent':
+    case 'no-listener':
     case 'target-gone':
       return ['delete_route'];
   }
@@ -215,6 +265,8 @@ export interface RouteStateTally {
   moved: number;
   ambiguous: number;
   silent: number;
+  /** Forward port open by nobody, service entry notwithstanding (#2860). */
+  noListener: number;
   gone: number;
   /** Recorded routes NPM never created (the `proxy_route_missing` half). */
   missing: number;
@@ -231,6 +283,7 @@ export function tallyRouteStates(
     moved: count('port-moved'),
     ambiguous: count('port-ambiguous'),
     silent: count('service-silent'),
+    noListener: count('no-listener'),
     gone: count('target-gone'),
     missing,
   };
@@ -249,6 +302,9 @@ export function formatRouteStateDetail(tally: RouteStateTally): string {
   }
   if (tally.silent > 0) {
     parts.push(`${tally.silent} of ${tally.total} point at a service that publishes nothing right now`);
+  }
+  if (tally.noListener > 0) {
+    parts.push(`${tally.noListener} of ${tally.total} forward to a port nothing is listening on`);
   }
   if (tally.gone > 0) {
     parts.push(`${tally.gone} of ${tally.total} point at a service that is gone`);
@@ -271,7 +327,10 @@ export function formatRouteStateHint(tally: RouteStateTally): string | undefined
   if (tally.ambiguous > 0) {
     lines.push('Rows with no button: the service is running but publishes several ports, so there is no safe automatic choice — set the right one on the service page.');
   }
-  if (tally.silent > 0 || tally.gone > 0) {
+  if (tally.noListener > 0) {
+    lines.push('Rows reading "no listener": the port the route forwards to is closed, even though a service entry of that name is still on disk — usually a removed service whose quadlet file survived. Check the service before deleting the domain.');
+  }
+  if (tally.silent > 0 || tally.gone > 0 || tally.noListener > 0) {
     lines.push('"Delete route" removes an NPM host whose service is gone or silent — permanent, and the domain has to be re-created afterwards.');
   }
   if (tally.missing > 0) {

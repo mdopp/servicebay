@@ -29,6 +29,7 @@ import { getNodeTwin } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
 import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
 import { deleteProxyHost, findProxyHostByDomain, updateProxyHost } from '@/lib/npm/proxyHosts';
+import { fetchListenSnapshot, hasListener } from '@/lib/diagnose/listenSnapshot';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 import {
   classifyDanglingRoute,
@@ -77,7 +78,17 @@ async function currentVerdictFor(
     .filter((s): s is { name: string; ports?: RouteTargetService['ports'] } => typeof s.name === 'string')
     .map(s => ({ name: s.name, ports: s.ports }));
   if (services.length === 0) return null;
-  return classifyDanglingRoute({ domain, targetHost: currentHost, targetPort: currentPort }, owners, services);
+  // #2860 — the row may have been rated dangling because nothing is
+  // listening on the forward target, not because the service vanished.
+  // Re-take that reading here (one bounded `ss -ltn`) or the re-derive
+  // downgrades the verdict to `service-silent` and refuses the very
+  // deletion the row offered.
+  const listening = hasListener(await fetchListenSnapshot(node), currentHost, currentPort);
+  return classifyDanglingRoute(
+    { domain, targetHost: currentHost, targetPort: currentPort, listening },
+    owners,
+    services,
+  );
 }
 
 /** Resolve NPM admin URL + token, or the reason we couldn't. Shared by
@@ -132,7 +143,10 @@ async function deleteRoute({
   // port costs the operator the subdomain and its certificate binding to
   // fix a wrong number.
   const verdict = await currentVerdictFor(node, itemId, host.forward_port, host.forward_host);
-  if (verdict && verdict.kind !== 'target-gone') {
+  // `no-listener` joins `target-gone` as a deletable state (#2860): the
+  // forward port is closed *right now*, re-checked a moment ago, so the
+  // route serves nothing whatever the on-disk service entry claims.
+  if (verdict && verdict.kind !== 'target-gone' && verdict.kind !== 'no-listener') {
     return { ok: false, message: refusalForLiveService(itemId, verdict), refresh: true };
   }
   return performProxyHostDelete(adminUrl, token, host.id, itemId);
@@ -147,6 +161,7 @@ function refusalForLiveService(domain: string, verdict: DanglingRouteVerdict): s
       return `Not deleted: ${verdict.service} is running and publishes ${verdict.candidates.join(', ')} — the route points at none of them, but the service is alive. Set the right port on the service page rather than giving up ${domain}.`;
     case 'service-silent':
       return `Not deleted: ${verdict.service} still exists, it just publishes no port right now. Fix the service — deleting ${domain} would cost you the domain as well.`;
+    case 'no-listener':
     case 'target-gone':
       return `Not deleted: the state of ${domain} changed since the check ran.`;
   }
@@ -208,6 +223,8 @@ function refusalForRepoint(domain: string, verdict: DanglingRouteVerdict): strin
       return `Not repointed: ${verdict.service} publishes ${verdict.candidates.join(', ')} and none of them is the obvious replacement. Pick one on the service page — guessing would send ${domain} to the wrong process.`;
     case 'service-silent':
       return `Not repointed: ${verdict.service} publishes no port right now, so there is nothing to point ${domain} at. Start the service first.`;
+    case 'no-listener':
+      return `Not repointed: nothing is listening where ${domain} forwards, so there is no working port to move it to — this is a "Delete route" case.`;
     case 'target-gone':
       return `Not repointed: ${domain} has no live service behind it any more — this is now a "Delete route" case.`;
     case 'port-moved':
@@ -291,7 +308,7 @@ registerProbeAction(
     id: 'delete_route',
     label: 'Delete route',
     description:
-      'Removes this proxy host from Nginx Proxy Manager. Offered only where the service behind the domain is gone or publishes nothing, so the route is dead config. It is permanent: the domain stops resolving to anything here and its certificate binding goes with it, so getting it back means re-creating the route and re-issuing the certificate. If the service turns out to be alive when you click, the deletion is refused.',
+      'Removes this proxy host from Nginx Proxy Manager. Offered only where the service behind the domain is gone, publishes nothing, or has nothing listening on the port the route forwards to, so the route is dead config. It is permanent: the domain stops resolving to anything here and its certificate binding goes with it, so getting it back means re-creating the route and re-issuing the certificate. If the service turns out to be alive when you click, the deletion is refused.',
     destructive: true,
   },
   deleteRoute,

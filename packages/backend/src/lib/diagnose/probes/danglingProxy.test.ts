@@ -5,6 +5,9 @@ const state = {
   config: {} as any,
   services: [] as any[],
   twin: null as any,
+  /** stdout of the run's `ss -ltn` snapshot (#2860). Empty = unreadable,
+   *  which is the pre-#2860 behaviour: the listener check says nothing. */
+  listenStdout: '',
 };
 
 vi.mock('@/lib/config', () => ({
@@ -17,6 +20,17 @@ vi.mock('@/lib/services/ServiceManager', () => ({
 
 vi.mock('@/lib/store/repository', () => ({
   getNodeTwin: vi.fn(() => state.twin),
+}));
+
+// #2860 — the delete handler re-takes the listener snapshot before it
+// acts. Without this mock every re-derive would sit on a real agent
+// connect attempt.
+vi.mock('@/lib/agent/manager', () => ({
+  agentManager: {
+    ensureAgent: vi.fn(() => Promise.resolve({
+      sendCommand: vi.fn(() => Promise.resolve({ code: 0, stdout: state.listenStdout })),
+    })),
+  },
 }));
 
 const mockFetch = vi.fn();
@@ -33,6 +47,7 @@ beforeEach(() => {
   // Default: the twin has no service list, so the #2611 re-derive can't
   // establish a verdict and the pre-existing behaviour is unchanged.
   state.twin = null;
+  state.listenStdout = '';
   mockFetch.mockReset();
 });
 
@@ -166,6 +181,66 @@ describe('dangling_proxy.delete_route', () => {
     expect(result.message).toMatch(/publishes 8701/);
     expect(result.message).toMatch(/Repoint route/);
     // Nothing was sent beyond the token + list reads.
+    expect(mockFetch.mock.calls).toHaveLength(2);
+  });
+
+  // #2860 — the ollama.dopp.cloud shape: the service record survives the
+  // delete and still declares 11434, but nothing has the port open. The
+  // row offers "Delete route", so the handler has to go through with it.
+  it('deletes a route whose forward port has no listener, even though the service entry is still there', async () => {
+    state.config = {
+      reverseProxy: {
+        npm: { email: 'a@b.c', password: 'pw' },
+        hosts: [{ domain: 'ollama.dopp.cloud', service: 'ollama', forwardPort: 11434, created: true }],
+      },
+    };
+    state.twin = {
+      services: [{
+        name: 'ollama',
+        ports: [{ hostPort: 11434, containerPort: 11434, protocol: 'tcp', hostIp: '127.0.0.1' }],
+      }],
+    };
+    // Everything else on the box is listening — 11434 is not.
+    state.listenStdout = '0.0.0.0:22\n127.0.0.1:3000\n[::]:8096\n';
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ token: 'tok' }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([
+          { id: 12, domain_names: ['ollama.dopp.cloud'], forward_host: '127.0.0.1', forward_port: 11434 },
+        ]),
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('') });
+    const result = await dispatchProbeAction({
+      probeId: 'dangling_proxy',
+      actionId: 'delete_route',
+      itemId: 'ollama.dopp.cloud',
+      node: 'Local',
+    });
+    expect(result.ok).toBe(true);
+    expect(mockFetch.mock.calls[2][1].method).toBe('DELETE');
+  });
+
+  it('still refuses that delete once something answers on the forward port again', async () => {
+    state.config = {
+      reverseProxy: {
+        npm: { email: 'a@b.c', password: 'pw' },
+        hosts: [{ domain: 'ollama.dopp.cloud', service: 'ollama', forwardPort: 11434, created: true }],
+      },
+    };
+    state.twin = { services: [{ name: 'ollama', ports: [] }] };
+    state.listenStdout = '127.0.0.1:11434\n';
+    mockNpmHandshake([
+      { id: 12, domain_names: ['ollama.dopp.cloud'], forward_host: '127.0.0.1', forward_port: 11434 },
+    ]);
+    const result = await dispatchProbeAction({
+      probeId: 'dangling_proxy',
+      actionId: 'delete_route',
+      itemId: 'ollama.dopp.cloud',
+      node: 'Local',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/Not deleted/);
     expect(mockFetch.mock.calls).toHaveLength(2);
   });
 

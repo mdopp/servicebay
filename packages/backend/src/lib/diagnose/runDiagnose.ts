@@ -36,6 +36,11 @@ import {
   type RouteOwner,
   type RouteTargetService,
 } from '@/lib/diagnose/probes/danglingRouteState';
+import {
+  LISTEN_SNAPSHOT_COMMAND,
+  parseListenSnapshot,
+  hasListener,
+} from '@/lib/diagnose/listenSnapshot';
 import { checkNginxOnlineFailed } from '@/lib/diagnose/probes/nginxOnlineFailed';
 import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
 import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailure';
@@ -452,7 +457,13 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     exec('podman info --format "{{.Host.Arch}} {{.Host.OS}} {{.Version.Version}}"', 4000),
     exec('podman pod ps --format "{{.Name}}|{{.Status}}|{{.NumberOfContainers}}"', 5000),
     exec('systemctl --user --failed --no-legend --no-pager 2>&1', 5000),
-    exec('ss -ltn 2>/dev/null | tail -n +2 | awk \'{print $4}\' | awk -F: \'{print $NF}\' | sort -nu', 4000),
+    // One `ss -ltn` snapshot for the whole run (#2860): the ports probe
+    // below reads the port set out of it, and `dangling_proxy` asks it
+    // whether each route's forward target has a listener at all. Keeping
+    // the bind address (rather than awk-ing the port out on the box) is
+    // what lets the route check tell "open on 127.0.0.1" from "open only
+    // on a LAN address".
+    exec(LISTEN_SNAPSHOT_COMMAND, 4000),
     exec('ls -la /dev/serial/by-id/ 2>/dev/null | grep -v "^total" | awk \'{print $NF}\' | grep -v "^$"', 3000),
     // Fill level of every filesystem whose exhaustion the operator can act on
     // (#2527): the data array and the writable system state. `/boot` is
@@ -597,7 +608,8 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
   //    any actual surprise ports with their owning container/service
   //    so the operator doesn't have to cross-reference manually.
   //    See `lib/diagnose/portsProbe.ts` for the source-walk helpers.
-  const ports = trimOutput(listen.stdout, 50).split('\n').filter(Boolean);
+  const listenSnapshot = parseListenSnapshot(listen.stdout);
+  const ports = listenSnapshot.ports.map(String);
   const portsTwin = getNodeTwin(nodeName);
   const portSource = buildPortSourceMap(
     portsTwin?.services as TwinPortService[] | undefined,
@@ -892,15 +904,27 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
       const targetHost = server.variable_fields?.targetHost;
       const targetPort = server.variable_fields?.targetPort ?? server._targetPort;
       if (!targetPort || !isLocalHost(targetHost)) continue;
+      // #2860 — two independent reasons a route is dead, and the twin
+      // only knows one of them. A removed service can leave a
+      // `.container` quadlet behind, which keeps its declared
+      // PublishPort in `knownPorts` while nothing has the port open;
+      // that is exactly how `ollama.dopp.cloud` → 127.0.0.1:11434 stayed
+      // green. `listening === undefined` means the snapshot could not
+      // answer — unjudged, never dangling.
+      const listening = hasListener(listenSnapshot, targetHost, targetPort);
       // NPM has internal admin routes (e.g. 127.0.0.1:3000 → its own admin
-      // backend, 127.0.0.1:80 → its own UI). Don't flag those.
+      // backend, 127.0.0.1:80 → its own UI), so loopback targets used to be
+      // skipped outright — which also hid every managed loopback route,
+      // ollama.dopp.cloud among them. The listener snapshot separates the
+      // two: a loopback target with someone behind it (or one the snapshot
+      // can't speak to) is still not our business; a closed one is.
       const isProxySelfRef = ['127.0.0.1', 'localhost', '::1'].includes(targetHost ?? '');
-      if (isProxySelfRef) continue;
-      if (!knownPorts.has(targetPort)) {
+      if (isProxySelfRef && listening !== false) continue;
+      if (!knownPorts.has(targetPort) || listening === false) {
         // The action handlers map domain → NPM proxy_host id at dispatch
         // time (the digital twin doesn't track NPM's primary key — see
         // danglingProxy.ts header comment), so the item id is the domain.
-        const route = { domain: server.server_name?.[0], targetHost, targetPort };
+        const route = { domain: server.server_name?.[0], targetHost, targetPort, listening };
         const verdict = classifyDanglingRoute(route, routeOwners, targetServices);
         verdicts.push(verdict);
         const item = buildRouteItem(route, verdict);
