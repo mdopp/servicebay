@@ -6,7 +6,7 @@ describe('resolveAlreadyInstalled', () => {
     // The hermes → home-assistant case: HA is deployed on the node but not in
     // this install batch. It must still satisfy the dependency.
     const set = resolveAlreadyInstalled(
-      [{ name: 'hermes' }, { name: 'ollama' }],
+      [{ name: 'hermes' }, { name: 'llama' }],
       ['home-assistant', 'nginx', 'auth'],
     );
     expect(set.has('home-assistant')).toBe(true);
@@ -151,11 +151,11 @@ describe('topoSortByDependencies', () => {
   // self-heal.
   describe('tier-implicit edges (#796)', () => {
     it('puts all infrastructure items before any feature item', () => {
-      // Reproduces the bug timeline: ollama+hermes (feature) appear
+      // Reproduces the bug timeline: llama+hermes (feature) appear
       // first in the input, but should run AFTER nginx/auth/adguard
       // (infrastructure) regardless.
       const result = topoSortByDependencies([
-        { name: 'ollama', dependencies: [], tier: 'feature' },
+        { name: 'llama', dependencies: [], tier: 'feature' },
         { name: 'hermes', dependencies: [], tier: 'feature' },
         { name: 'nginx', dependencies: [], tier: 'infrastructure' },
         { name: 'auth', dependencies: [], tier: 'infrastructure' },
@@ -171,7 +171,7 @@ describe('topoSortByDependencies', () => {
         order.indexOf('adguard'),
       );
       const firstFeature = Math.min(
-        order.indexOf('ollama'),
+        order.indexOf('llama'),
         order.indexOf('hermes'),
         order.indexOf('vaultwarden'),
       );

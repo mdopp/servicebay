@@ -25,7 +25,7 @@ interface BundleBuildInput {
    * Base names (the `installedTemplates` keys) of services ServiceBay
    * installed on this node — the authority on what is actually managed.
    * A unit in this set is managed even when it isn't backed by a
-   * `.kube`/pod (#1733: the single-container `.container` ollama GPU fixup
+   * `.kube`/pod (#1733: the single-container `.container` llama GPU fixup
    * from #1026 has no pod manifest); a Quadlet-backed unit that is NOT in
    * this set (nor a `<template>-<suffix>` sidecar of one) is hand-rolled and
    * IS surfaced as unmanaged (#2395). Omit the set (or pass an empty one) to
@@ -497,7 +497,7 @@ export const buildServiceBundlesForNode = ({ nodeName, services = [], containers
   //
   // Order matters:
   //  1. base name in installedTemplates -> managed even with no Quadlet flag
-  //     (#1733: a single-container .container Quadlet like the ollama GPU
+  //     (#1733: a single-container .container Quadlet like the llama GPU
   //     fixup has no pod, and older agents don't flag it at all).
   //  2. not Quadlet-backed and not an installed template -> unmanaged.
   //  3. Quadlet-backed but no matching template -> managed only if it looks

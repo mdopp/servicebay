@@ -4,7 +4,7 @@
  * reconcile has to force-recreate the container, or may leave it alone (#2618).
  *
  * Why this is not a file diff. `reconcileContainerQuadletShadow` used to
- * force-recreate on *every* deploy of a `.container` service. For ollama that
+ * force-recreate on *every* deploy of a `.container` service. For llama that
  * silently evicted the VRAM-resident models on each install — the whole point
  * of `OLLAMA_KEEP_ALIVE`/`OLLAMA_MAX_LOADED_MODELS` — and the reload costs
  * minutes of a user staring at nothing. But the opposite error is worse: skip a
@@ -27,7 +27,7 @@
  * is immune to the churn a re-render produces, *by construction*, because the
  * generator — not this code — does the normalising: it drops comments and blank
  * lines entirely, and it emits `--env` flags sorted. (Box-observed on the real
- * ollama unit: the file lists `OLLAMA_HOST`, `…CONTEXT_LENGTH`, `…KEEP_ALIVE`,
+ * llama unit: the file lists `OLLAMA_HOST`, `…CONTEXT_LENGTH`, `…KEEP_ALIVE`,
  * `…MAX_LOADED_MODELS`, `…FLASH_ATTENTION`, while the generated ExecStart
  * carries them alphabetically.) A file rewritten with identical content, or
  * with only comment/whitespace/ordering churn, therefore yields byte-identical

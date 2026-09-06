@@ -20,21 +20,21 @@ import {
     type RunningContainerState,
 } from './containerQuadletState';
 
-/** The real box's ollama unit (abridged, comments kept on purpose). */
+/** The real box's llama unit (abridged, comments kept on purpose). */
 const OLLAMA_UNIT = `[Unit]
 Description=Ollama (Local LLM Server, GPU passthrough #1026 fixup)
 
 [Container]
-Image=docker.io/ollama/ollama:latest
-ContainerName=ollama
+Image=docker.io/llama/llama:latest
+ContainerName=llama
 Network=host
-Environment=OLLAMA_HOST=127.0.0.1:11434
+Environment=OLLAMA_HOST=127.0.0.1:11435
 # Keep a model loaded after its last request (#268).
 Environment=OLLAMA_KEEP_ALIVE=24h
 Environment=OLLAMA_MAX_LOADED_MODELS=2
 # CDI device — podman kube play silently drops this (#1026).
 AddDevice=nvidia.com/gpu=all
-Volume=/mnt/data/stacks/ollama:/root/.ollama:Z
+Volume=/mnt/data/stacks/llama:/root/.llama:Z
 
 [Install]
 WantedBy=default.target
@@ -42,11 +42,11 @@ WantedBy=default.target
 
 /** The generated ExecStart for that unit — note the env flags come out sorted. */
 const OLLAMA_ARGV = [
-    '/usr/bin/podman', 'run', '--name', 'ollama', '--replace', '--rm', '--cgroups=split',
+    '/usr/bin/podman', 'run', '--name', 'llama', '--replace', '--rm', '--cgroups=split',
     '--network', 'host', '--sdnotify=conmon', '-d', '--device', 'nvidia.com/gpu=all',
-    '-v', '/mnt/data/stacks/ollama:/root/.ollama:Z',
-    '--env', 'OLLAMA_HOST=127.0.0.1:11434', '--env', 'OLLAMA_KEEP_ALIVE=24h',
-    '--env', 'OLLAMA_MAX_LOADED_MODELS=2', 'docker.io/ollama/ollama:latest',
+    '-v', '/mnt/data/stacks/llama:/root/.llama:Z',
+    '--env', 'OLLAMA_HOST=127.0.0.1:11435', '--env', 'OLLAMA_KEEP_ALIVE=24h',
+    '--env', 'OLLAMA_MAX_LOADED_MODELS=2', 'docker.io/llama/llama:latest',
 ];
 
 const showExecStart = (argv: string[]) =>
@@ -72,7 +72,7 @@ const decide = (
 
 describe('readUnitDirective / containerNameForQuadlet', () => {
     it('reads a directive past comments and blank lines', () => {
-        expect(readUnitDirective(OLLAMA_UNIT, 'Image')).toBe('docker.io/ollama/ollama:latest');
+        expect(readUnitDirective(OLLAMA_UNIT, 'Image')).toBe('docker.io/llama/llama:latest');
         expect(readUnitDirective(OLLAMA_UNIT, 'AddDevice')).toBe('nvidia.com/gpu=all');
         expect(readUnitDirective(OLLAMA_UNIT, 'Nope')).toBeNull();
     });
@@ -82,14 +82,14 @@ describe('readUnitDirective / containerNameForQuadlet', () => {
     });
 
     it('falls back to quadlet\'s default container name when ContainerName= is absent', () => {
-        expect(containerNameForQuadlet('ollama', OLLAMA_UNIT)).toBe('ollama');
+        expect(containerNameForQuadlet('llama', OLLAMA_UNIT)).toBe('llama');
         expect(containerNameForQuadlet('whisper', '[Container]\nImage=x\n')).toBe('systemd-whisper');
     });
 
     it('rejects names that must not be interpolated into a shell command', () => {
-        expect(isSafeShellName('ollama')).toBe(true);
-        expect(isSafeShellName('docker.io/ollama/ollama:latest')).toBe(true);
-        expect(isSafeShellName('ollama; rm -rf /')).toBe(false);
+        expect(isSafeShellName('llama')).toBe(true);
+        expect(isSafeShellName('docker.io/llama/llama:latest')).toBe(true);
+        expect(isSafeShellName('llama; rm -rf /')).toBe(false);
         expect(isSafeShellName('$(id)')).toBe(false);
         expect(isSafeShellName('')).toBe(false);
         expect(isSafeShellName(null)).toBe(false);
@@ -146,12 +146,12 @@ describe('decideContainerRecreate — the unchanged direction (the #2618 fix)', 
         // would inspect the wrong container and recreate needlessly. (The
         // end-to-end proof that such a rewrite causes no restart is in
         // serviceLifecycle.containerShadow.test.ts.)
-        const churned = `[Container]\n\n# a comment that moved\nContainerName=ollama\n`
+        const churned = `[Container]\n\n# a comment that moved\nContainerName=llama\n`
             + `Environment=OLLAMA_MAX_LOADED_MODELS=2\n`
-            + `   Environment=OLLAMA_HOST=127.0.0.1:11434\n`
-            + `# CDI\nAddDevice=nvidia.com/gpu=all\nImage=docker.io/ollama/ollama:latest\n`;
+            + `   Environment=OLLAMA_HOST=127.0.0.1:11435\n`
+            + `# CDI\nAddDevice=nvidia.com/gpu=all\nImage=docker.io/llama/llama:latest\n`;
         expect(readUnitDirective(churned, 'Image')).toBe(readUnitDirective(OLLAMA_UNIT, 'Image'));
-        expect(containerNameForQuadlet('ollama', churned)).toBe(containerNameForQuadlet('ollama', OLLAMA_UNIT));
+        expect(containerNameForQuadlet('llama', churned)).toBe(containerNameForQuadlet('llama', OLLAMA_UNIT));
     });
 });
 
@@ -169,7 +169,7 @@ describe('decideContainerRecreate — the changed direction (must still bite)', 
     });
 
     it('recreates when the container came from `podman kube play` (the #2174 case)', () => {
-        const kubePlay = ['/usr/bin/podman', 'kube', 'play', '--replace', '/home/core/.config/containers/systemd/ollama.yml'];
+        const kubePlay = ['/usr/bin/podman', 'kube', 'play', '--replace', '/home/core/.config/containers/systemd/llama.yml'];
         expect(decide({ running: { ...RUNNING, createCommand: kubePlay } })).toMatchObject({ recreate: true });
     });
 

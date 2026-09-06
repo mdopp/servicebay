@@ -225,7 +225,7 @@ export function inferEnvEdges(
 
   const out: NetworkEdge[] = [];
   // Guard against two env vars on the same service naming the same target
-  // (e.g. WHISPER_URL + STT_URL both → ollama) drawing duplicate edges.
+  // (e.g. WHISPER_URL + STT_URL both → llama) drawing duplicate edges.
   const emitted = new Set<string>();
 
   for (const src of envSources) {

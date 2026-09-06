@@ -539,7 +539,7 @@ async function prepareHost(input: ProxyHostRequest, ctx: BatchContext): Promise<
     // NPM regenerate the .conf.
     const wantsForwardAuth = /auth_request\s+\/authelia|__authelia_forward_auth__/.test(host.proxyConfig?.advanced_config ?? '');
     const wantsStrictHost = !!host.proxyConfig?.strictUpstreamHost;
-    // #1683 — ollama's anti-DNS-rebind guard only accepts a LOCAL Host;
+    // #1683 — llama's anti-DNS-rebind guard only accepts a LOCAL Host;
     // the patcher replaces (not appends) the Host with this loopback value.
     const wantsLocalHost = !!host.proxyConfig?.localUpstreamHost;
     const upstreamHostHeader = wantsLocalHost

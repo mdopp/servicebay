@@ -13,7 +13,7 @@
  * `*.<domain> → <lanIp>` wildcard makes EVERY `*.<domain>` resolve locally,
  * so `dns.resolve4` (OS resolver) always returns an answer. We must query a
  * PUBLIC resolver explicitly to learn whether the record exists on the
- * internet — exactly what certbot sees. (`ollama.dopp.cloud` had no public
+ * internet — exactly what certbot sees. (`llama.dopp.cloud` had no public
  * A record while every other host did; the wildcard hid it — see #1680.)
  *
  * So: before requesting an HTTP-01 cert, check the public A record and, if

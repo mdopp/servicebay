@@ -52,17 +52,17 @@ describe('describePull', () => {
     const t = new PullTracker();
     t.update({ id: 'a', status: 'Already exists' });
     t.update({ id: 'b', status: 'Downloading', current: 25, total: 100 });
-    expect(describePull('ollama', t.summary(), fmt)).toBe('Pulling ollama: 25% (25B / 100B) · 1 layer already cached');
+    expect(describePull('llama', t.summary(), fmt)).toBe('Pulling llama: 25% (25B / 100B) · 1 layer already cached');
   });
 
   it('shows a preparing heartbeat before any byte sizes arrive', () => {
     const t = new PullTracker();
     t.update({ id: 'a', status: 'Already exists' });
     t.update({ id: 'b', status: 'Pulling fs layer' });
-    expect(describePull('ollama', t.summary(), fmt)).toBe('Pulling ollama: preparing 2 layers · 1 layer already cached…');
+    expect(describePull('llama', t.summary(), fmt)).toBe('Pulling llama: preparing 2 layers · 1 layer already cached…');
   });
 
   it('returns null before any layer is seen', () => {
-    expect(describePull('ollama', new PullTracker().summary(), fmt)).toBeNull();
+    expect(describePull('llama', new PullTracker().summary(), fmt)).toBeNull();
   });
 });

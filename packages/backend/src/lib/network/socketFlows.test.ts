@@ -32,7 +32,7 @@ describe('parseSsRows', () => {
   const SAMPLE = [
     'LISTEN 0 4096 *:9091 *:* users:(("authelia",pid=1234,fd=8))',
     'ESTAB  0 0 192.168.178.100:54321 192.168.178.100:9091 users:(("media-abs",pid=2345,fd=12))',
-    'ESTAB  0 0 [::1]:40100 [::1]:11434 users:(("ollama",pid=3456,fd=5))',
+    'ESTAB  0 0 [::1]:40100 [::1]:11435 users:(("llama",pid=3456,fd=5))',
     'garbage line that should be skipped',
   ].join('\n');
 
@@ -45,7 +45,7 @@ describe('parseSsRows', () => {
     const estab = parseSsRows(SAMPLE).filter(r => r.state === 'ESTAB');
     expect(estab).toHaveLength(2);
     expect(estab[0]).toMatchObject({ peerAddr: '192.168.178.100', peerPort: 9091, pids: [2345] });
-    expect(estab[1]).toMatchObject({ peerPort: 11434, pids: [3456] });
+    expect(estab[1]).toMatchObject({ peerPort: 11435, pids: [3456] });
   });
 
   it('skips unparseable lines', () => {
@@ -70,29 +70,29 @@ describe('parseCgroupMap', () => {
 describe('resolveFlows', () => {
   function sockets(): HostSockets {
     return {
-      // authelia (container A) listens on 9091; ollama (B) on 11434.
+      // authelia (container A) listens on 9091; llama (B) on 11435.
       listening: parseSsRows([
         'LISTEN 0 4096 *:9091 *:* users:(("authelia",pid=10,fd=8))',
-        'LISTEN 0 4096 *:11434 *:* users:(("ollama",pid=20,fd=8))',
+        'LISTEN 0 4096 *:11435 *:* users:(("llama",pid=20,fd=8))',
         'LISTEN 0 4096 *:53 *:* users:(("authelia",pid=10,fd=9))',
       ].join('\n')),
-      // media (C) → authelia:9091; hermes (D) → ollama:11434;
+      // media (C) → authelia:9091; hermes (D) → llama:11435;
       // authelia → its own 9091 (self); something → :53 (DNS).
       established: parseSsRows([
         'ESTAB 0 0 1.2.3.4:5000 1.2.3.4:9091 users:(("media",pid=30,fd=1))',
-        'ESTAB 0 0 1.2.3.4:5001 1.2.3.4:11434 users:(("hermes",pid=40,fd=1))',
+        'ESTAB 0 0 1.2.3.4:5001 1.2.3.4:11435 users:(("hermes",pid=40,fd=1))',
         'ESTAB 0 0 1.2.3.4:5002 1.2.3.4:9091 users:(("authelia",pid=10,fd=1))',
         'ESTAB 0 0 1.2.3.4:5003 1.2.3.4:53 users:(("media",pid=30,fd=2))',
       ].join('\n')),
       pidToContainer: new Map([[10, 'cA'], [20, 'cB'], [30, 'cC'], [40, 'cD']]),
     };
   }
-  const c2s = new Map([['cA', 'auth'], ['cB', 'ollama'], ['cC', 'media'], ['cD', 'hermes']]);
+  const c2s = new Map([['cA', 'auth'], ['cB', 'llama'], ['cC', 'media'], ['cD', 'hermes']]);
 
   it('synthesizes directed src→dst edges from listen + estab rows', () => {
     const flows = resolveFlows(sockets(), c2s);
     expect(flows).toContainEqual({ srcService: 'media', dstService: 'auth', dstPort: 9091 });
-    expect(flows).toContainEqual({ srcService: 'hermes', dstService: 'ollama', dstPort: 11434 });
+    expect(flows).toContainEqual({ srcService: 'hermes', dstService: 'llama', dstPort: 11435 });
   });
 
   it('drops self-edges and DNS (port 53)', () => {

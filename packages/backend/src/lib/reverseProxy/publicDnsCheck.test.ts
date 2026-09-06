@@ -39,7 +39,7 @@ describe('checkPublicARecord (#1680)', () => {
     resolve4Impl = async () => {
       throw Object.assign(new Error('ENOTFOUND'), { code: 'ENOTFOUND' });
     };
-    const res = await checkPublicARecord('ollama.dopp.cloud');
+    const res = await checkPublicARecord('llama.dopp.cloud');
     expect(res.hasRecord).toBe(false);
     expect(res.addresses).toEqual([]);
     expect(res.inconclusive).toBe(true);
@@ -60,15 +60,15 @@ describe('checkPublicARecord (#1680)', () => {
 
 describe('missingARecordMessage (#1680)', () => {
   it('names the domain and the concrete WAN IP when known', () => {
-    const msg = missingARecordMessage('ollama.dopp.cloud', '92.252.126.27');
-    expect(msg).toContain('ollama.dopp.cloud');
+    const msg = missingARecordMessage('llama.dopp.cloud', '92.252.126.27');
+    expect(msg).toContain('llama.dopp.cloud');
     expect(msg).toContain('no public DNS A record');
     expect(msg).toContain('→ 92.252.126.27');
   });
 
   it('falls back to a what-is-my-IP hint when the WAN IP is unknown', () => {
-    const msg = missingARecordMessage('ollama.dopp.cloud');
-    expect(msg).toContain('ollama.dopp.cloud');
+    const msg = missingARecordMessage('llama.dopp.cloud');
+    expect(msg).toContain('llama.dopp.cloud');
     expect(msg).toContain('ipify.org');
   });
 });

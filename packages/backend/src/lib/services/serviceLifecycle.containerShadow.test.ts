@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // #2174 — a post-deploy.py can swap a service to a `.container` GPU Quadlet
-// (ollama CDI fixup, #1026), but deployKubeService always (re)writes
+// (llama CDI fixup, #1026), but deployKubeService always (re)writes
 // `${name}.kube` + `${name}.yml`, and BOTH generate `${name}.service`. systemd
 // may pick the `.kube` (kube-play, CPU, no CDI device) — silently dropping
-// ollama to CPU. reconcileContainerQuadletShadow retires the shadowing units
+// llama to CPU. reconcileContainerQuadletShadow retires the shadowing units
 // and force-recreates the container so it picks up the CDI device. These tests
 // cover the guard + the full reconcile sequence.
 
@@ -21,11 +21,11 @@ const OLLAMA_YAML = `
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ollama
+  name: llama
 spec:
   containers:
-    - name: ollama
-      image: docker.io/ollama/ollama:latest
+    - name: llama
+      image: docker.io/llama/llama:latest
 `;
 
 // Every `exec` reply is a {code,stdout,stderr}; write_file replies "ok".
@@ -74,34 +74,34 @@ describe('reconcileContainerQuadletShadow (#2174)', () => {
     });
 
     it('retires the shadowing .kube/.yml and force-recreates the container when .container is in use', async () => {
-        await ServiceLifecycle.reconcileContainerQuadletShadow('local', 'ollama', 'ollama.yml', OLLAMA_YAML);
+        await ServiceLifecycle.reconcileContainerQuadletShadow('local', 'llama', 'llama.yml', OLLAMA_YAML);
 
         const cmds = execCommands();
 
         // Shadowing units moved into the trash bucket (recoverable, not rm).
-        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/ollama\.kube '.*\.trash\/.*-ollama-shadow\/'/.test(c))).toBe(true);
-        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/ollama\.yml '.*\.trash\/.*-ollama-shadow\/'/.test(c))).toBe(true);
+        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/llama\.kube '.*\.trash\/.*-llama-shadow\/'/.test(c))).toBe(true);
+        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/llama\.yml '.*\.trash\/.*-llama-shadow\/'/.test(c))).toBe(true);
 
         // daemon reloaded so `.service` re-resolves to the `.container`.
         expect(cmds.some(c => /systemctl --user daemon-reload/.test(c))).toBe(true);
 
         // Force-recreate: stop, then rm -f every plausible container name
         // (a plain restart leaves the old CPU container by name).
-        expect(cmds.some(c => /systemctl --user stop ollama\.service/.test(c))).toBe(true);
-        expect(cmds.some(c => /podman rm -f ollama-ollama /.test(c))).toBe(true);
-        expect(cmds.some(c => /podman rm -f systemd-ollama /.test(c))).toBe(true);
+        expect(cmds.some(c => /systemctl --user stop llama\.service/.test(c))).toBe(true);
+        expect(cmds.some(c => /podman rm -f llama-llama /.test(c))).toBe(true);
+        expect(cmds.some(c => /podman rm -f systemd-llama /.test(c))).toBe(true);
 
         // ...then start so the `.container` unit recreates it with the CDI device.
-        expect(cmds.some(c => /systemctl --user --no-block start ollama\.service/.test(c))).toBe(true);
+        expect(cmds.some(c => /systemctl --user --no-block start llama\.service/.test(c))).toBe(true);
     });
 
     it('orders the force-recreate: stop → rm -f → start (rm before start)', async () => {
-        await ServiceLifecycle.reconcileContainerQuadletShadow('local', 'ollama', 'ollama.yml', OLLAMA_YAML);
+        await ServiceLifecycle.reconcileContainerQuadletShadow('local', 'llama', 'llama.yml', OLLAMA_YAML);
         const cmds = execCommands();
 
-        const stopIdx = cmds.findIndex(c => /systemctl --user stop ollama\.service/.test(c));
-        const rmIdx = cmds.findIndex(c => /podman rm -f ollama-ollama /.test(c));
-        const startIdx = cmds.findIndex(c => /systemctl --user --no-block start ollama\.service/.test(c));
+        const stopIdx = cmds.findIndex(c => /systemctl --user stop llama\.service/.test(c));
+        const rmIdx = cmds.findIndex(c => /podman rm -f llama-llama /.test(c));
+        const startIdx = cmds.findIndex(c => /systemctl --user --no-block start llama\.service/.test(c));
 
         expect(stopIdx).toBeGreaterThanOrEqual(0);
         expect(rmIdx).toBeGreaterThan(stopIdx);
@@ -110,7 +110,7 @@ describe('reconcileContainerQuadletShadow (#2174)', () => {
 
     it('names the retire step without claiming a recreate it has not decided on yet', async () => {
         const lines: string[] = [];
-        await ServiceLifecycle.reconcileContainerQuadletShadow('local', 'ollama', 'ollama.yml', OLLAMA_YAML, m => lines.push(m));
+        await ServiceLifecycle.reconcileContainerQuadletShadow('local', 'llama', 'llama.yml', OLLAMA_YAML, m => lines.push(m));
         expect(lines[0]).toMatch(/retiring the shadowing \.kube\/\.yml\.$/);
     });
 
@@ -121,14 +121,14 @@ describe('reconcileContainerQuadletShadow (#2174)', () => {
             throw new Error('agent down');
         });
         await expect(
-            ServiceLifecycle.reconcileContainerQuadletShadow('local', 'ollama', 'ollama.yml', OLLAMA_YAML),
+            ServiceLifecycle.reconcileContainerQuadletShadow('local', 'llama', 'llama.yml', OLLAMA_YAML),
         ).resolves.toBeUndefined();
     });
 });
 
 // ---------------------------------------------------------------------------
 // #2618 — the force-recreate above is also what evicts everything the container
-// holds in memory. For ollama that is the VRAM-resident model set, so every
+// holds in memory. For llama that is the VRAM-resident model set, so every
 // install paid a cold reload (tens of seconds per model) for nothing when the
 // unit had not actually changed. The recreate now runs only on evidence that
 // the running container is NOT the one the `.container` unit describes.
@@ -138,9 +138,9 @@ const OLLAMA_CONTAINER_UNIT = `[Unit]
 Description=Ollama (GPU passthrough #1026 fixup)
 
 [Container]
-Image=docker.io/ollama/ollama:latest
-ContainerName=ollama
-Environment=OLLAMA_HOST=127.0.0.1:11434
+Image=docker.io/llama/llama:latest
+ContainerName=llama
+Environment=OLLAMA_HOST=127.0.0.1:11435
 # Keep models resident between requests (#268).
 Environment=OLLAMA_MAX_LOADED_MODELS=2
 AddDevice=nvidia.com/gpu=all
@@ -157,20 +157,20 @@ Description=Ollama (GPU passthrough #1026 fixup)
 
 [Container]
 Environment=OLLAMA_MAX_LOADED_MODELS=2
-Environment=OLLAMA_HOST=127.0.0.1:11434
-ContainerName=ollama
+Environment=OLLAMA_HOST=127.0.0.1:11435
+ContainerName=llama
 AddDevice=nvidia.com/gpu=all
-Image=docker.io/ollama/ollama:latest
+Image=docker.io/llama/llama:latest
 
 [Install]
 WantedBy=default.target
 `;
 
 const RUNNING_ARGV = [
-    '/usr/bin/podman', 'run', '--name', 'ollama', '--replace', '--rm', '--cgroups=split',
+    '/usr/bin/podman', 'run', '--name', 'llama', '--replace', '--rm', '--cgroups=split',
     '--sdnotify=conmon', '-d', '--device', 'nvidia.com/gpu=all',
-    '--env', 'OLLAMA_HOST=127.0.0.1:11434', '--env', 'OLLAMA_MAX_LOADED_MODELS=2',
-    'docker.io/ollama/ollama:latest',
+    '--env', 'OLLAMA_HOST=127.0.0.1:11435', '--env', 'OLLAMA_MAX_LOADED_MODELS=2',
+    'docker.io/llama/llama:latest',
 ];
 
 const IMAGE_ID = 'sha256:1111';
@@ -202,13 +202,13 @@ function boxWith(state: BoxState = {}) {
     mockSendCommand.mockImplementation(async (action: string, params: unknown) => {
         if (action === 'read_file') {
             const p = (params as { path?: string })?.path ?? '';
-            return p.endsWith('ollama.container') ? s.unit : '';
+            return p.endsWith('llama.container') ? s.unit : '';
         }
         if (action !== 'exec') return 'ok';
         const cmd = (params as { command?: string })?.command ?? '';
         const out = (stdout: string) => ({ code: 0, stdout, stderr: '' });
         if (/\.container && echo present/.test(cmd)) return out('present\n');
-        if (/systemctl --user show ollama\.service --property=ExecStart/.test(cmd)) {
+        if (/systemctl --user show llama\.service --property=ExecStart/.test(cmd)) {
             if (!s.desiredArgv) return out('ExecStart=\n');
             return out(`ExecStart={ path=/usr/bin/podman ; argv[]=${s.desiredArgv.join(' ')} ; ignore_errors=no ; start_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n`);
         }
@@ -223,12 +223,12 @@ function boxWith(state: BoxState = {}) {
 
 const reconcile = (lines?: string[]) =>
     ServiceLifecycle.reconcileContainerQuadletShadow(
-        'local', 'ollama', 'ollama.yml', OLLAMA_YAML, lines ? (m: string) => lines.push(m) : undefined,
+        'local', 'llama', 'llama.yml', OLLAMA_YAML, lines ? (m: string) => lines.push(m) : undefined,
     );
 
 const wasRecreated = () => {
     const cmds = execCommands();
-    return cmds.some(c => /podman rm -f/.test(c)) || cmds.some(c => /systemctl --user stop ollama\.service/.test(c));
+    return cmds.some(c => /podman rm -f/.test(c)) || cmds.some(c => /systemctl --user stop llama\.service/.test(c));
 };
 
 describe('reconcileContainerQuadletShadow — warm state survives an unchanged redeploy (#2618)', () => {
@@ -238,7 +238,7 @@ describe('reconcileContainerQuadletShadow — warm state survives an unchanged r
         await reconcile(lines);
 
         expect(wasRecreated()).toBe(false);
-        expect(execCommands().some(c => /--no-block start ollama\.service/.test(c))).toBe(false);
+        expect(execCommands().some(c => /--no-block start llama\.service/.test(c))).toBe(false);
         // The named outcome — not folded into a generic "done".
         expect(lines.some(l => /left running, NOT recreated/.test(l))).toBe(true);
         expect(lines.join('\n')).toMatch(/VRAM-resident models/);
@@ -248,8 +248,8 @@ describe('reconcileContainerQuadletShadow — warm state survives an unchanged r
         boxWith();
         await reconcile();
         const cmds = execCommands();
-        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/ollama\.kube '.*\.trash\//.test(c))).toBe(true);
-        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/ollama\.yml '.*\.trash\//.test(c))).toBe(true);
+        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/llama\.kube '.*\.trash\//.test(c))).toBe(true);
+        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/llama\.yml '.*\.trash\//.test(c))).toBe(true);
         expect(cmds.some(c => /systemctl --user daemon-reload/.test(c))).toBe(true);
     });
 
@@ -268,8 +268,8 @@ describe('reconcileContainerQuadletShadow — warm state survives an unchanged r
         const lines: string[] = [];
         await reconcile(lines);
 
-        expect(execCommands().some(c => /podman rm -f ollama-ollama /.test(c))).toBe(true);
-        expect(execCommands().some(c => /--no-block start ollama\.service/.test(c))).toBe(true);
+        expect(execCommands().some(c => /podman rm -f llama-llama /.test(c))).toBe(true);
+        expect(execCommands().some(c => /--no-block start llama\.service/.test(c))).toBe(true);
         expect(lines.some(l => /force-recreating the container — the \.container Quadlet changed/.test(l))).toBe(true);
     });
 
@@ -282,7 +282,7 @@ describe('reconcileContainerQuadletShadow — warm state survives an unchanged r
     });
 
     it('DOES force-recreate when the running container came from podman kube play', async () => {
-        boxWith({ createCommand: ['/usr/bin/podman', 'kube', 'play', '--replace', 'ollama.yml'] });
+        boxWith({ createCommand: ['/usr/bin/podman', 'kube', 'play', '--replace', 'llama.yml'] });
         await reconcile();
         expect(wasRecreated()).toBe(true);
     });
@@ -312,16 +312,16 @@ describe('deployKubeService — a .container service is not restarted by the sha
     it('skips the #1813 pod-spec restart when a .container Quadlet owns the service', async () => {
         // The shadow `.kube`/`.yml` were trashed by the previous deploy, so
         // `specChanged` is structurally true here — before the fix that alone
-        // restarted ollama on every install, evicting the warm cache before
+        // restarted llama on every install, evicting the warm cache before
         // post-deploy even ran.
         boxWith();
         await ServiceLifecycle.deployKubeService(
-            'local', 'ollama', '[Kube]\nYaml=ollama.yml\n', OLLAMA_YAML, 'ollama.yml',
+            'local', 'llama', '[Kube]\nYaml=llama.yml\n', OLLAMA_YAML, 'llama.yml',
         );
         const cmds = execCommands();
         // Positive control: the deploy really did run through to the reconcile.
-        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/ollama\.kube '.*\.trash\//.test(c))).toBe(true);
-        expect(cmds.some(c => /--no-block restart ollama\.service/.test(c))).toBe(false);
+        expect(cmds.some(c => /mv -f ~\/\.config\/containers\/systemd\/llama\.kube '.*\.trash\//.test(c))).toBe(true);
+        expect(cmds.some(c => /--no-block restart llama\.service/.test(c))).toBe(false);
         // …and the reconcile still ran and still decided not to recreate.
         expect(cmds.some(c => /podman rm -f/.test(c))).toBe(false);
     });

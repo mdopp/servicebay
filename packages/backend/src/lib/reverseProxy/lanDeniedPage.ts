@@ -230,7 +230,7 @@ const ADMIN_ONLY_SUBDOMAINS = new Set(['admin', 'nginx', 'dns', 'ldap']);
  *   - admin / nginx / dns / ldap     → `['admins']`
  *   - anything else                  → `['family', 'admins']`
  *
- * `domain` may be a bare host (`ollama.dopp.cloud`) or just the leftmost
+ * `domain` may be a bare host (`llama.dopp.cloud`) or just the leftmost
  * label; only the first label is inspected.
  */
 export function requiredGroupsForDomain(domain: string | undefined): string[] {
@@ -298,7 +298,7 @@ function renderRequiredGroups(groups: string[]): string {
  * IS signed in; they're just missing a group. The copy says exactly that and
  * points them at asking an admin to add the group.
  *
- * @param domain the host this page is served for (e.g. `ollama.dopp.cloud`).
+ * @param domain the host this page is served for (e.g. `llama.dopp.cloud`).
  * @param publicDomain operator's public domain, used to link `auth.<domain>`.
  */
 const FORWARD_AUTH_DENIED_CSS = `

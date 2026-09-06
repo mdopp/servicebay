@@ -55,7 +55,7 @@ const okConfig = {
 };
 
 /** Deps where every step succeeds and every domain behaves correctly. By
- *  default no forward-auth-derived host (ollama) is gated; opt in per-test. */
+ *  default no forward-auth-derived host (llama) is gated; opt in per-test. */
 function happyDeps(opts: { forwardAuthHosts?: string[] } = {}): { deps: SsoVerifyDeps; calls: { deleted: string[] } } {
   const calls = { deleted: [] as string[] };
   const gated = new Set(opts.forwardAuthHosts ?? []);
@@ -76,7 +76,7 @@ function happyDeps(opts: { forwardAuthHosts?: string[] } = {}): { deps: SsoVerif
     }),
     // Authelia denies a family user on admin hosts → 403 (correctly blocked).
     probeAdminDecision: vi.fn(async (): Promise<DomainProbe> => ({ code: 403, body: '' })),
-    // ollama.<domain> is gated iff opted in; FQDN-keyed.
+    // llama.<domain> is gated iff opted in; FQDN-keyed.
     hostHasForwardAuth: vi.fn(async (fqdn: string) => {
       const host = fqdn.split('.')[0];
       return gated.has(host);
@@ -104,7 +104,7 @@ describe('verifySso orchestrator', () => {
     expect(report.ok).toBe(true);
     expect(report.cleanedUp).toBe(true);
     // every templated user app + the Jellyfin (media) LDAP-login entry + every
-    // admin host probed (ollama is gated on actual forward-auth, off by default here).
+    // admin host probed (llama is gated on actual forward-auth, off by default here).
     const templatedHosts = Object.keys(USER_APP_SIGNATURES).filter(h => SUBDOMAIN_TEMPLATE[h]);
     expect(report.userDomains).toHaveLength(templatedHosts.length + 1); // +1 = media (Jellyfin) login
     expect(report.userDomains.some(d => d.domain === 'media.dopp.cloud')).toBe(true);
@@ -532,15 +532,15 @@ describe('verifySso — #1673 set_password + couldNotRun', () => {
   });
 });
 
-describe('verifySso — ollama is admin-only, never probed as a family app', () => {
-  // Operator decision: ollama.dopp.cloud is admin-only (the chat uses ollama over
+describe('verifySso — llama is admin-only, never probed as a family app', () => {
+  // Operator decision: llama.dopp.cloud is admin-only (the chat uses llama over
   // internal loopback, not this gated host), so it's NOT in the family-app set and
   // is never reported as a user domain — even if a forward-auth host exists for it.
-  it('does not probe ollama as a user domain (FORWARD_AUTH_DERIVED is empty)', async () => {
-    expect(FORWARD_AUTH_DERIVED_SUBDOMAINS).not.toContain('ollama');
-    const { deps } = happyDeps({ forwardAuthHosts: ['ollama'] });
+  it('does not probe llama as a user domain (FORWARD_AUTH_DERIVED is empty)', async () => {
+    expect(FORWARD_AUTH_DERIVED_SUBDOMAINS).not.toContain('llama');
+    const { deps } = happyDeps({ forwardAuthHosts: ['llama'] });
     const report = await verifySso({ deps });
-    expect(report.userDomains.some(d => d.domain === 'ollama.dopp.cloud')).toBe(false);
+    expect(report.userDomains.some(d => d.domain === 'llama.dopp.cloud')).toBe(false);
   });
 });
 

@@ -15,7 +15,7 @@ describe('ssrfGuard', () => {
   describe('isKnownLocalSystemTarget', () => {
     it('recognises the HA and Ollama loopback endpoints', () => {
       expect(isKnownLocalSystemTarget('http://127.0.0.1:8123/')).toBe(true);
-      expect(isKnownLocalSystemTarget('http://127.0.0.1:11434/')).toBe(true);
+      expect(isKnownLocalSystemTarget('http://127.0.0.1:11435/')).toBe(true);
       expect(isKnownLocalSystemTarget('http://localhost:8123/')).toBe(true);
       expect(isKnownLocalSystemTarget('http://[::1]:8123/')).toBe(true);
     });
@@ -44,7 +44,7 @@ describe('ssrfGuard', () => {
         assertHttpTargetAllowed('http://127.0.0.1:8123/', { systemCheck: true }),
       ).resolves.toBeUndefined();
       await expect(
-        assertHttpTargetAllowed('http://127.0.0.1:11434/', { systemCheck: true }),
+        assertHttpTargetAllowed('http://127.0.0.1:11435/', { systemCheck: true }),
       ).resolves.toBeUndefined();
     });
 

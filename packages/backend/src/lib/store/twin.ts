@@ -961,7 +961,7 @@ export class DigitalTwinStore {
 
   // #1733: base names of services ServiceBay installed (config.installedTemplates
   // keys). Fed by the server on config load/sync so the bundle builder can treat
-  // a single-container .container Quadlet (no pod, e.g. the ollama GPU fixup) as
+  // a single-container .container Quadlet (no pod, e.g. the llama GPU fixup) as
   // managed instead of a Standalone container.
   public installedTemplates: Set<string> = new Set();
 

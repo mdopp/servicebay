@@ -140,7 +140,7 @@ export function serviceOfCheck(check: CheckConfig, ctx: PrerequisiteContext): st
   // Template-registered http probes carry an id slug whose leading
   // segment is the owning service (init.ts isOrphanTemplateCheck): the id is
   // `<service>` or `<service>-<suffix>`, e.g. `home-assistant-api`,
-  // `ollama-api`. Bind one to its service when the leading slug segment(s)
+  // `llama-api`. Bind one to its service when the leading slug segment(s)
   // match a service that has a container (`type:'service'`) check — so a
   // container outage suppresses the probe's separate alert (#1663). Service
   // names can themselves contain hyphens (`home-assistant`), so we

@@ -225,7 +225,7 @@ describe('POST /api/health/checks — the id is minted server-side (#2536)', () 
 
   it('still flags the #1670 system-check bypass for the internal loopback caller', async () => {
     mocks.auth = { user: 'internal' };
-    await post(validBody({ id: 'ollama-api', type: 'http', target: 'http://127.0.0.1:11434/' }));
+    await post(validBody({ id: 'llama-api', type: 'http', target: 'http://127.0.0.1:11435/' }));
     expect((mocks.saveCheck.mock.calls[0][0] as CheckConfig & { systemCheck?: boolean }).systemCheck)
       .toBe(true);
   });

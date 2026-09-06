@@ -9,11 +9,11 @@ import { parsePostDeployProgressLine, latestPostDeployProgress } from './postDep
 const line = (obj: unknown) => JSON.stringify(obj);
 
 describe('parsePostDeployProgressLine', () => {
-  it('extracts percent + MB from an OSCAR ollama:pull progress line', () => {
+  it('extracts percent + MB from an OSCAR llama:pull progress line', () => {
     const p = parsePostDeployProgressLine(
-      line({ ts: 1, level: 'info', tag: 'ollama:pull', message: 'pulling model', args: { percent: 42, completed_mb: 4200, total_mb: 10000 } }),
+      line({ ts: 1, level: 'info', tag: 'llama:pull', message: 'pulling model', args: { percent: 42, completed_mb: 4200, total_mb: 10000 } }),
     );
-    expect(p).toEqual({ tag: 'ollama:pull', message: 'pulling model', percent: 42, completedMb: 4200, totalMb: 10000 });
+    expect(p).toEqual({ tag: 'llama:pull', message: 'pulling model', percent: 42, completedMb: 4200, totalMb: 10000 });
   });
 
   it('accepts a percent-only producer (no MB fields)', () => {
@@ -29,7 +29,7 @@ describe('parsePostDeployProgressLine', () => {
 
   it('rejects plain log lines, non-JSON, and lines without args.percent', () => {
     expect(parsePostDeployProgressLine('🔑 Reusing 7 saved secrets')).toBeNull();
-    expect(parsePostDeployProgressLine('Pulling image 1/3: ollama')).toBeNull();
+    expect(parsePostDeployProgressLine('Pulling image 1/3: llama')).toBeNull();
     expect(parsePostDeployProgressLine('{ not json')).toBeNull();
     expect(parsePostDeployProgressLine(line({ tag: 'x', args: { completed_mb: 10 } }))).toBeNull();
     expect(parsePostDeployProgressLine(line({ tag: 'x', message: 'done' }))).toBeNull();
@@ -40,10 +40,10 @@ describe('parsePostDeployProgressLine', () => {
 describe('latestPostDeployProgress', () => {
   it('returns the most recent progress event from the tail', () => {
     const logs = [
-      line({ tag: 'ollama:pull', args: { percent: 10, completed_mb: 1000, total_mb: 10000 } }),
+      line({ tag: 'llama:pull', args: { percent: 10, completed_mb: 1000, total_mb: 10000 } }),
       'some interleaved log line',
-      line({ tag: 'ollama:pull', args: { percent: 60, completed_mb: 6000, total_mb: 10000 } }),
-      '✅ ollama deployed',
+      line({ tag: 'llama:pull', args: { percent: 60, completed_mb: 6000, total_mb: 10000 } }),
+      '✅ llama deployed',
     ];
     expect(latestPostDeployProgress(logs)?.percent).toBe(60);
   });

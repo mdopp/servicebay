@@ -69,7 +69,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
   // --- Get Service Files ---
   server.tool(
     'get_service_files',
-    'Get the on-disk files for a service. Returns `kubeContent` = the systemd Quadlet unit, `yamlContent` = the Kubernetes Pod-spec `.yml` (apiVersion/kind/spec), and `quadletKind` = "kube" or "container". For a `.kube` service (quadletKind="kube"): `kubeContent` is the [Kube]/[Install] unit and `yamlContent` is the pod spec; these field names are REVERSED relative to update_service_yaml — to write back the pod spec, pass this tool\'s `yamlContent` into update_service_yaml (the Quadlet unit is regenerated on its own). For a single-container `.container` service (quadletKind="container", e.g. ollama after the GPU fixup): `kubeContent` is the whole `.container` unit ([Container] section) and `yamlContent` is empty — the unit file IS the artifact, so edit `kubeContent` and pass it straight into update_service_yaml. Also returns `installedVariables` = the template-variable values this service was last DEPLOYED with (`isTemplateDefault` says whether a value is just what the template ships); a secret-typed variable is listed by name with `value: null` — its value lives encrypted in `installedSecrets` and is never returned here.',
+    'Get the on-disk files for a service. Returns `kubeContent` = the systemd Quadlet unit, `yamlContent` = the Kubernetes Pod-spec `.yml` (apiVersion/kind/spec), and `quadletKind` = "kube" or "container". For a `.kube` service (quadletKind="kube"): `kubeContent` is the [Kube]/[Install] unit and `yamlContent` is the pod spec; these field names are REVERSED relative to update_service_yaml — to write back the pod spec, pass this tool\'s `yamlContent` into update_service_yaml (the Quadlet unit is regenerated on its own). For a single-container `.container` service (quadletKind="container", e.g. llama after the GPU fixup): `kubeContent` is the whole `.container` unit ([Container] section) and `yamlContent` is empty — the unit file IS the artifact, so edit `kubeContent` and pass it straight into update_service_yaml. Also returns `installedVariables` = the template-variable values this service was last DEPLOYED with (`isTemplateDefault` says whether a value is just what the template ships); a secret-typed variable is listed by name with `value: null` — its value lives encrypted in `installedSecrets` and is never returned here.',
     { name: ServiceName.describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
       const nodeName = await resolveNode(node);
@@ -164,7 +164,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
   // --- Update Service YAML (edit then redeploy) ---
   server.tool(
     'update_service_yaml',
-    'Replace a service\'s on-disk definition and redeploy it. Use `get_service_files` first, modify, then call this. For a `.kube` service (quadletKind="kube"): the content this tool wants (in `kubeContent`/`podSpecContent`) is the POD SPEC — i.e. the `yamlContent` returned by get_service_files (apiVersion/kind/spec), NOT its `kubeContent` (the `.kube` Quadlet unit, regenerated automatically). For a single-container `.container` service (quadletKind="container", e.g. ollama): there is no pod spec — pass the edited `.container` unit body (the `kubeContent` from get_service_files, with a [Container] section) and it is written straight back. Either way the file is written and `systemctl --user daemon-reload` + restart is triggered.',
+    'Replace a service\'s on-disk definition and redeploy it. Use `get_service_files` first, modify, then call this. For a `.kube` service (quadletKind="kube"): the content this tool wants (in `kubeContent`/`podSpecContent`) is the POD SPEC — i.e. the `yamlContent` returned by get_service_files (apiVersion/kind/spec), NOT its `kubeContent` (the `.kube` Quadlet unit, regenerated automatically). For a single-container `.container` service (quadletKind="container", e.g. llama): there is no pod spec — pass the edited `.container` unit body (the `kubeContent` from get_service_files, with a [Container] section) and it is written straight back. Either way the file is written and `systemctl --user daemon-reload` + restart is triggered.',
     {
       name: ServiceName.describe('Service name'),
       kubeContent: z.string().min(1).optional().describe('The Pod-spec `.yml` content (the `yamlContent` from get_service_files, apiVersion/kind/spec) — NOT the `.kube` Quadlet unit. Historical name; prefer `podSpecContent`. One of kubeContent / podSpecContent is required.'),
@@ -180,7 +180,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
         if (!podSpec) {
           return errorResult('Error updating service: provide the Pod-spec `.yml` content via `podSpecContent` (or `kubeContent`).');
         }
-        // #1778: a single-container `.container` Quadlet (the ollama GPU
+        // #1778: a single-container `.container` Quadlet (the llama GPU
         // fixup) has no separate pod spec — the unit file IS the deploy
         // artifact, so the read/update contract differs: the caller edits
         // the `.container` unit body (the `kubeContent` from

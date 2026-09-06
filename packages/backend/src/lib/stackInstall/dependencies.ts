@@ -61,7 +61,7 @@ export type TopoSortResult<T> =
  * - each item's declared `servicebay.dependencies` that are in the set
  * - PLUS implicit "every feature depends on every infra in this set" so
  *   the order surfaces all infrastructure before any feature. Without
- *   this, an unrelated feature (`ollama`, `hermes`) that declares no deps
+ *   this, an unrelated feature (`llama`, `hermes`) that declares no deps
  *   can sneak in front of nginx/auth and register subdomain proxy hosts
  *   against NPM data the install runner is about to wipe and recreate
  *   (#796).

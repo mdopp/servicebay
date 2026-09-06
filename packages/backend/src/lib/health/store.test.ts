@@ -34,10 +34,10 @@ describe('HealthStore.deleteServiceCheck (#1506)', () => {
   });
 
   it('removes the per-service check matching target and reports the count', () => {
-    HealthStore.saveCheck(serviceCheck('ollama'));
+    HealthStore.saveCheck(serviceCheck('llama'));
     HealthStore.saveCheck(serviceCheck('vaultwarden'));
 
-    const removed = HealthStore.deleteServiceCheck('ollama');
+    const removed = HealthStore.deleteServiceCheck('llama');
 
     expect(removed).toBe(1);
     const remaining = HealthStore.getChecks().map(c => c.target);

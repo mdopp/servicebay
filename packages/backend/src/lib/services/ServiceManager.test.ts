@@ -231,15 +231,15 @@ Volume=my-vol:/data:Z
 });
 
 describe('getServiceFiles — .container Quadlet resolution (#1778)', () => {
-    const OLLAMA_PATH = '/var/home/core/.config/containers/systemd/ollama.container';
+    const OLLAMA_PATH = '/var/home/core/.config/containers/systemd/llama.container';
     const OLLAMA_BODY = [
         '[Unit]',
         'Description=Ollama',
         '',
         '[Container]',
-        'Image=docker.io/ollama/ollama:latest',
+        'Image=docker.io/llama/llama:latest',
         'AddDevice=nvidia.com/gpu=all',
-        'PublishPort=11434:11434',
+        'PublishPort=11435:11435',
         '',
         '[Install]',
         'WantedBy=default.target',
@@ -257,15 +257,15 @@ describe('getServiceFiles — .container Quadlet resolution (#1778)', () => {
         mockSendCommand.mockClear();
     });
 
-    it('resolves a .container service (not "File not found: ollama.kube")', async () => {
-        // Regression for #1778: ollama runs as a single-container .container
+    it('resolves a .container service (not "File not found: llama.kube")', async () => {
+        // Regression for #1778: llama runs as a single-container .container
         // Quadlet (the #1026 GPU fixup). The old path constructed
         // `${name}.kube` and 404'd; it must now serve the real .container body.
         mockNodes['local'].files = {
             [OLLAMA_PATH]: { path: OLLAMA_PATH, content: OLLAMA_BODY, modified: 0 },
         } as any;
 
-        const files = await ServiceManager.getServiceFiles('local', 'ollama');
+        const files = await ServiceManager.getServiceFiles('local', 'llama');
         expect(files.quadletKind).toBe('container');
         // kubeContent surfaces the .container unit body itself.
         expect(files.kubeContent).toContain('[Container]');

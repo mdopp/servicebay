@@ -5,8 +5,8 @@ import { isIP } from 'net';
  * Loopback ports of the known-local hostNetwork services ServiceBay
  * monitors itself (#1670). A stack's post-deploy registers an HTTP health
  * check against its own loopback endpoint via the internal-token POST
- * (`home-assistant-api` → `127.0.0.1:8123`, `ollama-api` →
- * `127.0.0.1:11434`); on the single-node home box those are the box's *own*
+ * (`home-assistant-api` → `127.0.0.1:8123`, `llama-api` →
+ * `127.0.0.1:11435`); on the single-node home box those are the box's *own*
  * services, not a user-supplied target. Keeping the list explicit (rather
  * than "any loopback") means even a system check can only bypass the guard
  * for a recognised service port — an internal-token check of some other
@@ -14,7 +14,7 @@ import { isIP } from 'net';
  */
 const KNOWN_LOCAL_SERVICE_PORTS = new Set<number>([
   8123, // Home Assistant
-  11434, // Ollama
+  11435, // Ollama
 ]);
 
 const LOOPBACK_HOSTS = new Set<string>(['127.0.0.1', '::1', 'localhost']);

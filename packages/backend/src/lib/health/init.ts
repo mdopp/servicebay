@@ -36,7 +36,7 @@ const SERVICE_CHECK_PRUNE_EXEMPT = new Set<string>(['podman.socket']);
 
 /** A v4-style UUID, the id shape the UI's "add check" flow stamps
  *  (`crypto.randomUUID()`). Template/post-deploy-registered checks instead
- *  use a stable lowercase slug id (`home-assistant-api`, `ollama-api`). */
+ *  use a stable lowercase slug id (`home-assistant-api`, `llama-api`). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SLUG_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
 
@@ -44,7 +44,7 @@ const SLUG_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
  * Template-registered checks (#1551): a stack's post-deploy may register an
  * extra `http`/`tcp` probe against its own endpoint via
  * `POST /api/health/checks` (e.g. home-assistant's `home-assistant-api`,
- * oscar-ollama's `ollama-api`). These carry no `type:'service'` link, so the
+ * oscar-llama's `llama-api`). These carry no `type:'service'` link, so the
  * service-row prune above misses them and they linger as `0ms` rows for an
  * un-installed (or never-installed-on-this-box) service.
  *
@@ -84,7 +84,7 @@ async function addServiceChecks(existingChecks: ReturnType<typeof HealthStore.ge
 
     // Prune template-registered http/tcp probes whose owning stack is
     // not deployed (#1551) — these slip past the `type:'service'` prune above
-    // and otherwise linger forever (e.g. a stale `ollama-api`/`home-assistant-api`
+    // and otherwise linger forever (e.g. a stale `llama-api`/`home-assistant-api`
     // row carried over a wipe-configs reinstall, a restored config backup, or a
     // missed uninstall).
     for (const c of existingChecks) {

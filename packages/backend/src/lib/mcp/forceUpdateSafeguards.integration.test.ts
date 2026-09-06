@@ -24,7 +24,7 @@ vi.mock('@/lib/config', () => ({ getConfig: vi.fn(async () => ({ mcp: { allowMut
 
 vi.mock('@/lib/services/ServiceManager', () => ({
   ServiceManager: {
-    forceUpdateService: vi.fn(async () => ({ service: 'ollama', changed: true, stale: false, images: [] })),
+    forceUpdateService: vi.fn(async () => ({ service: 'llama', changed: true, stale: false, images: [] })),
     startService: vi.fn(),
     stopService: vi.fn(),
     restartService: vi.fn(),
@@ -53,7 +53,7 @@ beforeEach(() => {
 
 describe('force-update safeguards end-to-end through the real safety/notify modules (#2419)', () => {
   it('writes a real auto snapshot and sends the operator email', async () => {
-    await callForceUpdate({ action: 'force-update', name: 'ollama', fresh: true });
+    await callForceUpdate({ action: 'force-update', name: 'llama', fresh: true });
 
     // The snapshot is the rewind point — tagged `auto` so retention prunes it.
     expect(createSystemBackup).toHaveBeenCalledWith('auto');
@@ -62,12 +62,12 @@ describe('force-update safeguards end-to-end through the real safety/notify modu
     const [subject, bodyRaw] = sendEmailAlert.mock.calls[0] as unknown as [string, string];
     expect(subject).toBe('MCP destructive op: manage_service:force-update');
     expect(bodyRaw).toContain('token:companion');
-    expect(bodyRaw).toContain('name: ollama');
+    expect(bodyRaw).toContain('name: llama');
     expect(bodyRaw).toContain('fresh: true');
   });
 
   it('leaves a plain restart with no snapshot and no email', async () => {
-    await callForceUpdate({ action: 'restart', name: 'ollama' });
+    await callForceUpdate({ action: 'restart', name: 'llama' });
     expect(createSystemBackup).not.toHaveBeenCalled();
     expect(sendEmailAlert).not.toHaveBeenCalled();
   });

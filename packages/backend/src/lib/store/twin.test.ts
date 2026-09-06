@@ -25,9 +25,9 @@ describe('DigitalTwinStore.setInstalledTemplates (#1733)', () => {
   });
 
   it('stores the names and surfaces them on the snapshot', () => {
-    store.setInstalledTemplates(['ollama', 'immich']);
-    expect([...store.installedTemplates].sort()).toEqual(['immich', 'ollama']);
-    expect(store.getSnapshot().installedTemplates.sort()).toEqual(['immich', 'ollama']);
+    store.setInstalledTemplates(['llama', 'immich']);
+    expect([...store.installedTemplates].sort()).toEqual(['immich', 'llama']);
+    expect(store.getSnapshot().installedTemplates.sort()).toEqual(['immich', 'llama']);
   });
 
   it('rebuilds bundles for every node when the set changes', () => {
@@ -35,7 +35,7 @@ describe('DigitalTwinStore.setInstalledTemplates (#1733)', () => {
     store.registerNode('node-b');
     const spy = vi.spyOn(store, 'rebuildBundlesNow');
 
-    store.setInstalledTemplates(['ollama']);
+    store.setInstalledTemplates(['llama']);
 
     expect(spy).toHaveBeenCalledWith('node-a');
     expect(spy).toHaveBeenCalledWith('node-b');
@@ -43,24 +43,24 @@ describe('DigitalTwinStore.setInstalledTemplates (#1733)', () => {
 
   it('does NOT rebuild when the set is unchanged (no churn on every config read)', () => {
     store.registerNode('node-a');
-    store.setInstalledTemplates(['ollama', 'immich']);
+    store.setInstalledTemplates(['llama', 'immich']);
 
     const spy = vi.spyOn(store, 'rebuildBundlesNow');
     // Same members, different iteration order — must be treated as unchanged.
-    store.setInstalledTemplates(['immich', 'ollama']);
+    store.setInstalledTemplates(['immich', 'llama']);
 
     expect(spy).not.toHaveBeenCalled();
   });
 
   it('rebuilds when a name is added or removed', () => {
     store.registerNode('node-a');
-    store.setInstalledTemplates(['ollama']);
+    store.setInstalledTemplates(['llama']);
 
     const spy = vi.spyOn(store, 'rebuildBundlesNow');
-    store.setInstalledTemplates(['ollama', 'immich']); // added
+    store.setInstalledTemplates(['llama', 'immich']); // added
     expect(spy).toHaveBeenCalledTimes(1);
 
-    store.setInstalledTemplates(['immich']); // removed ollama
+    store.setInstalledTemplates(['immich']); // removed llama
     expect(spy).toHaveBeenCalledTimes(2);
   });
 });

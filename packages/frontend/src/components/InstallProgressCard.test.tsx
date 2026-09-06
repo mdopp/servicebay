@@ -50,7 +50,7 @@ describe('InstallProgressCardView', () => {
 
   it('renders no post-deploy bar when none is in flight', () => {
     render(<InstallProgressCardView state={base} onSkipCredentials={() => {}} />);
-    expect(screen.queryByText(/ollama:pull/)).toBeNull();
+    expect(screen.queryByText(/llama:pull/)).toBeNull();
     expect(screen.queryByText(/MB/)).toBeNull();
   });
 
@@ -59,19 +59,19 @@ describe('InstallProgressCardView', () => {
       <InstallProgressCardView
         state={{
           ...base,
-          postDeployProgress: { tag: 'ollama:pull', percent: 42, completedMb: 4200, totalMb: 10000 },
+          postDeployProgress: { tag: 'llama:pull', percent: 42, completedMb: 4200, totalMb: 10000 },
         }}
         onSkipCredentials={() => {}}
       />,
     );
-    expect(screen.getByText('ollama:pull')).toBeDefined();
+    expect(screen.getByText('llama:pull')).toBeDefined();
     expect(screen.getByText('4200 / 10000 MB · 42%')).toBeDefined();
   });
 
   it('falls back to percent-only when MB fields are absent', () => {
     render(
       <InstallProgressCardView
-        state={{ ...base, postDeployProgress: { tag: 'ollama:pull', percent: 7 } }}
+        state={{ ...base, postDeployProgress: { tag: 'llama:pull', percent: 7 } }}
         onSkipCredentials={() => {}}
       />,
     );

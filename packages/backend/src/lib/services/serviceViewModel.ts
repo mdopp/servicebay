@@ -14,7 +14,7 @@ interface BuildServiceViewModelArgs {
    * Base names of services ServiceBay installed (config.installedTemplates
    * keys). #1733: a unit whose base name is in this set is treated as managed
    * even when it isn't backed by a `.kube`/pod — e.g. a single-container
-   * `.container` Quadlet (the ollama GPU fixup), which would otherwise be
+   * `.container` Quadlet (the llama GPU fixup), which would otherwise be
    * classified Standalone/unmanaged.
    */
   installedTemplates?: Iterable<string>;
@@ -36,7 +36,7 @@ export function buildServiceViewModel({ unit, nodeName, nodeState, proxyRoutes, 
 
   // #1733: managed if the agent flagged it (.kube/.container) OR its base name
   // is one ServiceBay installed. The latter rescues a single-container
-  // .container Quadlet (ollama GPU fixup) with no pod from being treated as a
+  // .container Quadlet (llama GPU fixup) with no pod from being treated as a
   // bare container in the UI.
   const installedSet = installedTemplates ? new Set(installedTemplates) : null;
   const isManaged = Boolean(unit.isManaged) || Boolean(installedSet?.has(baseName));
@@ -64,7 +64,7 @@ export function buildServiceViewModel({ unit, nodeName, nodeState, proxyRoutes, 
       }
     } else {
       // #1733: no .kube chain — a single-container .container Quadlet (e.g.
-      // ollama). Fall back to the .yml/.yaml pod manifest if one happens to
+      // llama). Fall back to the .yml/.yaml pod manifest if one happens to
       // sit alongside (label/port hints); the .container itself has no
       // servicebay.label so displayName stays the base name.
       const fallbackYaml = fileKeys.find(key => key.endsWith(`/${baseName}.yml`) || key.endsWith(`/${baseName}.yaml`));

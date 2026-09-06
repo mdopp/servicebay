@@ -244,7 +244,7 @@ export async function deployKubeService(
         // reconcileContainerQuadletShadow retires a few steps below, so
         // `specChanged` is structurally always true here (last deploy
         // trashed those very files) and this restart fired on every single
-        // deploy — evicting ollama's warm VRAM cache before post-deploy had
+        // deploy — evicting llama's warm VRAM cache before post-deploy had
         // even run. The `.container` unit, not the pod spec, is what runs;
         // the reconcile owns the restart decision for it and makes it on
         // desired-vs-actual evidence.
@@ -286,7 +286,7 @@ export async function deployKubeService(
     // `servicebay.healthcheck` annotation) AFTER post-deploy runs.
     // Post-deploy scripts that need to block on their own service
     // being responsive still do so via in-script helpers (e.g.
-    // ollama's wait_for_ready, immich's wait_pod_running) which
+    // llama's wait_for_ready, immich's wait_pod_running) which
     // are local to each script and don't depend on ServiceBay's
     // install layer.
 
@@ -311,10 +311,10 @@ export async function deployKubeService(
     }
 
     // #2174 — a post-deploy.py may swap this service to a `.container`
-    // GPU Quadlet (ollama's CDI fixup, #1026). deployKubeService just
+    // GPU Quadlet (llama's CDI fixup, #1026). deployKubeService just
     // wrote `${name}.kube`+`${name}.yml` above; both units generate
     // `${name}.service`, and systemd may pick the `.kube` (kube-play,
-    // no CDI device) over the `.container` — silently dropping ollama
+    // no CDI device) over the `.container` — silently dropping llama
     // to CPU. Reconcile: if a `.container` unit now exists, retire the
     // shadowing `.kube`/`.yml` and force-recreate the container so it
     // picks up the CDI device. No-op for every non-`.container` deploy.

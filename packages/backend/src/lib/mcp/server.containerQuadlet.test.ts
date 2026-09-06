@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 // #1778: update_service_yaml must route a single-container `.container`
-// Quadlet (ollama after the GPU fixup) to deployContainerQuadlet — writing the
+// Quadlet (llama after the GPU fixup) to deployContainerQuadlet — writing the
 // edited unit body straight back — instead of treating it as a `.kube` pod
 // spec and rejecting it via the footgun guard. We mock ServiceManager so the
 // SDK round-trip asserts the wiring without a real agent/box.
@@ -46,9 +46,9 @@ const OLLAMA_BODY = [
   'Description=Ollama',
   '',
   '[Container]',
-  'Image=docker.io/ollama/ollama:latest',
+  'Image=docker.io/llama/llama:latest',
   'AddDevice=nvidia.com/gpu=all',
-  'PublishPort=11434:11434',
+  'PublishPort=11435:11435',
 ].join('\n');
 
 describe('update_service_yaml — .container Quadlet routing (#1778)', () => {
@@ -64,19 +64,19 @@ describe('update_service_yaml — .container Quadlet routing (#1778)', () => {
       yamlContent: '',
       yamlPath: '',
       quadletKind: 'container',
-      kubePath: '/var/home/core/.config/containers/systemd/ollama.container',
+      kubePath: '/var/home/core/.config/containers/systemd/llama.container',
     });
     const { client } = await connectClient();
-    const edited = OLLAMA_BODY.replace('11434:11434', '11434:11434\nEnvironment=OLLAMA_DEBUG=1');
+    const edited = OLLAMA_BODY.replace('11435:11435', '11435:11435\nEnvironment=OLLAMA_DEBUG=1');
     const res = await client.callTool({
       name: 'update_service_yaml',
-      arguments: { node: 'local', name: 'ollama', kubeContent: edited },
+      arguments: { node: 'local', name: 'llama', kubeContent: edited },
     });
     expect(res.isError).toBeFalsy();
     expect(deployContainerQuadlet).toHaveBeenCalledTimes(1);
     expect(deployKubeService).not.toHaveBeenCalled();
     // Targets the real service name with the edited unit body.
-    expect(deployContainerQuadlet).toHaveBeenCalledWith('local', 'ollama', edited);
+    expect(deployContainerQuadlet).toHaveBeenCalledWith('local', 'llama', edited);
     await client.close();
   });
 

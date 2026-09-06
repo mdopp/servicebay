@@ -1,7 +1,7 @@
 /**
  * Post-deploy progress parsing for the install card (#1288).
  *
- * A template's post-deploy script (e.g. OSCAR `ollama`'s model pull) emits
+ * A template's post-deploy script (e.g. OSCAR `llama`'s model pull) emits
  * structured progress lines on stdout — JSON objects of the shape
  * `{ts, level, tag, message, args}` where `args` carries `{percent,
  * completed_mb, total_mb}` on a progress tick. Those lines stream verbatim
@@ -15,7 +15,7 @@
  */
 
 export interface PostDeployProgress {
-  /** Producer-supplied tag, e.g. `ollama:pull` — labels the bar. */
+  /** Producer-supplied tag, e.g. `llama:pull` — labels the bar. */
   tag?: string;
   /** Human message from the same line, if any. */
   message?: string;

@@ -15,7 +15,7 @@ import type { ApiScope } from '@/lib/auth/apiScope';
 // unchanged (still `lifecycle`, still no human-approval parking).
 
 const forceUpdateService = vi.fn(async (..._args: unknown[]): Promise<unknown> => ({
-  service: 'ollama', node: 'Local', mode: 'pull', images: [], recreated: [],
+  service: 'llama', node: 'Local', mode: 'pull', images: [], recreated: [],
   changed: false, stale: false, status: 'active', logs: [],
 }));
 vi.mock('@/lib/services/ServiceManager', () => ({
@@ -61,24 +61,24 @@ describe('manage_service force-update safeguards (#2419)', () => {
   it('snapshots BEFORE the force-update runs, labelled with the action', async () => {
     const order: string[] = [];
     snapshotBeforeMutation.mockImplementation(async () => { order.push('snapshot'); });
-    forceUpdateService.mockImplementation(async () => { order.push('force-update'); return { service: 'ollama', images: [] }; });
+    forceUpdateService.mockImplementation(async () => { order.push('force-update'); return { service: 'llama', images: [] }; });
     const { client } = await connectClient();
-    await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'ollama', fresh: true } });
+    await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'llama', fresh: true } });
     expect(order).toEqual(['snapshot', 'force-update']);
     expect(snapshotBeforeMutation).toHaveBeenCalledWith(
       'manage_service:force-update',
-      expect.objectContaining({ action: 'force-update', name: 'ollama', fresh: true }),
+      expect.objectContaining({ action: 'force-update', name: 'llama', fresh: true }),
     );
     await client.close();
   });
 
   it('emails the operator after a successful force-update, naming the action and caller', async () => {
     const { client } = await connectClient(['read', 'lifecycle']);
-    await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'ollama' } });
+    await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'llama' } });
     expect(notifyDestructiveOp).toHaveBeenCalledWith(expect.objectContaining({
       tool: 'manage_service:force-update',
       caller: 'token:companion',
-      args: expect.objectContaining({ action: 'force-update', name: 'ollama' }),
+      args: expect.objectContaining({ action: 'force-update', name: 'llama' }),
     }));
     await client.close();
   });
@@ -86,7 +86,7 @@ describe('manage_service force-update safeguards (#2419)', () => {
   it('does NOT snapshot or email for the reversible actions', async () => {
     const { client } = await connectClient();
     for (const action of ['start', 'stop', 'restart']) {
-      await client.callTool({ name: 'manage_service', arguments: { action, name: 'ollama' } });
+      await client.callTool({ name: 'manage_service', arguments: { action, name: 'llama' } });
     }
     expect(snapshotBeforeMutation).not.toHaveBeenCalled();
     expect(notifyDestructiveOp).not.toHaveBeenCalled();
@@ -96,7 +96,7 @@ describe('manage_service force-update safeguards (#2419)', () => {
   it('still snapshots but does not email when the force-update fails', async () => {
     forceUpdateService.mockRejectedValueOnce(new Error('pull failed'));
     const { client } = await connectClient();
-    await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'ollama' } });
+    await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'llama' } });
     expect(snapshotBeforeMutation).toHaveBeenCalledTimes(1);
     expect(notifyDestructiveOp).not.toHaveBeenCalled();
     await client.close();
@@ -104,8 +104,8 @@ describe('manage_service force-update safeguards (#2419)', () => {
 
   it('keeps the lifecycle tier: a lifecycle token runs force-update inline, no approval parking', async () => {
     const { client } = await connectClient(['read', 'lifecycle']);
-    const res = await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'ollama' } });
-    expect(forceUpdateService).toHaveBeenCalledWith('Local', 'ollama', { fresh: undefined });
+    const res = await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'llama' } });
+    expect(forceUpdateService).toHaveBeenCalledWith('Local', 'llama', { fresh: undefined });
     const text = (res.content as { text: string }[])[0].text;
     expect(text).not.toContain('pending_approval');
     expect(res.isError).toBeFalsy();
@@ -114,7 +114,7 @@ describe('manage_service force-update safeguards (#2419)', () => {
 
   it('still refuses a read-only token (the scope gate is unchanged)', async () => {
     const { client } = await connectClient(['read']);
-    const res = await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'ollama' } });
+    const res = await client.callTool({ name: 'manage_service', arguments: { action: 'force-update', name: 'llama' } });
     expect(res.isError).toBe(true);
     expect((res.content as { text: string }[])[0].text).toMatch(/scope 'lifecycle' required/);
     expect(forceUpdateService).not.toHaveBeenCalled();

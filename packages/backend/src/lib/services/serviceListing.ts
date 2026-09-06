@@ -550,7 +550,7 @@ export class ServiceListing {
      *
      * A service can be backed by either a `<name>.kube` (the common
      * pod-Quadlet, which references a separate `.yml` pod spec) or a
-     * single-container `<name>.container` Quadlet (the ollama GPU fixup,
+     * single-container `<name>.container` Quadlet (the llama GPU fixup,
      * #1026 — managed-detection for these landed in #1733 but the
      * file-read/update path still assumed `.kube`, so `.container`
      * services 404'd, #1778).
@@ -632,7 +632,7 @@ export class ServiceListing {
      * Returns `kubeContent` = the Quadlet unit, `yamlContent` = the pod
      * spec it references. The unit may be a `.kube` (pod Quadlet → has a
      * separate `Yaml=<name>.yml` pod spec) or a `.container` (single-
-     * container Quadlet, the ollama GPU fixup — #1026/#1778). A
+     * container Quadlet, the llama GPU fixup — #1026/#1778). A
      * `.container` IS the deploy artifact: there is no separate pod spec,
      * so `yamlContent`/`yamlPath` stay empty and `quadletKind:"container"`
      * tells the caller to edit the unit file itself rather than a pod spec
