@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.31.5](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.4...servicebay-v5.31.5) (2026-09-06)
+
+
+### Bug Fixes
+
+* **diagnose,install-wizard:** claude-dev auth expiry warn; validate install-start response; knip config sweep ([#2844](https://github.com/mdopp/servicebay/issues/2844), [#2845](https://github.com/mdopp/servicebay/issues/2845), [#2846](https://github.com/mdopp/servicebay/issues/2846)) ([41c732e](https://github.com/mdopp/servicebay/commit/41c732e303ecacb572c5610d6a1d9fb036700a9e))
+
 ## [5.31.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.3...servicebay-v5.31.4) (2026-09-05)
 
 
