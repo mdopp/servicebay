@@ -1383,15 +1383,56 @@ export interface TemplateMigrationScript {
 }
 
 /**
- * Discover a template's `migrations/v{N}-to-v{M}.py` scripts. Same
- * registry-fallback semantics as `getTemplatePostDeployScript`: a
- * pinned `source` looks in that registry only; no source walks every
- * configured registry, then the built-in templates.
+ * Read the `migrations/` directory of ONE resolved template directory.
  *
- * Files whose names don't match the `v{N}-to-v{M}.py` pattern are
- * ignored — the consistency test
- * (`tests/backend/template_consistency.test.ts`) rejects illegal
- * filenames at build time so they never reach here.
+ * Files whose names don't match `v{N}-to-v{M}.py` are ignored — the
+ * consistency test (`tests/backend/template_consistency.test.ts`) rejects
+ * illegal filenames at build time so they never reach here. An unreadable
+ * file is skipped rather than blocking the whole template; the chain check
+ * surfaces it as a missing step.
+ */
+async function scanMigrationsDir(dir: string): Promise<TemplateMigrationScript[]> {
+  const filenameRe = /^v(\d+)-to-v(\d+)\.py$/;
+  let entries: string[];
+  try {
+    entries = await fs.readdir(path.join(dir, 'migrations'));
+  } catch {
+    return [];
+  }
+  const out: TemplateMigrationScript[] = [];
+  for (const entry of entries) {
+    const m = filenameRe.exec(entry);
+    if (!m) continue;
+    const fromVersion = parseInt(m[1], 10);
+    const toVersion = parseInt(m[2], 10);
+    if (!Number.isFinite(fromVersion) || !Number.isFinite(toVersion)) continue;
+    try {
+      const content = await fs.readFile(path.join(dir, 'migrations', entry), 'utf-8');
+      out.push({ filename: entry, fromVersion, toVersion, content });
+    } catch { /* unreadable step — skip, don't fail the template */ }
+  }
+  return out;
+}
+
+/**
+ * Discover a template's `migrations/v{N}-to-v{M}.py` scripts. Same
+ * registry-fallback semantics as `getTemplatePostDeployScript`
+ * (`readTemplateFile`): the pinned `source` is tried first, and when it does
+ * not carry the template the search falls through to local → every
+ * configured registry → the built-in templates. `'Local'` stays pinned
+ * (#1919) — an explicit operator override is not a guess to widen.
+ *
+ * **The fall-through is load-bearing** (#2855). A saved `JobInput` routinely
+ * pins a source that is not where the template lives: the MCP
+ * `install_template` tool records `templateSource: 'Built-in'` whenever the
+ * caller omits it (while passing `undefined` — "walk everything" — to
+ * `assembleManifest`), and a renamed registry strands older records. Every
+ * other artifact reader tolerates that (`readTemplateFile` since #818,
+ * `refreshTemplateArtifacts` re-resolves with no source); this one did not,
+ * so a `migrations/v1-to-v2.py` sitting in a freshly-synced clone was
+ * reported to the operator as "have none" and aborted the deploy. The
+ * fall-through is never silent — it logs which source missed and which
+ * registry answered, so a real name mismatch stays diagnosable.
  *
  * Returns an unsorted array — chain selection is the caller's job (see
  * `selectMigrationChain`). See #352 phase 3.
@@ -1400,55 +1441,39 @@ export async function getTemplateMigrationScripts(
   name: string,
   source?: string,
 ): Promise<TemplateMigrationScript[]> {
-  const filenameRe = /^v(\d+)-to-v(\d+)\.py$/;
+  if (source === 'Local') return scanMigrationsDir(localItemPath('template', name));
 
-  const scanDir = async (dir: string): Promise<TemplateMigrationScript[]> => {
-    let entries: string[];
-    try {
-      entries = await fs.readdir(path.join(dir, 'migrations'));
-    } catch {
-      return [];
-    }
-    const out: TemplateMigrationScript[] = [];
-    for (const entry of entries) {
-      const m = filenameRe.exec(entry);
-      if (!m) continue;
-      const fromVersion = parseInt(m[1], 10);
-      const toVersion = parseInt(m[2], 10);
-      if (!Number.isFinite(fromVersion) || !Number.isFinite(toVersion)) continue;
-      try {
-        const content = await fs.readFile(path.join(dir, 'migrations', entry), 'utf-8');
-        out.push({ filename: entry, fromVersion, toVersion, content });
-      } catch {
-        // Unreadable migration — skip rather than block the whole template;
-        // the deploy will still run, just without that step. Logged at the
-        // call site if missing-step ends up biting.
-      }
-    }
-    return out;
+  // 1. Honour the pinned source first — the normal path, and the only one
+  //    that needs no explanation in the log. (`name` is request-supplied →
+  //    single-segment barrier.)
+  const pinned = source === 'Built-in'
+    ? await scanMigrationsDir(safeJoin(TEMPLATES_PATH, name))
+    : source
+      ? await scanMigrationsDir(await resolveRegistryItemPath(source, 'template', name))
+      : [];
+  if (pinned.length > 0) return pinned;
+
+  // 2. No source, or the pinned source does not carry this template: walk
+  //    local → registries → built-in, exactly as the no-source path always
+  //    has. A pinned source that got here fell through, so name it.
+  const fellThrough = (from: string) => {
+    if (source) logger.info('registry', `Migration scripts for "${name}" not found in source "${source}" — resolved from ${from} instead.`);
   };
-
-  if (source === 'Local') {
-    return scanDir(localItemPath('template', name));
+  const local = await scanMigrationsDir(localItemPath('template', name));
+  if (local.length > 0) {
+    fellThrough('the local template source');
+    return local;
   }
-
-  if (source && source !== 'Built-in') {
-    return scanDir(await resolveRegistryItemPath(source, 'template', name));
-  }
-
-  if (!source) {
-    const local = await scanDir(localItemPath('template', name));
-    if (local.length > 0) return local;
-    const config = await getConfig();
-    const registries = getRegistries(config);
-    for (const reg of registries) {
-      const found = await scanDir(await resolveRegistryItemPath(reg.name, 'template', name));
-      if (found.length > 0) return found;
+  const registries = getRegistries(await getConfig());
+  for (const reg of registries) {
+    const found = await scanMigrationsDir(await resolveRegistryItemPath(reg.name, 'template', name));
+    if (found.length > 0) {
+      fellThrough(`registry "${reg.name}"`);
+      return found;
     }
   }
 
-  // `name` is request-supplied → single-segment barrier.
-  return scanDir(safeJoin(TEMPLATES_PATH, name));
+  return scanMigrationsDir(safeJoin(TEMPLATES_PATH, name));
 }
 
 /**

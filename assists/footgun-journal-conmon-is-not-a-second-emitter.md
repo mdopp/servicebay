@@ -1,8 +1,8 @@
 ---
 title: "`_COMM=conmon` in ServiceBay's journal is ServiceBay's own stdout, not a second emitter"
-whenToUse: You are reading or MEASURING `journalctl --user -u servicebay` — hunting a secret leak, chasing a truncated line, counting entries, or about to report that a logging fix works. Read this before splitting on `_COMM`, before filing "not our code", and before trusting a probe that found zero of something.
+whenToUse: You are reading or MEASURING `journalctl --user -u servicebay` (or `DATA_DIR/logs.db`) — hunting a secret leak, chasing a truncated line, counting entries, or about to report that a logging fix works. Read this before splitting on `_COMM`, before filing "not our code", and before trusting a probe that found zero of something.
 kind: footgun
-tags: [journal, journalctl, conmon, podman, quadlet, logging, secrets, redaction, box-verify, troubleshooting]
+tags: [journal, journalctl, conmon, podman, quadlet, logging, secrets, redaction, logs.db, box-verify, troubleshooting]
 ---
 
 # `_COMM=conmon` tells you nothing about who wrote the line
@@ -118,7 +118,12 @@ Two things to know before you read its verdict:
 
 ## Where the redaction actually lives
 
-Two sinks, deliberately redundant so a stale agent cannot reopen the hole:
+Four sinks, two independent families — don't stop at the first family when
+you're chasing a leak or clearing one as fixed.
+
+**Agent-payload sinks** — the structured `content` field, and keys shaped like
+`TOKEN|SECRET|PASSWORD|API_KEY`. Deliberately redundant so a stale agent cannot
+reopen the hole:
 
 - `packages/backend/src/lib/agent/v4/agent.py` — `_redact_for_log`, applied
   inside `log_structured` (the sink, not the call sites).
@@ -126,7 +131,57 @@ Two sinks, deliberately redundant so a stale agent cannot reopen the hole:
   `redactStructuredLogLine`, applied to every structured line the backend
   writes, so a box running an older agent is still covered.
 
-Both replace every `content` string with `<N chars redacted>` at any depth, and
-mask values of keys matching `TOKEN|SECRET|PASSWORD|API_KEY`. Adding a new place
-that logs an agent payload means routing it through those, never adding a
-redaction call at the new call site.
+Both replace every `content` string with `<N chars redacted>` at any depth.
+
+**`Environment=` assignment sinks (#2833/#2836)** — a different shape entirely:
+a quadlet/unit body travels as a flattened shell ARGUMENT (`Received command: …
+Payload: {…}`, or a `Command failed: <command>` error), with no `content` key
+to walk to. This is the shape that got measured as "10 leaking lines, 0
+redacted `content` fields" — the agent-payload sinks above cannot see it at
+all:
+
+- `packages/backend/src/lib/log-format.ts` — `redactEnvironmentAssignments`
+  (using `isSecretEnvName` from `mcp/redact.ts`), applied inside
+  `toSingleJournalLine`. This is the **console/journal** sink: every line
+  either logger funnels through here before it reaches journald.
+- `packages/backend/src/lib/logger.ts` — `Logger.insertLog` (#2836) applies the
+  same redactor to the row **before** it reaches `DATA_DIR/logs.db`. This is
+  the **DB** sink, and it's a separate fix on purpose: `insertLog` used to
+  write the raw message straight into logs.db, where it sits for the full
+  7-day retention window and is read back by `queryLogs` and the log viewer —
+  masking only the console funnel left that row (and the `onLog` socket
+  broadcast built from it) holding the plaintext.
+
+Both `Environment=` sites replace the value with `<N chars redacted>` and are
+**idempotent** (`isRedactedMarker`) — load-bearing, because the console path
+runs the same redactor a second time over a message `insertLog` already
+masked, and re-redacting a marker as if it were a fresh secret would corrupt
+the reported length.
+
+Adding a new place that logs an agent payload means routing it through the
+agent-payload sinks; adding a new place that could log a quadlet/unit body (or
+anything else shaped like `Environment=NAME=value`) means routing it through
+`toSingleJournalLine`/`insertLog`, never adding a redaction call at the new
+call site.
+
+**Probes, one per shape:**
+
+- Agent-payload `content` shape: `npm run autoloop:journal-redaction`
+  (`scripts/check-journal-redaction.ts`'s structured-content scan, described
+  above).
+- `Environment=` shape, journal side: the same script's `BARE_ENV_ASSIGNMENT`
+  pass — flags any bare `Environment=<NAME ending in
+  PASSWORD|PASS|TOKEN|SECRET|KEY>=<value>` in a message body (structured or
+  plain prose) that isn't already a `<N chars redacted>` marker.
+- `Environment=` shape, DB side: `tests/backend/logdb_env_redaction.test.ts`
+  asserts against the **stored logs.db row** (read back through `queryLogs`),
+  not a console spy — that's the only way to catch a leak that reaches the row
+  directly and never touches the console funnel at all.
+
+**Measuring rule for the DB sink:** the same `--since` discipline as the
+journal probe above, extended to `logs.db` — a row written before the box
+picked up the fix is history a pre-fix deploy already wrote at rest, and it
+survives the full retention window regardless of any later code change.
+Compare row timestamps against the deploy under test, not against "now": a
+pre-fix row lighting up means rotate the credential
+(`assists/recipe-rotate-a-service-secret.md`), not re-chase the code.
