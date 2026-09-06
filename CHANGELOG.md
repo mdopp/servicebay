@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.31.7](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.6...servicebay-v5.31.7) (2026-09-06)
+
+
+### Bug Fixes
+
+* **fcos:** declare default.target.wants so the host user can enable units ([f1b91bd](https://github.com/mdopp/servicebay/commit/f1b91bd4e3c456a1ac23dcb5a4de36688810ceac)), closes [#2850](https://github.com/mdopp/servicebay/issues/2850)
+* **install,fcos:** resolve template migrations across registries; user-owned default.target.wants; redaction assist ([#2855](https://github.com/mdopp/servicebay/issues/2855), [#2850](https://github.com/mdopp/servicebay/issues/2850), [#2843](https://github.com/mdopp/servicebay/issues/2843)) ([084353d](https://github.com/mdopp/servicebay/commit/084353d5e534189fe759852044923e32c8f66dd1))
+* **install:** resolve template migrations across sources, not only the pinned one ([380cc24](https://github.com/mdopp/servicebay/commit/380cc244402d74ae1722fc3d6ac448e5b326236d)), closes [#2855](https://github.com/mdopp/servicebay/issues/2855)
+
 ## [5.31.6](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.5...servicebay-v5.31.6) (2026-09-06)
 
 
