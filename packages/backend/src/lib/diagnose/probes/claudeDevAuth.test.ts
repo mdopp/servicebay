@@ -77,6 +77,7 @@ function agent(opts: { expiresAt?: number | null; doctorBlock?: string | null })
 // One extra hour so the floor in daysUntil() lands on 26 rather than 25 — the
 // few milliseconds the test itself takes would otherwise decide it.
 const IN_26_DAYS = Date.now() + 26 * 86_400_000 + 3_600_000;
+const IN_3_DAYS = Date.now() + 3 * 86_400_000 + 3_600_000;
 const REACHABLE = 'Remote Control\nControl this session from claude.ai/code or the Claude mobile app\n';
 const NOT_SIGNED_IN = [
   'Remote Control',
@@ -160,6 +161,23 @@ describe('checkClaudeDevAuth — signed in', () => {
     expect(r.detail).toMatch(/Remote Control is available/);
     expect(r.detail).toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(r.detail).toMatch(/26 days/);
+  });
+
+  it('warns once the stored sign-in is inside the near-expiry window', async () => {
+    // Reachable today, but 3 days out: the point of the warning is that the
+    // re-login happens on the operator's schedule, not the token's.
+    agent({ expiresAt: IN_3_DAYS, doctorBlock: REACHABLE });
+    const r = await checkClaudeDevAuth('Local');
+    expect(r.status).toBe('warn');
+    expect(r.detail).toMatch(/3 days/);
+    expect(r.detail).toMatch(/re-login/i);
+    expect(r.hint).toContain('/terminal?container=claude-dev-claude-dev&run=claude-login');
+  });
+
+  it('stays ok while the expiry is comfortably outside that window', async () => {
+    agent({ expiresAt: IN_26_DAYS, doctorBlock: REACHABLE });
+    const r = await checkClaudeDevAuth('Local');
+    expect(r.status).toBe('ok');
   });
 
   it('is still ok when no stored expiry can be read', async () => {

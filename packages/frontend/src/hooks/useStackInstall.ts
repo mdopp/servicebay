@@ -428,7 +428,18 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(30_000),
       });
-      const data = (await res.json().catch(() => ({}))) as z.infer<typeof InstallStartResponseSchema>;
+      // Validate at the seam instead of casting: an unexpected shape from
+      // /api/install/start (a non-string jobId, an object where an error
+      // string belongs) must surface as a readable failure, never flow on
+      // into setJobId/track. Mirrors the /api/install/assemble path above.
+      const raw: unknown = await res.json().catch(() => ({}));
+      const parsed = InstallStartResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new Error(
+          `Invalid response format from /api/install/start (HTTP ${res.status})`,
+        );
+      }
+      const data = parsed.data;
       if (!res.ok) {
         // 409 = another install is already in progress. Attach to it
         // instead of failing — the operator probably just clicked

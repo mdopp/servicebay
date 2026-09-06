@@ -108,7 +108,6 @@
   },
   "knip": {
     "ignoreBinaries": [
-      "fuser",
       "gofmt"
     ],
     "ignore": [
@@ -128,7 +127,6 @@
           "better-sqlite3",
           "lucide-react",
           "react-markdown",
-          "socket.io-client",
           "tailwindcss"
         ]
       },
