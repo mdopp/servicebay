@@ -279,6 +279,13 @@ export async function runAssetTransportPhase(
     }
   }
 
+  // `AutoUpdate=registry` is the *default*, not the verdict: the deploy path
+  // corrects it against the pod's actual images before the unit is written
+  // (`services/quadletAutoUpdate.ts`, #2861). A pod built from `localhost/…`
+  // images gets `AutoUpdate=local` there, because pinging a registry called
+  // `localhost` fails and takes the whole box-wide `podman auto-update` run
+  // down with exit 125. Keep this literal — every kube-write path emits the
+  // same default and converges through the one choke point.
   const kubeContent =
     `[Kube]\nYaml=${item.name}.yml\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
 

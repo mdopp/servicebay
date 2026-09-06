@@ -17,6 +17,7 @@ import { logger } from '../../logger';
 import { updateConfig } from '../../config';
 import { readManifestAnnotations } from '../../template/contract';
 import { injectServiceDirectives } from '../quadletDirectives';
+import { applyAutoUpdatePolicy } from '../quadletAutoUpdate';
 import { ServiceListing } from '../serviceListing';
 import { writeExtraConfigFiles } from '../extraConfigFiles';
 import { migratePredecessors, runMigrationScript } from './migrations';
@@ -148,6 +149,20 @@ export async function deployKubeService(
     // recovery. injectServiceDirectives is idempotent per-directive,
     // so re-deploys never duplicate keys.
     kubeContent = injectServiceDirectives(kubeContent);
+
+    // #2861 — derive `AutoUpdate=` from the pod's own images instead of
+    // shipping the generated `registry` default unconditionally. A
+    // `localhost/…` image makes `podman auto-update` ping a registry called
+    // `localhost`, which fails and takes the ENTIRE box-wide run down with
+    // exit 125 — every other pod's update check is lost behind that status.
+    // This sits here, at the one choke point every kube-write path goes
+    // through (install runner via POST /api/services, MCP `deploy_service`
+    // and `update_service_yaml`), so a reconfigure or upgrade re-renders the
+    // corrected unit on its own and a hand-repaired box converges with no
+    // manual step. A pure-registry pod comes back byte-identical.
+    const autoUpdate = applyAutoUpdatePolicy(kubeContent, yamlContent);
+    kubeContent = autoUpdate.kubeContent;
+    yamlContent = autoUpdate.podYaml;
 
     const images = ServiceListing.extractImages(yamlContent);
 
