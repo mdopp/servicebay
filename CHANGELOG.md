@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.31.6](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.5...servicebay-v5.31.6) (2026-09-06)
+
+
+### Bug Fixes
+
+* **auth,claude-dev,disk-import-worker:** one-month Authelia session; pi model URL 11435; retire Ollama for llama-server ([#2830](https://github.com/mdopp/servicebay/issues/2830), [#2851](https://github.com/mdopp/servicebay/issues/2851), [#2852](https://github.com/mdopp/servicebay/issues/2852)) ([0b4eaf8](https://github.com/mdopp/servicebay/commit/0b4eaf897d55ca11bbf41b4f9e4c150341f17be4))
+* **auth:** pin Authelia session lifetime to one month ([32cd33d](https://github.com/mdopp/servicebay/commit/32cd33d610adc300e1f0d8586255e328b0ba6716)), closes [#2830](https://github.com/mdopp/servicebay/issues/2830)
+* **claude-dev:** point pi's default model URL at the llama template's 11435 ([56f1124](https://github.com/mdopp/servicebay/commit/56f1124bfc943727417f7a0ad1453c86dddfba4d)), closes [#2851](https://github.com/mdopp/servicebay/issues/2851)
+* **disk-import-worker:** speak OpenAI chat-completions to llama-server ([ddfc9ba](https://github.com/mdopp/servicebay/commit/ddfc9bae58340ad437388785177ddc178c41e82a)), closes [#2852](https://github.com/mdopp/servicebay/issues/2852)
+
 ## [5.31.5](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.4...servicebay-v5.31.5) (2026-09-06)
 
 
