@@ -59,6 +59,20 @@ storage:
         name: ${HOST_USER}
       group:
         name: ${HOST_USER}
+    # Every `links:` entry below that lands in a user wants/ directory needs its
+    # parent declared HERE, owned by ${HOST_USER}. Ignition auto-creates a link's
+    # missing parent directories as root:root — the symlink itself gets the
+    # link's own user/group, but the directory does not. A root-owned
+    # default.target.wants/ then rejects the `core` user's own
+    # `systemctl --user enable`, which is #2850: install-nginx.service and
+    # servicebay-trigger.path land fine at first boot, and every LATER user unit
+    # (a template's post-deploy `enable --now`) fails with "Access denied".
+    - path: /var/home/${HOST_USER}/.config/systemd/user/default.target.wants
+      mode: 0755
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
 
     # ServiceBay SSH directory
     - path: ${DATA_ROOT}/servicebay/ssh
