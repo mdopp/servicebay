@@ -32,11 +32,20 @@ the LAN without the sign-in. There is deliberately no second password in front
 of it — the sign-in is the gate.
 
 **Which model it uses.** One, and it is your own: the local model server on this
-box (`CLAUDE_DEV_PI_MODEL_BASE_URL`, `http://host.containers.internal:18080/v1`
+box (`CLAUDE_DEV_PI_MODEL_BASE_URL`, `http://host.containers.internal:11435/v1`
 by default). No cloud account, no API key and no subscription is involved, and
 none is asked for. If your model server is not running when the container
 starts, the model picker will be empty — start it and restart the container, or
 set `CLAUDE_DEV_PI_MODEL_ID` to the id it serves.
+
+**The default endpoint changed to port 11435 (#2851).** It used to be `18080`,
+where nothing on the box listens. `11435` is the solarisbay `llama` template's
+`LLAMA_PORT`, so a fresh install now points at the model server this box
+actually runs. This is a default-value change, not a schema change: an install
+that already has the old value **keeps it** until you open **Reconfigure** and
+clear the field (or type the new URL) — nothing is rewritten under you. The
+picker stays empty until llama's listener is reachable from an isolated pod,
+which lands with mdopp/solarisbay#1344.
 
 **One port to know about.** The chat listens on `CLAUDE_DEV_PI_PORT`, `8791` by
 default — deliberately not pi's own default of `8787`, which is already in use

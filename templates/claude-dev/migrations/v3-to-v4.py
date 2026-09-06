@@ -40,7 +40,7 @@ def main() -> int:
     sub = os.environ.get("CLAUDE_DEV_PI_SUBDOMAIN", "pi")
     group = os.environ.get("CLAUDE_DEV_LDAP_GROUP", "admins")
     model_url = os.environ.get(
-        "CLAUDE_DEV_PI_MODEL_BASE_URL", "http://host.containers.internal:18080/v1"
+        "CLAUDE_DEV_PI_MODEL_BASE_URL", "http://host.containers.internal:11435/v1"
     )
 
     log("claude-dev v3 -> v4: nothing to migrate — no data moves, no permissions change.")
