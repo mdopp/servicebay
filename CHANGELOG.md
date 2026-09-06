@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.31.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.3...servicebay-v5.31.4) (2026-09-05)
+
+
+### Bug Fixes
+
+* **autoloop:** resolve the dev-verify sha to 40 chars before polling gh ([4f5de05](https://github.com/mdopp/servicebay/commit/4f5de05269a431de35c3d38bca20958e4e834de9)), closes [#2837](https://github.com/mdopp/servicebay/issues/2837)
+* **mcp:** stop over-redacting key_id and PEM markers in a YAML block ([e156288](https://github.com/mdopp/servicebay/commit/e1562886af1f865aef1d519cbbf76e32368296aa)), closes [#2838](https://github.com/mdopp/servicebay/issues/2838)
+* **security:** redact Environment secrets before the logs.db write ([194842e](https://github.com/mdopp/servicebay/commit/194842ea19773715c694f066f70a72223857291a)), closes [#2836](https://github.com/mdopp/servicebay/issues/2836)
+* **security:** redact Environment= secrets before the logs.db write; dev-verify full SHA; PEM marker over-redaction ([#2836](https://github.com/mdopp/servicebay/issues/2836), [#2837](https://github.com/mdopp/servicebay/issues/2837), [#2838](https://github.com/mdopp/servicebay/issues/2838)) ([a08ea96](https://github.com/mdopp/servicebay/commit/a08ea96483bffa828ead5c7e94eb6d73557eb4cc))
+
 ## [5.31.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.2...servicebay-v5.31.3) (2026-09-05)
 
 
