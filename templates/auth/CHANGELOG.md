@@ -1,5 +1,31 @@
 # auth template changelog
 
+## Unversioned — session lifetime is one month (#2830)
+
+No schema bump: nothing on disk moves and no variable changes, so this reaches
+an installed box on the next **Reconfigure / redeploy of `auth`**, which
+re-renders `configuration.yml`. The session secret is unchanged, so nobody is
+kicked out by the redeploy itself; a session already open keeps whatever expiry
+it was issued with, and the next sign-in gets the new one.
+
+`session.expiration`, `session.inactivity` and `session.remember_me` were unset,
+so Authelia's defaults applied — **1 hour** total and **5 minutes of
+inactivity**. A household dashboard is used exactly the way that punishes:
+open it, glance, put the phone down, pick it up after dinner, sign in again.
+All three are now `1M`.
+
+**This is an operator trade-off, not a hardening oversight** (decided
+2026-09-06). With a month-long session the phone's *device lock* is the
+effective protection in front of Solaris — door lock and garage door included —
+rather than the Authelia login. It is written down here so nobody later reads
+the long session as a mistake and "fixes" it.
+
+One footgun for whoever revisits this: `inactivity: 0` looks like the way to
+switch the inactivity check off, and Authelia's request path does skip the check
+at 0 — but its config validator rewrites any `inactivity <= 0` back to the
+5-minute default before that path ever sees it. Setting 0 would quietly restore
+the original bug. `inactivity: 1M` is what actually retires it.
+
 ## v4 (breaking)
 
 **The `servicebay` OIDC client secret is now generated per install (#2417).**

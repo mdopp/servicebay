@@ -24,6 +24,20 @@ LLDAP + Authelia in a single pod. Authelia depends on LLDAP for its user/group d
 * `https://ldap.<your-domain>` → LLDAP web UI (forward-auth via Authelia, two-factor for admins)
 * `https://auth.<your-domain>` → Authelia portal (bypass — must be publicly reachable)
 
+## Session lifetime
+
+Sessions last **one month** (`expiration`, `inactivity` and `remember_me` are all
+`1M` in `configuration.yml.mustache`), rather than Authelia's defaults of one
+hour with a five-minute inactivity logout. The intent is that residents
+practically never have to sign in again.
+
+That is a deliberate trade-off chosen by the operator, not an oversight: at this
+session length the **device lock on the phone** is the effective protection in
+front of the box, not the Authelia login. Shortening it is a supported change —
+edit the three values and redeploy `auth` — but do it knowingly. Note that
+`inactivity: 0` is *not* the way to switch the inactivity check off: Authelia's
+config validator rewrites any value `<= 0` back to its five-minute default.
+
 ## Data Layout
 
 ```

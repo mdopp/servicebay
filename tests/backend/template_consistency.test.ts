@@ -27,7 +27,7 @@ import path from 'path';
 import Mustache from 'mustache';
 import yaml from 'js-yaml';
 import { describe, it, expect } from 'vitest';
-import { renderPodYaml } from '@/lib/template/render';
+import { renderPodYaml, renderTemplate } from '@/lib/template/render';
 import { findGpuMultiContainerError } from '@/lib/services/podSchema';
 import { buildProxyHosts } from '@/lib/stackInstall/postInstall';
 
@@ -674,6 +674,36 @@ describe('Auth template: LLDAP HTTP port is loopback-bound (#2380)', () => {
     // of following it, which is the ordering that CAN strand a box.
     expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
     expect(mig).toMatch(/break-glass|LOCAL admin/i);
+  });
+
+  // ─── #2830: the session lasts a month, and `inactivity: 0` does NOT ──────
+  //
+  // Left unset, Authelia's own defaults apply — expiration 1h, inactivity 5m —
+  // and five minutes of not touching a household dashboard signed the resident
+  // out. The operator's decision (2026-09-06) is a one-month session: at that
+  // length the phone's device lock is the protection in front of Solaris, not
+  // the Authelia login. That is a deliberate trade-off, so this test also
+  // exists to stop it being "corrected" back to the defaults by someone who
+  // reads the long session as an oversight.
+  //
+  // The value worth pinning is `inactivity`. The obvious reading is that 0
+  // disables the check — Authelia's request path really does skip it at 0
+  // (`handleAuthnCookieValidateInactivity`). But its config validator rewrites
+  // any `inactivity <= 0` back to the 5-minute default first
+  // (internal/configuration/validator/session.go, v4.39.x), so a rendered 0
+  // never reaches that skip and silently restores the exact symptom this issue
+  // is about. Matching inactivity to expiration is what actually retires it.
+  it('renders a one-month session with the inactivity logout retired (#2830)', () => {
+    const rendered = renderTemplate(
+      auth.configs['configuration.yml.mustache'], buildTemplateRenderView(),
+    );
+    const doc = yaml.load(rendered) as {
+      session: { expiration?: unknown; inactivity?: unknown; remember_me?: unknown };
+    };
+    expect(doc.session.expiration).toBe('1M');
+    expect(doc.session.remember_me).toBe('1M');
+    // Explicitly NOT 0 / '0' / unset — see the note above.
+    expect(doc.session.inactivity).toBe('1M');
   });
 });
 
