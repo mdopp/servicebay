@@ -1,5 +1,27 @@
 # Getting started — the fastest path to a working assistant
 
+> ## ⚠️ Historical — superseded walkthrough, kept as a record
+>
+> **This page is the May 2026 OSCAR / Hermes / Ollama on-ramp. It is not the
+> current path and the commands below should not be followed on a new box.**
+> What replaced it:
+>
+> - The assistant is **Solaris** (`mdopp/solarisbay`) — a native engine deployed
+>   as a ServiceBay template, not `pip install hermes-agent`. Read the
+>   `solaris-overview` assist for the live picture.
+> - The local model server is llama.cpp **`llama-server`** — the solarisbay
+>   `llama` template, host network, port **11435**, OpenAI-compatible
+>   `/v1/chat/completions` + `/v1/embeddings`, GGUF models under
+>   `${DATA_DIR}/llama/models`, household alias `gemma-4-e4b`. Reach it at
+>   `127.0.0.1:11435` from a host-network service, or
+>   `host.containers.internal:11435` from an isolated pod (ADR 0007) — never a
+>   LAN IP.
+> - **Ollama is retired** (operator decision, 2026-09; solarisbay#1332). Every
+>   "point it at Ollama" instruction below is a record of the superseded
+>   walkthrough, not advice.
+>
+> Everything after this banner is the superseded design, kept for the record.
+
 OSCAR is a thin household layer on top of [Hermes Agent](https://github.com/NousResearch/hermes-agent). Hermes on its own is `pip install`-able and **usable in minutes** — most of what OSCAR's five intents promise is reachable before any OSCAR-specific code or ServiceBay template is involved.
 
 This page is the honest "what can I run today" walkthrough, in three tiers. Start at Tier 1; each tier is a superset of the one before.
@@ -16,12 +38,13 @@ The point of Tier 1 is a **reality check**: is Hermes good enough on your hardwa
 pip install hermes-agent
 hermes postinstall
 hermes model            # interactive — pick a provider (local Ollama or a cloud key)
+#                         historical: Ollama retired 2026-09, llama-server on 11435 today
 hermes --tui            # start talking
 ```
 
-That's a running agent. Ask it something, watch it use tools. For local-LLM mode, point `hermes model` at an Ollama endpoint; for a quick cloud trial, paste an Anthropic/OpenAI/OpenRouter key.
+That's a running agent. Ask it something, watch it use tools. For local-LLM mode, point `hermes model` at an Ollama endpoint; for a quick cloud trial, paste an Anthropic/OpenAI/OpenRouter key. *(historical — Ollama was retired 2026-09; the model server is llama-server on 11435.)*
 
-**What this validates:** conversation quality, latency on your box, whether local Ollama is fast enough, the general feel. If Hermes underwhelms here, that's a finding worth having *before* Sprint 5.
+**What this validates:** conversation quality, latency on your box, whether the local model server (then Ollama, since 2026-09 llama-server on 11435) is fast enough, the general feel. If Hermes underwhelms here, that's a finding worth having *before* Sprint 5.
 
 ---
 
@@ -80,7 +103,7 @@ hermes
 
 | OSCAR intent | Tier-2 coverage |
 |---|---|
-| 1 — Sovereignty | Local LLM via Ollama; cloud opt-in. **Missing:** the per-call `cloud_audit` trail (OSCAR-eigen, Tier 3). |
+| 1 — Sovereignty | Local LLM via Ollama (historical — llama-server on 11435 today); cloud opt-in. **Missing:** the per-call `cloud_audit` trail (OSCAR-eigen, Tier 3). |
 | 2 — Long memory | `qmd` (documents/notes) + Hermes' own conversation memory. **Missing:** structured domain collections — maybe never needed. |
 | 3 — One conversation | Chat: full. Voice: CLI + Discord-voice. **Missing:** HA Voice PE pucks (gatekeeper, Phase 1). |
 | 4 — Per-resident privacy | Hermes keeps per-user profiles. **Missing:** *voice = identity* — recognising who is speaking (gatekeeper speaker-ID, Phase 2). |
@@ -92,7 +115,7 @@ Four of five intents, substantially, from `pip install` + config. That is the ho
 
 ## Tier 3 — the household deployment
 
-Tier 3 is what the rest of the OSCAR product builds: OSCAR as a ServiceBay-managed deployment, for a household rather than one person. OSCAR lives in its own repo ([`mdopp/solbay`](https://github.com/mdopp/solbay)) as an external ServiceBay registry — enable it at FCoS install time (or via Settings → Registries) and the four OSCAR templates (`ollama`, `hermes`, `hermes-webui`, `oscar-household`) plus the `oscar` stack appear in the wizard.
+Tier 3 is what the rest of the OSCAR product builds: OSCAR as a ServiceBay-managed deployment, for a household rather than one person. OSCAR lives in its own repo ([`mdopp/solbay`](https://github.com/mdopp/solbay)) as an external ServiceBay registry — enable it at FCoS install time (or via Settings → Registries) and the four OSCAR templates (`ollama`, `hermes`, `hermes-webui`, `oscar-household`) plus the `oscar` stack appear in the wizard. *(historical — Ollama was retired 2026-09; the model server is llama-server on 11435.)*
 
 What Tier 3 adds over Tier 2:
 
@@ -108,6 +131,6 @@ Walkthrough: [`mdopp/solbay`'s README](https://github.com/mdopp/solbay#readme). 
 
 ## Recommended sequence
 
-1. **Do Tier 1 now** on the GPU server (or any box with Python). Confirm Hermes + local Ollama is fast enough.
+1. **Do Tier 1 now** on the GPU server (or any box with Python). Confirm Hermes + local Ollama is fast enough. *(historical — Ollama was retired 2026-09; the model server is llama-server on 11435.)*
 2. **Do Tier 2** on the same box. Live with it for a few days — chat, HA control, `qmd`. Every finding (is `qmd` enough? is Hermes' own memory enough?) feeds back into the architecture and can *shrink* the OSCAR layer further.
 3. **Move to Tier 3** when you want the household shape — multi-resident, audit, room voice pucks. By then the OSCAR-specific surface is well understood and small.

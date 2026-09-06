@@ -91,22 +91,23 @@ own single-container service and share state with the others through a
 hostPath volume both mount. Do not add a second container to the pod
 that holds the GPU limit.
 
-Templates that benefit from a GPU (Ollama, Immich's ML, media
-transcoding) opt in via a Mustache-section-gated `resources` block:
+Templates that benefit from a GPU (the `llama` model server, Immich's
+ML, media transcoding) opt in via a Mustache-section-gated `resources`
+block:
 
 ```yaml
-    image: docker.io/ollama/ollama:latest
-    {{#OLLAMA_GPU_PASSTHROUGH}}
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    {{#LLAMA_GPU_PASSTHROUGH}}
     resources:
       limits:
         nvidia.com/gpu: "1"
-    {{/OLLAMA_GPU_PASSTHROUGH}}
+    {{/LLAMA_GPU_PASSTHROUGH}}
 ```
 
 `variables.json` declares the gate as a blank-default text variable:
 
 ```json
-"OLLAMA_GPU_PASSTHROUGH": {
+"LLAMA_GPU_PASSTHROUGH": {
   "type": "text",
   "description": "Leave blank for CPU-only. Set to any non-blank value (e.g. 'yes') to enable NVIDIA GPU passthrough via CDI. Requires a CDI-registered NVIDIA GPU on the host (set up with `nvidia-ctk cdi generate`).",
   "default": ""
@@ -123,8 +124,9 @@ shadowing `.kube`/`.yml` on every redeploy so the swap survives
 (#2174). The container itself is force-recreated only when the running
 one is *not* the one the `.container` unit currently describes — same
 `podman run` argv and same image id means it is left running, so warm
-in-container state (ollama's VRAM-resident models) survives a redeploy
-that changed nothing; every "can't tell" still recreates (#2618).
+in-container state (a model server's VRAM-resident weights) survives a
+redeploy that changed nothing; every "can't tell" still recreates
+(#2618).
 Without that swap the limit is dropped and the container runs
 on CPU with no error — which is why the multi-container shape above is
 refused outright rather than deployed.
@@ -142,7 +144,10 @@ accelerator turns a slow path into a broken one.
 
 Worked reference: `templates/media/` (`JELLYFIN_GPU_PASSTHROUGH` →
 `install_gpu_quadlet_fallback()` + `jellyfin_enable_nvenc()`, #2580).
-The pattern originates in `ollama`, which now lives outside this repo.
+The pattern originates in the old `ollama` template, which left this
+repo and was itself retired in 2026-09; the current GPU/LLM reference
+service is the solarisbay `llama` template (llama-server, host
+network, port 11435, OpenAI-compatible `/v1`).
 
 ### `variables.json`
 
@@ -601,10 +606,10 @@ Pass an explicit `id` so re-runs of `post-deploy.py` are idempotent
 post_json(
     f"{sb_api}/api/health/checks",
     {
-        "id": "ollama-api",
-        "name": "Ollama API",
+        "id": "llama-api",
+        "name": "llama-server API",
         "type": "http",
-        "target": "http://127.0.0.1:11434/api/tags",
+        "target": "http://127.0.0.1:11435/v1/models",
         "interval": 60,
         "enabled": True,
         "httpConfig": {"expectedStatus": 200},
@@ -621,7 +626,7 @@ helper that wires `SB_API_TOKEN` correctly.
 |---|---|---|
 | `http` | HTTP service has a readiness URL | `http(s)://…` |
 | `ping` | Reachability of an IP / host | hostname or IP |
-| `service` | A specific systemd unit name | unit name (e.g. `pod-ollama.service`) |
+| `service` | A specific systemd unit name | unit name (e.g. `pod-llama.service`) |
 | `systemd` | System-level (root) unit | unit name |
 | `podman` | Container present + running | container name |
 | `script` | Cross-cut probe ("data file exists and is non-empty") | shell script body |
@@ -743,10 +748,14 @@ First-party registries ServiceBay knows about:
 
 - **`mdopp/servicebay-templates`** — the canonical external template
   set. Operator prompt at FCoS install time defaults to enabled.
-- **`mdopp/solbay`** — the household AI assistant tier (Ollama,
-  Hermes, Hermes WebUI, oscar-household template, plus the OSCAR
-  stack bundling them). Operator prompt at FCoS install time
-  defaults to enabled; decline to keep the install lean.
+- **`mdopp/solarisbay`** — the household AI assistant tier: the
+  Solaris Engine plus the `llama` model server (llama.cpp
+  `llama-server`, host network, port 11435, OpenAI-compatible `/v1`,
+  GGUF models under `${DATA_DIR}/llama/models`). Operator prompt at
+  FCoS install time defaults to enabled; decline to keep the install
+  lean. *History: this registry was `mdopp/solbay` — Ollama, Hermes,
+  Hermes WebUI, `oscar-household` and the OSCAR stack — until 2026-09;
+  older code comments still carry the old name.*
 
 ### Asset directories (`skills/`) on a template
 

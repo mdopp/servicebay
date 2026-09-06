@@ -81,7 +81,8 @@ clear error — it never silently falls back to CPU.
 box keeps running, transcoding/inference just gets slow, and the operator has no
 signal that the GPU dropped out across a redeploy.
 
-**How you observe it.** GPU-enabled services (Ollama, Immich ML, media transcoding)
+**How you observe it.** GPU-enabled services (the `llama` model server, Immich ML,
+media transcoding)
 either start with the GPU or fail loudly. There's no degraded-but-quiet state.
 
 ### How it works

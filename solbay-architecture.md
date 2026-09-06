@@ -1,5 +1,25 @@
 # O.S.C.A.R. — Architecture
 
+> ## ⚠️ Historical — superseded architecture, kept as a record
+>
+> **This document describes the OSCAR / Hermes / Ollama design of May 2026. It is
+> not the current architecture and must not be built against.** What replaced it:
+>
+> - The agent runtime is the native **Solaris Engine** (`mdopp/solarisbay`), not
+>   Hermes. See the `solaris-overview` assist for the live picture.
+> - The model server is llama.cpp **`llama-server`** — the solarisbay `llama`
+>   template, host network, port **11435**, OpenAI-compatible
+>   `/v1/chat/completions` + `/v1/embeddings`, GGUF models under
+>   `${DATA_DIR}/llama/models`, household alias `gemma-4-e4b`. Address it at
+>   `127.0.0.1:11435` from a host-network service and
+>   `host.containers.internal:11435` from an isolated pod (ADR 0007), never a
+>   LAN IP.
+> - **Ollama is retired** (operator decision, 2026-09; solarisbay#1332). Every
+>   mention of Ollama, `ai-stack`, and the `ollama`/`hermes` templates below is a
+>   record of the superseded plan, not a live service.
+>
+> Everything after this banner is the superseded design, kept for the record.
+
 > Living document. May 2026 lean reset: OSCAR is a thin household-identity-and-memory layer on top of [Hermes Agent](https://github.com/NousResearch/hermes-agent) and [ServiceBay](https://github.com/mdopp/servicebay). Everything that is not specifically about *this household* lives in those two projects.
 
 ## Vision
@@ -30,7 +50,7 @@ Hermes is the **agent runtime**. Consumed as the upstream container `docker.io/n
 - **Skills ecosystem** — `hermes skills install` against a curated hub (agentskills.io standard, 17 categories, security-scanned). Notably `official/research/qmd`: a local hybrid-retrieval engine (BM25 + vector + LLM rerank) over a markdown knowledge base — relevant to OSCAR intent 2.
 - Cron scheduler for timers, alarms, reminders, recurring tasks
 - MCP client for consuming external tool surfaces
-- LLM-provider abstraction (local via Ollama, cloud via Claude / Gemini / OpenRouter / …)
+- LLM-provider abstraction (local via Ollama, cloud via Claude / Gemini / OpenRouter / …) *(historical — Ollama was retired 2026-09; the model server is llama-server on 11435.)*
 
 OSCAR does **not** fork Hermes. Behaviour we miss gets contributed back as a PR or as an MCP server Hermes can mount. **Before building anything, check whether Hermes already ships it** — the surface grows fast. The fastest-path walkthrough in [`docs/getting-started.md`](docs/getting-started.md) shows how much of OSCAR's promise is reachable from a bare `pip install hermes-agent`.
 
@@ -46,7 +66,7 @@ ServiceBay is the **platform**. Consumed as an external template registry. Servi
 - Existing `voice` template (Whisper + Piper + openWakeWord, shipped via [`mdopp/servicebay#348`](https://github.com/mdopp/servicebay/issues/348)) — deployed unchanged alongside `oscar-household` once OSCAR adds voice
 - Structured-logging surface (`src/lib/logger.ts`, SQLite-backed, shape `{ts, level, tag, message, args}`) — OSCAR containers emit one JSON line per event matching this contract
 - Health-check system (v3.35–v3.37, 16 check types, MCP tools `create_health_check` / `get_health_checks` / `run_check_now` / `diagnose`) — OSCAR's `oscar-status` skill consumes those tools instead of implementing its own probes
-- New `ai-stack` walkthrough + new `ollama` and `hermes` templates **to be built** in `mdopp/servicebay` (tracked in [`#538`](https://github.com/mdopp/servicebay/issues/538), [`#539`](https://github.com/mdopp/servicebay/issues/539), [`#540`](https://github.com/mdopp/servicebay/issues/540))
+- New `ai-stack` walkthrough + new `ollama` and `hermes` templates **to be built** in `mdopp/servicebay` (tracked in [`#538`](https://github.com/mdopp/servicebay/issues/538), [`#539`](https://github.com/mdopp/servicebay/issues/539), [`#540`](https://github.com/mdopp/servicebay/issues/540)) — *historical: neither template was ever built here, and Ollama was retired 2026-09; the model server is llama-server on 11435.*
 
 Phase-3a additions (`postgres`, `qdrant`) are deferred to *when* Phase 3a is built; storage choice is re-opened then.
 
@@ -96,12 +116,15 @@ Everything else from earlier OSCAR drafts is upstreamed, dropped, or postponed: 
       │     • oscar-debug-set
       ▼ Hermes LLM-provider URL
    ┌─────────────────────────────────┐
-   │  ollama (ServiceBay, ai-stack)  │
-   │  local Gemma                    │
+   │  ollama — retired 2026-09       │
+   │  now llama-server on 11435      │
    └─────────────────────────────────┘
 ```
 
-Two templates from ServiceBay's `ai-stack` (`ollama`, `hermes`), one existing ServiceBay template (`voice`, used as-is — Phase 1), one OSCAR template (`oscar-household`). Home Assistant is reached through Hermes' **native HA integration** (`HASS_TOKEN` on the `hermes` template), not via an MCP server. The gatekeeper container — OSCAR-published image — runs **inside the oscar-household pod**, both pods sharing the host netns so the gatekeeper reaches the `voice` template's Whisper/Piper on `127.0.0.1` and Hermes on `127.0.0.1:8642`. OSCAR's three tables live in a SQLite file in `oscar-household`'s volume — no external Postgres for Phase 0–2.
+*(Historical box: that node is Ollama, retired 2026-09. Today it is llama-server
+— the solarisbay `llama` template on port 11435, OpenAI-compatible `/v1`.)*
+
+Two templates from ServiceBay's `ai-stack` (`ollama`, `hermes` — both historical, superseded by the solarisbay `llama` template and the native Solaris Engine), one existing ServiceBay template (`voice`, used as-is — Phase 1), one OSCAR template (`oscar-household`). Home Assistant is reached through Hermes' **native HA integration** (`HASS_TOKEN` on the `hermes` template), not via an MCP server. The gatekeeper container — OSCAR-published image — runs **inside the oscar-household pod**, both pods sharing the host netns so the gatekeeper reaches the `voice` template's Whisper/Piper on `127.0.0.1` and Hermes on `127.0.0.1:8642`. OSCAR's three tables live in a SQLite file in `oscar-household`'s volume — no external Postgres for Phase 0–2.
 
 ## Components in detail
 
@@ -213,7 +236,7 @@ Correlation via `trace_id` per turn.
 
 **Prereqs.** ServiceBay v3.16+ with the full-stack deployed. `mdopp/servicebay#348` merged (HA without bundled Wyoming) — *only needed once voice is added*. `mdopp/servicebay#443` merged (`git` in ServiceBay's container) so the OSCAR registry can be cloned.
 
-**Deliverables.** ServiceBay's `ollama` and `hermes` templates exist and are wizard-deployable. OSCAR's `oscar-household` template exists and ships its own SQLite. `ai-stack` walkthrough plus OSCAR's stack walkthrough together produce a working setup. The `hermes` template carries `HASS_TOKEN` / `HASS_URL` so Hermes' **native HA integration** is live on first boot — device control needs no OSCAR code. Operator pairs Signal once via `podman exec -it hermes signal-cli link -n "HermesAgent"` (genuinely interactive — QR scan). `oscar-household`'s post-deploy registers ServiceBay-MCP via a `config.yaml` merge + restart, and initialises `oscar.db`.
+**Deliverables.** ServiceBay's `ollama` and `hermes` templates exist and are wizard-deployable. *(historical — Ollama was retired 2026-09; the model server is llama-server on 11435.)* OSCAR's `oscar-household` template exists and ships its own SQLite. `ai-stack` walkthrough plus OSCAR's stack walkthrough together produce a working setup. The `hermes` template carries `HASS_TOKEN` / `HASS_URL` so Hermes' **native HA integration** is live on first boot — device control needs no OSCAR code. Operator pairs Signal once via `podman exec -it hermes signal-cli link -n "HermesAgent"` (genuinely interactive — QR scan). `oscar-household`'s post-deploy registers ServiceBay-MCP via a `config.yaml` merge + restart, and initialises `oscar.db`.
 
 **Result.** Family chat in Signal, full HA device control, conversation memory, cloud-call audit. No room-voice path yet (Discord-voice works as the Tier-2 interim).
 
@@ -254,9 +277,9 @@ Voice-tone analysis as a parallel gatekeeper sensor. Multi-room voice routing (�
 
 | Where | What | Phase | Status |
 |---|---|---|---|
-| [`mdopp/servicebay#538`](https://github.com/mdopp/servicebay/issues/538) | New `ollama` template with optional GPU passthrough (default-bind `127.0.0.1` + NPM/Authelia for remote access) | 0 | Open, amended |
-| [`mdopp/servicebay#539`](https://github.com/mdopp/servicebay/issues/539) | New `hermes` template wrapping `docker.io/nousresearch/hermes-agent`. Non-interactive setup (no `podman exec`), `dependencies: ollama` annotation, dashboard default-binds `127.0.0.1` | 0 | Open, amended |
-| [`mdopp/servicebay#540`](https://github.com/mdopp/servicebay/issues/540) | New `ai-stack` walkthrough bundling Ollama + Hermes | 0 | Open |
+| [`mdopp/servicebay#538`](https://github.com/mdopp/servicebay/issues/538) | New `ollama` template with optional GPU passthrough (default-bind `127.0.0.1` + NPM/Authelia for remote access) — historical, superseded by the solarisbay `llama` template on 11435 | 0 | Open, amended |
+| [`mdopp/servicebay#539`](https://github.com/mdopp/servicebay/issues/539) | New `hermes` template wrapping `docker.io/nousresearch/hermes-agent`. Non-interactive setup (no `podman exec`), `dependencies: ollama` annotation, dashboard default-binds `127.0.0.1` — historical, superseded | 0 | Open, amended |
+| [`mdopp/servicebay#540`](https://github.com/mdopp/servicebay/issues/540) | New `ai-stack` walkthrough bundling Ollama + Hermes — historical, superseded | 0 | Open |
 | [`mdopp/servicebay#541`](https://github.com/mdopp/servicebay/issues/541) | ~~Extend `voice` template with `GATEKEEPER_IMAGE` sidecar~~ | ~~1~~ | **Closed** — gatekeeper lives in `oscar-household` instead |
 | [`mdopp/servicebay#542`](https://github.com/mdopp/servicebay/issues/542) | `docs/TEMPLATE_LOGGING.md` describing the existing `{ts, level, tag, message, args}` shape (ServiceBay's logger already produces it) | any | Open, doc-only |
 | [`mdopp/servicebay#543`](https://github.com/mdopp/servicebay/issues/543) | `docs/TEMPLATE_AUTHORING.md` health-checks section pointing at the existing 16-check-type system (v3.35–v3.37) | any | Open, doc-only |
@@ -275,7 +298,7 @@ Tracking issue [`mdopp/solbay#70`](https://github.com/mdopp/solbay/issues/70) li
 |---|---|
 | **Agent runtime** | Hermes Agent (`docker.io/nousresearch/hermes-agent`), unforked, deployed via ServiceBay's `hermes` template |
 | **Platform** | ServiceBay v3.16+ on Podman Quadlet, Fedora CoreOS host |
-| **AI infrastructure** | ServiceBay `ai-stack` (Ollama + Hermes for Phase 0; Postgres + Qdrant conditional in Phase 3a); not OSCAR's job to deploy |
+| **AI infrastructure** | ServiceBay `ai-stack` (Ollama + Hermes for Phase 0 — historical, superseded by llama-server on 11435; Postgres + Qdrant conditional in Phase 3a); not OSCAR's job to deploy |
 | **Storage** | SQLite for Phase 0–2 — single `oscar.db` in `oscar-household`'s volume. Consistent with how Hermes stores Honcho. Postgres + Qdrant is a Phase-3a decision, not a baked-in dependency. |
 | **Identity** | LLDAP `uid` + groups from ServiceBay's `auth` pod; SSO via Authelia OIDC for any OSCAR web UI |
 | **Voice pipeline** | ServiceBay's unchanged `voice` template (Whisper + Piper + openWakeWord) deployed alongside `oscar-household`. The gatekeeper container lives **inside** `oscar-household`, not as a sidecar of `voice` — both pods are `hostNetwork: true` so the gatekeeper reaches Wyoming services through the host loopback. |

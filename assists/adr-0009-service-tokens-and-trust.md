@@ -58,7 +58,7 @@ secret) is bound to `secret.key`; every UI session cookie is signed with `AUTH_S
 **LLDAP** is the single identity source; **Authelia** is the authenticator. Two
 integration modes, deliberately distinct:
 
-- **Forward-auth** (files, chat, zwave, sync, dns, ldap, nginx, ollama, …): the reverse
+- **Forward-auth** (files, chat, zwave, sync, dns, ldap, nginx, llama, …): the reverse
   proxy (NPM) calls Authelia's `/api/authz/auth-request`; on success it injects
   `Remote-User` / `Remote-Groups` / `Remote-Email` and the upstream **trusts the proxy**.
   Authelia's endpoint is **https-only** (an `http` `X-Original-URL` is rejected 400).
@@ -160,6 +160,23 @@ predate tokens keep working — fresh installs use named tokens.
   re-mint, not a re-activate. These are different operations and surfaced differently.
 - **One credential, two doors.** A named token authenticates both the MCP server and the
   REST API — there is no separate "MCP token" vs "API token" type, only scopes.
+
+## History 2026-09-06 — the model server in the forward-auth list is `llama`
+
+Layer 2's forward-auth list named **`ollama`**. Ollama is retired (operator
+decision, 2026-09; solarisbay#1332); the box's model server is llama.cpp
+`llama-server` — the solarisbay `llama` template, port **11435**,
+OpenAI-compatible `/v1`. The entry is **renamed, not removed**, and the trust
+reasoning behind it is unchanged: the model server carries no auth of its own, so
+if it is ever published beyond the box it is a forward-auth app — the proxy
+authenticates and the upstream trusts the proxy. Nothing here re-decides a layer.
+
+One thing to keep straight when you read that list: `llama` binds **loopback
+only** today (ADR 0007's carve-out), so on-box callers reach it directly at
+`127.0.0.1:11435` with **no credential at all**, and the same goes for the model
+lease at `127.0.0.1:8787/api/model-lease`. That is loopback trust, not an
+exemption you may extend — anything crossing the box boundary still goes through
+the proxy and Authelia.
 
 ## Open items (tracked elsewhere)
 - Per-service OIDC-secret reconciliation on reinstall — **#1559** (needs design decision).

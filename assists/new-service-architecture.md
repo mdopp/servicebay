@@ -38,9 +38,9 @@ A new need is usually solved as one of these — pick deliberately:
   bridge). Ships as a template. Example: "a photo library", "an office-light
   dashboard".
 - **Reuse what's there** — when the runtime already provides it. Before building
-  an agent/LLM/tool or device feature, check whether **HA, Authelia, Ollama, NPM,
-  or the Solaris Engine** already provides it, and consume/extend that instead of
-  rebuilding.
+  an agent/LLM/tool or device feature, check whether **HA, Authelia, the `llama`
+  model server (llama-server on 11435), NPM, or the Solaris Engine** already
+  provides it, and consume/extend that instead of rebuilding.
 - **Both** — a ServiceBay service exposes the capability (e.g. an MCP surface or
   API), and Solaris consumes it as a tool. Prefer this over duplicating logic:
   generic mechanism in ServiceBay, household-specific behavior in Solaris.
@@ -92,7 +92,18 @@ The app should be: **stateless-restartable** (all state on a mounted volume),
   `net/http`.)
 - Reuse the platform instead of reimplementing: **Authelia** for auth (don't roll
   your own login), **NPM** for TLS/proxy, **Home Assistant** for device control,
-  **Ollama** for local LLM. Talk to them, don't rebuild them.
+  **llama-server** for local LLM. Talk to them, don't rebuild them.
+- The local LLM is the solarisbay **`llama`** template: one llama.cpp
+  `llama-server`, host network, port **11435**, OpenAI-compatible `/v1`
+  (`/v1/chat/completions`, `/v1/embeddings`), GGUF models under
+  `${DATA_DIR}/llama/models`, household alias `gemma-4-e4b`. Address it per ADR
+  0007 — `127.0.0.1:11435` from a host-network service,
+  `host.containers.internal:11435` from an isolated pod, never a LAN IP — and
+  note the pod-facing listener is not live until mdopp/solarisbay#1344. Need a
+  different model for a while? Take a lease over HTTP (`POST` / `GET` / `DELETE
+  http://127.0.0.1:8787/api/model-lease`), don't start a second server.
+  *(Until 2026-09 this slot was Ollama on 11434; Ollama is retired —
+  solarisbay#1332 — and nothing new is built against it.)*
 
 ## Recommended tests
 - **Unit tests** for real logic (parsing, control flow, error handling) — fast,

@@ -38,11 +38,14 @@ radicale's LDAP bind.
    ADR, not a template decision.
    - **nginx, adguard, home-assistant** — genuinely need host networking
      (ingress :80/:443, DNS :53, mDNS/SSDP).
-   - **ollama + hermes** — ollama ships no auth and is loopback-bound by design;
-     a plain `hostPort` would newly LAN-expose it, and isolated hermes can only
-     reach ollama via the host. Revisit only once a host-firewall / private-
-     network story exists. **That precondition was met by #2388** — see the
-     amendment below; this entry is grandfathered, not a precedent.
+   - **llama + solaris** — the local model server (llama-server, port 11435)
+     ships no auth and is loopback-bound by design; a plain `hostPort` would
+     newly LAN-expose it, and an isolated consumer can only reach it via the
+     host. Revisit only once a host-firewall / private-network story exists.
+     **That precondition was met by #2388** — see the amendment below; this
+     entry is grandfathered, not a precedent. *(This entry read `ollama +
+     hermes` until 2026-09; renamed, not re-decided — see
+     [History 2026-09-06](#history-2026-09-06--the-model-server-carve-out-is-now-llama).)*
    - **file-share** — Samba needs privileged ports 139/445 (hard under rootless)
      and the Syncthing GUI is loopback-bound. Needs design work first.
    - **auth** — migrated last, on its own (LLDAP holds all identity data).
@@ -73,7 +76,8 @@ radicale's LDAP bind.
 Decision 3 was added after #2518 asked whether a service that talks to two
 loopback-bound siblings counts as a named carve-out. It does not.
 
-The trigger: Decision 2's `ollama + hermes` entry made its own revisit
+The trigger: Decision 2's second entry — then named `ollama + hermes`, today
+`llama + solaris` — made its own revisit
 conditional on *"a host-firewall / private-network story"*. That story shipped in
 **#2388** — the `blockLanAccess` port flag and its nftables capability handler —
 and this ADR was never updated, which left three documents stating three
@@ -136,6 +140,33 @@ Consequences of stating it this way:
 - Losing the container's LAN route does **not** break this path, which is the
   point — the public hostname resolves to the box's LAN address and is therefore
   the fragile way in.
+
+## History 2026-09-06 — the model-server carve-out is now `llama`
+
+Decision 2's second entry was written as **`ollama + hermes`**. Ollama is retired
+(operator decision, 2026-09; solarisbay#1332) and the box's model server is
+llama.cpp **`llama-server`** — the solarisbay `llama` template, host network,
+port **11435**, OpenAI-compatible `/v1`, GGUF models under
+`${DATA_DIR}/llama/models`. The Hermes agent runtime was likewise replaced by the
+native Solaris Engine.
+
+**The decision does not change.** This is a rename of an existing entry, not a
+new carve-out: the reasoning the entry records still holds for the service that
+replaced it — llama-server ships no auth and binds loopback, so a `hostPort`
+would newly LAN-expose it. Two consequences worth writing down rather than
+re-deciding:
+
+- **Addressing is unchanged** (Decisions 1 and 3). A host-network service on the
+  box reaches the model server at `http://127.0.0.1:11435`; an isolated pod would
+  reach it at `http://host.containers.internal:11435` — **never a LAN IP**.
+  Today only the first path answers: llama-server still binds loopback only, so
+  the pod-facing listener — and the `blockLanAccess` flag Decision 3 pairs it
+  with — lands with **mdopp/solarisbay#1344**. Until then an isolated consumer
+  pointed at 11435 gets nothing, and that is a *documented deviation* in the
+  consuming template (Decision 3), not grounds to join the closed list.
+- **Still grandfathered, still not a precedent.** Re-examining this entry against
+  Decision 3 once #1344 lands remains the open item named in the 2026-08-12
+  amendment.
 
 ## Consequences
 
