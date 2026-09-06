@@ -312,3 +312,63 @@ describe('tryParseTemplateManifest', () => {
     expect(m).toBeNull();
   });
 });
+
+describe('parseTemplateManifest — servicebay.backup (#2858)', () => {
+  /** A template whose annotations include a `servicebay.backup` block scalar. */
+  function withBackupBlock(body: string): string {
+    const indented = body.trimEnd().split('\n').map(l => `      ${l}`).join('\n');
+    return `apiVersion: v1
+kind: Pod
+metadata:
+  name: example
+  annotations:
+    servicebay.label: "Example"
+    servicebay.backup: |
+${indented}
+spec:
+  containers:
+    - name: ex
+      image: example.com/ex:latest
+`;
+  }
+
+  it('carries a valid declaration through as backupRaw', () => {
+    const r = parseTemplateManifest(withBackupBlock('include:\n  - config.json\ncollector: npm-sqlite'));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.manifest.backupRaw).toContain('collector: npm-sqlite');
+  });
+
+  it('accepts a `backup: none` opt-out with a reason', () => {
+    const r = parseTemplateManifest(withBackupBlock('backup: none\nreason: Stateless.'));
+    expect(r.ok).toBe(true);
+  });
+
+  it('fails the manifest when a declared path escapes the data dir', () => {
+    const r = parseTemplateManifest(withBackupBlock('include:\n  - ../../etc/shadow'));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    const joined = r.errors.join('\n');
+    expect(joined).toMatch(/servicebay\.backup/);
+    expect(joined).toMatch(/ADR 0002/);
+  });
+
+  it('refuses an inline value — it declares neither paths nor a reason', () => {
+    const r = parseTemplateManifest(fixture({ 'servicebay.label': 'X', 'servicebay.backup': 'none' }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors.join('\n')).toMatch(/must be a YAML block scalar/);
+  });
+
+  it('leaves backupRaw undefined when the annotation is absent', () => {
+    const r = parseTemplateManifest(fixture({ 'servicebay.label': 'X' }));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.manifest.backupRaw).toBeUndefined();
+  });
+
+  it('reads the raw block permissively without validating it', () => {
+    const m = readManifestAnnotations(withBackupBlock('include:\n  - ../escape'));
+    expect(m.backupRaw).toContain('../escape');
+  });
+});
