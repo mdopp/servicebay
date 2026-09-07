@@ -38,6 +38,43 @@ const execFileAsync = promisify(execFile);
 /** Directory on the NAS (relative to its root) holding all service backups. */
 export const NAS_BACKUP_DIR = 'sb-backup';
 
+/** Filename prefix of the `nas_backup_reachable` probe's write-test file. A
+ *  failed write test leaves one behind, so the producer sweeps them (#2873). */
+export const NAS_WRITE_TEST_PREFIX = '.sb-write-test-';
+
+/**
+ * Does this failure mean the destination ran out of room (#2873)?
+ *
+ * Deliberately NOT a bare `553` match: FTP reuses 553 for "permission denied"
+ * and "illegal file name" too, and treating those as a full share would make
+ * the producer delete other services' snapshots to fix a permissions problem.
+ * So the trigger is either an explicit out-of-space phrase (what the FritzBox
+ * sends alongside both 452 and 553) or a bare `452`, which is only ever
+ * "insufficient storage space in system".
+ */
+const OUT_OF_SPACE_RE =
+  /no space left|insufficient storage|not enough space|quota exceeded|disk (?:is )?full|\b452\b/i;
+
+/** True when `error` reports the backup destination being out of space (#2873).
+ *  Accepts an Error, a raw string (a recorded `lastMessage`), or anything else. */
+export function isOutOfSpaceError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : typeof error === 'string' ? error : String(error ?? '');
+  return OUT_OF_SPACE_RE.test(message);
+}
+
+/** Slack added to the "how much must I free" estimate: the `.meta.json` sidecar
+ *  plus the filesystem's own per-file overhead. */
+const CAPACITY_SLACK_BYTES = 4096;
+
+/**
+ * A dated slot younger than this is treated as possibly still being written by a
+ * concurrent run (the nightly cron and an on-demand "back up now" can overlap),
+ * so the sweep leaves it alone. Anything older with no sidecar / zero bytes is a
+ * genuinely abandoned partial upload.
+ */
+const SWEEP_GRACE_MS = 15 * 60_000;
+
 /** Why a service has no manifest, since #2858: the declaration lives on the
  *  template, so "no manifest" now means the template did not declare one (or
  *  it was refused) — name that, so the operator knows where to look. */
@@ -654,6 +691,157 @@ async function getBackupRetention(): Promise<number> {
   return typeof configured === 'number' && configured > 0 ? Math.floor(configured) : DEFAULT_BACKUP_RETENTION;
 }
 
+/** Remove one snapshot: the tar AND its `.meta.json` sidecar (#1890), so a prune
+ *  never leaves a sidecar behind to be swept later. */
+async function removeSnapshot(tarName: string): Promise<void> {
+  await nasRemove(path.posix.join(NAS_BACKUP_DIR, tarName));
+  await nasRemove(path.posix.join(NAS_BACKUP_DIR, `${tarName}.meta.json`));
+}
+
+/** Is this dated slot young enough that a concurrent run may still be writing
+ *  it? A bare legacy slot carries no stamp, so it is never "in flight". */
+function withinSweepGrace(stamp: string | null, now: Date): boolean {
+  const createdAt = createdAtFromStamp(stamp);
+  if (!createdAt) return false;
+  return Math.abs(now.getTime() - Date.parse(createdAt)) < SWEEP_GRACE_MS;
+}
+
+/** What the sweep should do with one file in `sb-backup/`. `partial` also
+ *  condemns the file's sidecar, if it has one. */
+type SweepVerdict = 'keep' | 'drop' | 'partial';
+
+/** Classify one listed file. See {@link sweepNasBackupDir} for the four shapes
+ *  and why "no sidecar" only condemns *dated* slots. */
+function sweepVerdict(
+  file: { name: string; size: number },
+  present: (name: string) => boolean,
+  now: Date,
+): SweepVerdict {
+  const { name } = file;
+  if (name.startsWith(NAS_WRITE_TEST_PREFIX)) return 'drop';
+  if (name.endsWith('.tar.meta.json')) {
+    return present(name.slice(0, -'.meta.json'.length)) ? 'keep' : 'drop';
+  }
+  if (!name.endsWith('.tar')) return 'keep';
+  const stamp = parseSlotName(name)?.stamp ?? null;
+  if (withinSweepGrace(stamp, now)) return 'keep';
+  const zeroLength = (file.size ?? 0) === 0;
+  const datedWithoutSidecar = stamp !== null && !present(`${name}.meta.json`);
+  return zeroLength || datedWithoutSidecar ? 'partial' : 'keep';
+}
+
+/**
+ * Remove everything in `sb-backup/` that is not a restorable snapshot (#2873),
+ * and return the snapshots that survive.
+ *
+ * A 452/553 mid-transfer leaves a partial (often zero-length) tar behind, and a
+ * failed `nas_backup_reachable` write test leaves a `.sb-write-test-*` file —
+ * neither is ever cleaned up today, so they accumulate on a share that is
+ * already full. Four shapes are swept:
+ *   - `.sb-write-test-*` probe leftovers,
+ *   - a `.tar.meta.json` sidecar whose tar is gone (the tar is uploaded FIRST,
+ *     so a lone sidecar is never an in-flight write),
+ *   - a zero-length tar,
+ *   - a **dated** tar with no sidecar — we always write the sidecar right after
+ *     the tar, so a dated slot without one is an interrupted upload.
+ * A bare legacy `<service>.tar` (pre-#1865) has no sidecar by construction and
+ * stays restorable (#1865 semantics), so "no sidecar" only condemns dated slots.
+ *
+ * Best-effort by construction: a sweep failure is logged, never thrown — it must
+ * not turn a backup that would otherwise succeed into a failure.
+ */
+async function sweepNasBackupDir(
+  now: Date,
+): Promise<{ removed: string[]; freedBytes: number; entries: ServiceBackupListEntry[] }> {
+  const removed: string[] = [];
+  let freedBytes = 0;
+  let files: { name: string; size: number }[] = [];
+  try {
+    files = await nasList(NAS_BACKUP_DIR);
+    const sizeOf = new Map(files.map(f => [f.name, f.size ?? 0]));
+    const drop = async (name: string): Promise<void> => {
+      await nasRemove(path.posix.join(NAS_BACKUP_DIR, name));
+      removed.push(name);
+      freedBytes += sizeOf.get(name) ?? 0;
+    };
+    const present = (name: string): boolean => sizeOf.has(name);
+    for (const file of files) {
+      const verdict = sweepVerdict(file, present, now);
+      if (verdict === 'keep') continue;
+      await drop(file.name);
+      // A condemned tar takes its sidecar with it (the sidecar's own verdict
+      // would be `drop` on the next run, but there is no reason to wait).
+      if (verdict === 'partial' && present(`${file.name}.meta.json`)) {
+        await drop(`${file.name}.meta.json`);
+      }
+    }
+    if (removed.length > 0) {
+      logger.info(
+        'ExternalBackup',
+        `Swept ${removed.length} partial/orphaned file(s) from ${NAS_BACKUP_DIR}/ ` +
+          `(${freedBytes} bytes): ${removed.join(', ')}`,
+      );
+    }
+  } catch (e) {
+    logger.warn(
+      'ExternalBackup',
+      `Sweep of ${NAS_BACKUP_DIR}/ failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  const gone = new Set(removed);
+  return { removed, freedBytes, entries: toSnapshotEntries(files.filter(f => !gone.has(f.name))) };
+}
+
+/**
+ * Free at least `needBytes` by pruning the OLDEST snapshots across ALL services
+ * (#2873). Count-based per-service retention alone cannot keep a small share
+ * within capacity — 12 services × 7 snapshots of whatever size each happens to
+ * be can exceed the drive regardless of the count — so a full share is answered
+ * by dropping the globally-oldest snapshots first.
+ *
+ * **Never drops a service's last remaining snapshot**: a service whose only copy
+ * is deleted to make room for another service is a data-loss bug, not a prune.
+ * If every service is down to one copy the target is simply too small, which the
+ * caller reports as such. Best-effort: failures are logged, never thrown.
+ */
+async function pruneAcrossServices(needBytes: number): Promise<{ pruned: string[]; freedBytes: number }> {
+  const pruned: string[] = [];
+  let freedBytes = 0;
+  try {
+    const all = await listServiceBackups();
+    // The listing is newest-first within a service, so the first entry seen for
+    // a service is the one copy that must survive.
+    const newestPerService = new Map<string, string>();
+    for (const entry of all) {
+      if (!newestPerService.has(entry.service)) newestPerService.set(entry.service, entry.tarName);
+    }
+    const candidates = all
+      .filter(e => newestPerService.get(e.service) !== e.tarName)
+      // Oldest first, across services. A bare legacy slot has no stamp and sorts
+      // first — it is the oldest thing on the share by definition.
+      .sort((a, b) => (a.stamp ?? '').localeCompare(b.stamp ?? ''));
+    for (const entry of candidates) {
+      if (freedBytes >= needBytes) break;
+      await removeSnapshot(entry.tarName);
+      pruned.push(entry.tarName);
+      freedBytes += entry.size;
+    }
+    if (pruned.length > 0) {
+      logger.info(
+        'ExternalBackup',
+        `Freed ${freedBytes} bytes for a ${needBytes}-byte write by pruning ${pruned.length} ` +
+          `old snapshot(s) across services: ${pruned.join(', ')}`,
+      );
+    }
+  } catch (e) {
+    logger.warn(
+      'ExternalBackup',
+      `Cross-service prune failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  return { pruned, freedBytes };
+}
+
 /**
  * Prune dated snapshots for ONE service down to the `keep` most-recent (#1865),
  * removing each pruned tar's `.meta.json` sidecar too. A bare legacy
@@ -662,9 +850,13 @@ async function getBackupRetention(): Promise<number> {
  * Best-effort: a prune failure is logged, never thrown (it must not fail a
  * successful backup). Returns the names pruned.
  */
-async function pruneServiceBackups(service: string, keep: number): Promise<string[]> {
+async function pruneServiceBackups(
+  service: string,
+  keep: number,
+  known?: ServiceBackupListEntry[],
+): Promise<string[]> {
   try {
-    const all = await listServiceBackups();
+    const all = known ?? (await listServiceBackups());
     const mine = all
       .filter(b => b.service === service)
       // Newest first: a real dated stamp beats a bare (null) slot; ties (only
@@ -673,8 +865,7 @@ async function pruneServiceBackups(service: string, keep: number): Promise<strin
     const stale = mine.slice(keep);
     const pruned: string[] = [];
     for (const entry of stale) {
-      await nasRemove(path.posix.join(NAS_BACKUP_DIR, entry.tarName));
-      await nasRemove(path.posix.join(NAS_BACKUP_DIR, `${entry.tarName}.meta.json`));
+      await removeSnapshot(entry.tarName);
       pruned.push(entry.tarName);
     }
     if (pruned.length > 0) {
@@ -695,6 +886,14 @@ async function pruneServiceBackups(service: string, keep: number): Promise<strin
  * run (the HA empty-automations incident) instead of only the latest state.
  * Shared by the dir-based producer (`backupServiceToNas`) and the upload route
  * (#1351) so the on-NAS format has a single source of truth.
+ *
+ * Room is made BEFORE the upload, not only after it (#2873). The old order —
+ * upload, then prune — meant a full share was a permanent lockout: the upload
+ * threw, so the prune that would have freed the space was never reached, every
+ * night, for every service. Now each write sweeps the partial/orphaned files,
+ * prunes this service to `keep - 1` (so the new snapshot lands on budget), and
+ * — if the destination still reports itself full — prunes the oldest snapshots
+ * across ALL services and retries once.
  */
 async function writeServiceBackupToNas(service: string, tar: Buffer): Promise<ServiceBackupResult> {
   const now = new Date();
@@ -706,15 +905,46 @@ async function writeServiceBackupToNas(service: string, tar: Buffer): Promise<Se
   };
   const tarName = `${service}-${backupStamp(now)}.tar`;
   const metaName = `${tarName}.meta.json`;
+  const metaBuf = Buffer.from(JSON.stringify(meta, null, 2));
+  const keep = await getBackupRetention();
 
-  await nasUpload(path.posix.join(NAS_BACKUP_DIR, tarName), tar);
-  await nasUpload(
-    path.posix.join(NAS_BACKUP_DIR, metaName),
-    Buffer.from(JSON.stringify(meta, null, 2)),
-  );
+  // Make room first. Both steps are best-effort (they swallow their own
+  // failures): a prune that cannot run must never fail a backup that could
+  // otherwise succeed. Pruning to `keep - 1` leaves exactly `keep` once this
+  // write lands, and never below 1 — so a failed upload can't leave a service
+  // with no snapshot at all.
+  const swept = await sweepNasBackupDir(now);
+  await pruneServiceBackups(service, Math.max(keep - 1, 1), swept.entries);
+
+  const upload = async (): Promise<void> => {
+    await nasUpload(path.posix.join(NAS_BACKUP_DIR, tarName), tar);
+    await nasUpload(path.posix.join(NAS_BACKUP_DIR, metaName), metaBuf);
+  };
+
+  try {
+    await upload();
+  } catch (e) {
+    if (!isOutOfSpaceError(e)) throw e;
+    // The destination is full. Drop whatever partial this attempt left behind,
+    // free space across services (never a service's last copy), retry ONCE.
+    const needBytes = tar.length + metaBuf.length + CAPACITY_SLACK_BYTES;
+    await nasRemove(path.posix.join(NAS_BACKUP_DIR, tarName)).catch(() => {});
+    const { pruned, freedBytes } = await pruneAcrossServices(needBytes);
+    try {
+      await upload();
+    } catch (retryError) {
+      if (!isOutOfSpaceError(retryError)) throw retryError;
+      const detail = retryError instanceof Error ? retryError.message : String(retryError);
+      throw new Error(
+        `${detail} — target too small for one snapshot of each service: ${tarName} needs ${needBytes} bytes, ` +
+          `pruning ${pruned.length} old snapshot(s) freed ${freedBytes} and the sweep freed ${swept.freedBytes}. ` +
+          `Every service's newest snapshot is kept, so nothing further can be released.`,
+      );
+    }
+  }
 
   logger.info('ExternalBackup', `Wrote ${tarName} to NAS (${tar.length} bytes)`);
-  await pruneServiceBackups(service, await getBackupRetention());
+  await pruneServiceBackups(service, keep);
   return { service, tarName, metaName, size: tar.length, meta };
 }
 
@@ -785,7 +1015,13 @@ export async function stageUploadedServiceTar(service: string, tar: Buffer): Pro
  * files are not snapshots and are filtered out.
  */
 export async function listServiceBackups(): Promise<ServiceBackupListEntry[]> {
-  const files = await nasList(NAS_BACKUP_DIR);
+  return toSnapshotEntries(await nasList(NAS_BACKUP_DIR));
+}
+
+/** Shape a raw `sb-backup/` listing into snapshot entries. Split out of
+ *  {@link listServiceBackups} so the pre-write sweep (#2873) can reuse the file
+ *  list it already fetched instead of listing the share a second time. */
+function toSnapshotEntries(files: { name: string; size: number }[]): ServiceBackupListEntry[] {
   return files
     .filter(f => f.name.endsWith('.tar')) // drops `.tar.meta.json` sidecars
     .map(f => {

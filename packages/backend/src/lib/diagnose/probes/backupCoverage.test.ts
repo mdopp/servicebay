@@ -181,6 +181,22 @@ describe('checkConfigBackup — criterion 3: last nightly result is visible', ()
     expect(r.status).toBe('warn');
     expect(r.detail).toMatch(/9\/11 services/);
     expect(r.detail).toMatch(/immich/);
+    expect(r.hint).toMatch(/per-service errors/);
+  });
+
+  it('points a full destination at capacity, not at re-running the backup (#2873)', async () => {
+    state.config = {
+      externalBackup: {
+        enabled: true, lastRun: ago(6 * HOUR), lastStatus: 'partial',
+        servicesOk: 0, servicesTotal: 12,
+        lastMessage: 'Not backed up: adguard (452 Error writing file: No space left on device)',
+      },
+    };
+    const r = await checkConfigBackup(NOW);
+    expect(r.state).toBe('partial');
+    expect(r.hint).toMatch(/reported itself full/i);
+    expect(r.hint).toMatch(/prunes the oldest/i);
+    expect(r.hint).not.toMatch(/per-service errors/);
   });
 
   it('warns when the run failed outright', async () => {

@@ -11,7 +11,11 @@
  * read-only / no-drive target are surfaced distinctly.
  */
 import { getNasTarget, testNasConnection, nasUpload, nasRemove } from '@/lib/externalBackup/nasClient';
-import { NAS_BACKUP_DIR } from '@/lib/externalBackup/producer';
+import {
+  NAS_BACKUP_DIR,
+  NAS_WRITE_TEST_PREFIX,
+  isOutOfSpaceError,
+} from '@/lib/externalBackup/producer';
 import { logger } from '@/lib/logger';
 
 export interface NasBackupProbeResult {
@@ -24,6 +28,20 @@ const ENABLE_SHARING_HINT =
   'On the FritzBox: attach a USB drive, then enable file sharing under ' +
   'Heimnetz → Speicher (NAS) → Heimnetzfreigabe (turn on access over FTP). ' +
   'Confirm the gateway user (Settings → Integrations) is allowed to write to it.';
+
+/**
+ * A full share is NOT "sharing is switched off" — telling the operator to attach
+ * a USB drive when one is attached and simply full sent them chasing the wrong
+ * thing for days (#2873). Since the producer now prunes before every write and
+ * retries once, a full share normally clears itself on the next nightly run;
+ * what is left for the operator is only the genuinely-too-small case.
+ */
+const FULL_SHARE_HINT =
+  'The drive is attached and writable but out of space. The nightly config backup now sweeps partial ' +
+  'uploads and prunes the oldest snapshots across all services before each write, so this usually clears ' +
+  'itself on the next run — check the "Config backup" row after it. If it persists, the drive is too small ' +
+  'to hold one snapshot of every service: attach a larger one, or lower the retention count under ' +
+  'Settings → Backups.';
 
 /** Distinguish a login rejection from a plain connectivity failure so the
  *  remediation hint points at the right thing. */
@@ -58,17 +76,21 @@ export async function checkNasBackupReachable(): Promise<NasBackupProbeResult> {
   // Connected + authed — confirm we can actually write where backups go.
   // ensureDir + upload + remove exercises the full write path without leaving
   // anything behind on the share.
-  const probePath = `${NAS_BACKUP_DIR}/.sb-write-test-${process.pid}-${Date.now()}`;
+  const probePath = `${NAS_BACKUP_DIR}/${NAS_WRITE_TEST_PREFIX}${process.pid}-${Date.now()}`;
   try {
     await nasUpload(probePath, Buffer.from('servicebay-write-test'));
     await nasRemove(probePath);
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     logger.warn('diagnose:nas_backup_reachable', `write test failed: ${error}`);
+    // A 452/553 mid-transfer can still have created the file, and the remove
+    // above never ran — clean it up here so the probe stops littering the share
+    // it is complaining about (#2873). Idempotent, and best-effort by design.
+    await nasRemove(probePath).catch(() => {});
     return {
       status: 'warn',
       detail: `Connected to ${target.host}, but writing to ${NAS_BACKUP_DIR}/ failed: ${error}`,
-      hint: ENABLE_SHARING_HINT,
+      hint: isOutOfSpaceError(error) ? FULL_SHARE_HINT : ENABLE_SHARING_HINT,
     };
   }
 

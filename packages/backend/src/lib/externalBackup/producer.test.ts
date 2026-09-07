@@ -830,6 +830,183 @@ describe('dated rotation + retention pruning (#1865)', () => {
   });
 });
 
+describe('capacity-aware pruning + partial-file sweep (#2873)', () => {
+  // Same in-memory NAS as the #1865 block, plus a switch that makes the next N
+  // uploads fail the way a full FritzBox share does.
+  let store: Map<string, Buffer>;
+  let failUploads: number;
+
+  const p = (name: string) => `${NAS_BACKUP_DIR}/${name}`;
+
+  /** Seed a complete snapshot (tar + paired sidecar) of `size` bytes. */
+  function seedSnapshot(name: string, size: number): void {
+    store.set(p(name), Buffer.alloc(size, 1));
+    store.set(p(`${name}.meta.json`), Buffer.from('{"schemaVersion":1}'));
+  }
+
+  function names(): string[] {
+    return [...store.keys()].map(k => k.slice(`${NAS_BACKUP_DIR}/`.length)).sort();
+  }
+
+  beforeEach(() => {
+    store = new Map();
+    failUploads = 0;
+    mockNas.nasUpload.mockImplementation(async (remote: string, data: Buffer) => {
+      if (failUploads > 0) {
+        failUploads--;
+        throw new Error(`553 ${remote}: No space left on device.`);
+      }
+      store.set(remote, Buffer.from(data));
+    });
+    mockNas.nasList.mockImplementation(async (dir = '') => {
+      const prefix = dir ? `${dir}/` : '';
+      return [...store.entries()]
+        .filter(([k]) => k.startsWith(prefix))
+        .map(([k, v]) => ({ name: k.slice(prefix.length), size: v.length }));
+    });
+    mockNas.nasRemove.mockImplementation(async (remote: string) => { store.delete(remote); });
+  });
+
+  it('(a) recovers from a full share: the failed upload prunes across services and retries once', async () => {
+    seedSnapshot('adguard-20260601-0531.tar', 1024);
+    seedSnapshot('adguard-20260610-0531.tar', 1024);
+    seedSnapshot('syncthing-20260602-0531.tar', 1024);
+    seedSnapshot('syncthing-20260611-0531.tar', 1024);
+    failUploads = 1; // the first tar upload hits "No space left on device"
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-20T05:31:00Z'));
+      const res = await stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7));
+      expect(res.tarName).toBe('adguard-20260620-0531.tar');
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The retry landed the snapshot …
+    expect(store.has(p('adguard-20260620-0531.tar'))).toBe(true);
+    expect(store.has(p('adguard-20260620-0531.tar.meta.json'))).toBe(true);
+    // … after the oldest snapshot on the share was pruned to make room …
+    expect(store.has(p('adguard-20260601-0531.tar'))).toBe(false);
+    expect(store.has(p('adguard-20260601-0531.tar.meta.json'))).toBe(false);
+    // … and every service still has at least its newest copy.
+    expect(store.has(p('syncthing-20260611-0531.tar'))).toBe(true);
+    expect(store.has(p('adguard-20260610-0531.tar'))).toBe(true);
+  });
+
+  it('(a2) a failure that is NOT out of space is not answered by deleting backups', async () => {
+    seedSnapshot('adguard-20260601-0531.tar', 1024);
+    seedSnapshot('adguard-20260610-0531.tar', 1024);
+    mockNas.nasUpload.mockRejectedValue(new Error('553 adguard.tar: Permission denied.'));
+
+    await expect(stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7))).rejects.toThrow(/Permission denied/);
+    // Both snapshots survive: a permissions problem must never prune the share.
+    expect(store.has(p('adguard-20260601-0531.tar'))).toBe(true);
+    expect(store.has(p('adguard-20260610-0531.tar'))).toBe(true);
+  });
+
+  it('(a3) reports "target too small" when even a cross-service prune cannot make room', async () => {
+    seedSnapshot('adguard-20260610-0531.tar', 1024); // one copy each — nothing prunable
+    seedSnapshot('syncthing-20260611-0531.tar', 1024);
+    failUploads = 99; // the share stays full through the retry
+
+    await expect(stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7)))
+      .rejects.toThrow(/target too small for one snapshot of each service/);
+    // The last copy of each service is still there.
+    expect(store.has(p('adguard-20260610-0531.tar'))).toBe(true);
+    expect(store.has(p('syncthing-20260611-0531.tar'))).toBe(true);
+  });
+
+  it('(b) sweeps orphaned + partial files before writing, keeping paired snapshots', async () => {
+    // Kept: a complete dated snapshot, and a bare legacy slot (#1865 — pre-dated
+    // backups have no sidecar by construction and must stay restorable).
+    seedSnapshot('adguard-20260601-0531.tar', 1024);
+    store.set(p('home-assistant.tar'), Buffer.alloc(512, 9));
+    // Swept: dated tar with no sidecar, zero-length tar (+ its sidecar),
+    // a sidecar whose tar is gone, and a leftover write-test probe file.
+    store.set(p('adguard-20260602-0531.tar'), Buffer.alloc(1024, 2));
+    store.set(p('adguard-20260603-0531.tar'), Buffer.alloc(0));
+    store.set(p('adguard-20260603-0531.tar.meta.json'), Buffer.from('{}'));
+    store.set(p('syncthing-20260604-0531.tar.meta.json'), Buffer.from('{}'));
+    store.set(p('.sb-write-test-123-1750000000000'), Buffer.from('servicebay-write-test'));
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-20T05:31:00Z'));
+      await stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7));
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(names()).toEqual([
+      'adguard-20260601-0531.tar',
+      'adguard-20260601-0531.tar.meta.json',
+      'adguard-20260620-0531.tar',
+      'adguard-20260620-0531.tar.meta.json',
+      'home-assistant.tar',
+    ]);
+  });
+
+  it('(b2) leaves a just-written dated slot alone — a concurrent run may still be uploading it', async () => {
+    // No sidecar yet, stamped one minute ago: that is an in-flight write, not an
+    // abandoned partial, so the sweep must not delete it.
+    store.set(p('syncthing-20260620-0530.tar'), Buffer.alloc(1024, 5));
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-20T05:31:00Z'));
+      await stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7));
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(store.has(p('syncthing-20260620-0530.tar'))).toBe(true);
+  });
+
+  it('(c) cross-service pruning is oldest-first and never drops a service\'s last snapshot', async () => {
+    // Each seeded snapshot is comfortably larger than one new tar, so exactly one
+    // prune is enough — which is what makes the ORDER observable.
+    seedSnapshot('adguard-20260601-0531.tar', 8192); // oldest prunable → goes
+    seedSnapshot('adguard-20260610-0531.tar', 8192); // adguard's newest → stays
+    seedSnapshot('syncthing-20260602-0531.tar', 8192); // prunable but newer → stays
+    seedSnapshot('syncthing-20260611-0531.tar', 8192);
+    seedSnapshot('authelia-20260603-0531.tar', 8192); // authelia's ONLY copy → stays
+    failUploads = 1;
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-20T05:31:00Z'));
+      await stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7));
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(store.has(p('adguard-20260601-0531.tar'))).toBe(false); // oldest, pruned
+    expect(store.has(p('syncthing-20260602-0531.tar'))).toBe(true); // newer, spared
+    expect(store.has(p('authelia-20260603-0531.tar'))).toBe(true); // last copy, never pruned
+    expect(store.has(p('adguard-20260610-0531.tar'))).toBe(true);
+    expect(store.has(p('syncthing-20260611-0531.tar'))).toBe(true);
+    expect(store.has(p('adguard-20260620-0531.tar'))).toBe(true);
+  });
+
+  it('(c2) a prune failure never fails a backup that would otherwise succeed', async () => {
+    mockGetConfig.mockResolvedValue({ templateSettings: {}, externalBackup: { enabled: true, retention: 1 } });
+    seedSnapshot('adguard-20260601-0531.tar', 1024);
+    mockNas.nasRemove.mockRejectedValue(new Error('550 Permission denied.'));
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-20T05:31:00Z'));
+      await expect(stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7))).resolves.toMatchObject({
+        tarName: 'adguard-20260620-0531.tar',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(store.has(p('adguard-20260620-0531.tar'))).toBe(true);
+  });
+});
+
 describe('manifest integration', () => {
   it('the real adguard manifest excludes querylog while keeping the config', async () => {
     const src = await mkTmp();
