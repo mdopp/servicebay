@@ -12,18 +12,32 @@ const { mockWorker, mockNas, mockCfg } = vi.hoisted(() => ({
     readBackupTar: vi.fn(),
     cleanupBackupRun: vi.fn(),
   },
-  mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn(), nasRemove: vi.fn() },
+  mockNas: {
+    nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn(), nasRemove: vi.fn(),
+    // Spied, so a test can assert the whole upload phase runs inside ONE
+    // destination session (#2876) rather than a connection per call.
+    withNasSession: vi.fn(<T,>(fn: () => Promise<T>): Promise<T> => fn()),
+  },
   mockCfg: { getConfig: vi.fn(), updateConfig: vi.fn() },
 }));
 vi.mock('../backupWorker/service', () => mockWorker);
-vi.mock('./nasClient', () => mockNas);
+// The connection-error classifier stays REAL: the run's recorded message is what
+// the `config_backup` probe groups on, so a stub here would let the two drift.
+vi.mock('./nasClient', async () => ({
+  ...mockNas,
+  isConnectionLevelError: (await vi.importActual<typeof import('./nasClient')>('./nasClient'))
+    .isConnectionLevelError,
+}));
 vi.mock('../config', () => mockCfg);
 
 import { backupInstalledServicesToNas, NAS_BACKUP_DIR } from './producer';
 
 const RUN = { runId: 'r', outDir: '/out/r', container: 'backup-worker-r' };
 
-function completed(results: Array<{ service: string; ok: boolean; outcome?: string; detail?: string | null }>) {
+function completed(
+  results: Array<{ service: string; ok: boolean; outcome?: string; detail?: string | null }>,
+  inconsistent?: Set<string>,
+) {
   return {
     exec: vi.fn(),
     run: RUN,
@@ -35,6 +49,7 @@ function completed(results: Array<{ service: string; ok: boolean; outcome?: stri
       })),
       error: null, updatedAt: 0, startedAt: 0,
     },
+    inconsistent,
   };
 }
 
@@ -136,5 +151,52 @@ describe('backupInstalledServicesToNas — recording the run outcome (#2615)', (
     mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'adguard', ok: true }]));
     await backupInstalledServicesToNas();
     expect(recorded()).toMatchObject({ enabled: true, time: '04:15', retention: 3 });
+  });
+});
+
+// #2876 / #2877 — the two ways a run used to lose services for reasons that had
+// nothing to do with the service: 50–70 FTP sessions in ~10 s, and a snapshot the
+// backup worker could not read back.
+describe('backupInstalledServicesToNas — one destination session, honest meta', () => {
+  const recorded = () => mockCfg.updateConfig.mock.calls.at(-1)?.[0]?.externalBackup;
+  const uploadedMeta = (): Record<string, unknown> => {
+    const call = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('.meta.json'))!;
+    return JSON.parse(String(call[1])) as Record<string, unknown>;
+  };
+
+  it('runs the whole upload phase inside ONE destination session (#2876)', async () => {
+    mockWorker.runBackupForInstalled.mockResolvedValue(
+      completed([{ service: 'adguard', ok: true }, { service: 'nginx', ok: true }]),
+    );
+    await backupInstalledServicesToNas();
+    // One session for the run — not one per service, and not one per call.
+    expect(mockNas.withNasSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('records the run message with the connection drop grouped, not per service (#2876)', async () => {
+    mockWorker.runBackupForInstalled.mockResolvedValue(
+      completed([
+        { service: 'adguard', ok: true },
+        { service: 'paperless', ok: false, detail: 'connect ECONNREFUSED 192.168.178.1:21 (control socket)' },
+        { service: 'beets', ok: false, detail: 'connect ECONNREFUSED 192.168.178.1:21 (control socket)' },
+      ]),
+    );
+    await backupInstalledServicesToNas();
+    expect(recorded().lastMessage).toMatch(/dropped the connection after 1 of 3 services/);
+    expect(recorded().lastMessage).toContain('paperless, beets');
+  });
+
+  it('marks a live (inconsistent) collector copy in the tar meta (#2877)', async () => {
+    mockWorker.runBackupForInstalled.mockResolvedValue(
+      completed([{ service: 'nginx', ok: true }], new Set(['nginx'])),
+    );
+    await backupInstalledServicesToNas();
+    expect(uploadedMeta()).toMatchObject({ service: 'nginx', consistent: false });
+  });
+
+  it('leaves `consistent` absent when the snapshot was torn-free', async () => {
+    mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'nginx', ok: true }]));
+    await backupInstalledServicesToNas();
+    expect(uploadedMeta()).not.toHaveProperty('consistent');
   });
 });

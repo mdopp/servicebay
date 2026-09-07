@@ -30,6 +30,8 @@ import {
   nasDownload,
   nasList,
   nasRemove,
+  withNasSession,
+  isConnectionLevelError,
 } from './nasClient';
 
 const GW = { gateway: { type: 'fritzbox', host: '192.168.178.1', username: 'fritz9746', password: 'pw' } };
@@ -192,5 +194,124 @@ describe('testNasConnection', () => {
     const r = await testNasConnection();
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/Login incorrect/);
+  });
+});
+
+// #2876 — the FritzBox's FTP server has a small session budget. A connection per
+// CALL meant a 13-service run opened 50–70 sessions in ~10 s; after ~8 services it
+// answered FIN + ECONNREFUSED and the same tail of services (paperless, beets,
+// radicale, jellyfin, syncthing) was never backed up, run after run.
+describe('withNasSession — one connection per run (#2876)', () => {
+  it('reuses ONE control connection across every operation in the run', async () => {
+    await withNasSession(async () => {
+      await nasList('sb-backup');
+      await nasRemove('sb-backup/old.tar');
+      await nasUpload('sb-backup/a.tar', Buffer.from('a'));
+      await nasUpload('sb-backup/a.tar.meta.json', Buffer.from('{}'));
+      await nasList('sb-backup');
+    });
+    // Five operations, ONE login — the connect-per-call shape opened five.
+    expect(mockClient.access).toHaveBeenCalledTimes(1);
+    expect(mockClient.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets the working directory to the login dir before each reused op', async () => {
+    await withNasSession(async () => {
+      await nasList('sb-backup');
+      await nasList('sb-backup');
+    });
+    // Without the reset the second `cd('sb-backup')` would resolve against
+    // sb-backup/ (the first list left the cwd there) and fail.
+    expect(mockClient.cd.mock.calls.map(c => c[0])).toEqual(['sb-backup', '/', 'sb-backup']);
+  });
+
+  it('still connects per call outside a session (unchanged for probes/one-offs)', async () => {
+    await nasList('sb-backup');
+    await nasList('sb-backup');
+    expect(mockClient.access).toHaveBeenCalledTimes(2);
+  });
+
+  it('closes the shared connection even when the run throws', async () => {
+    await expect(withNasSession(async () => {
+      await nasList('sb-backup');
+      throw new Error('run blew up');
+    })).rejects.toThrow('run blew up');
+    expect(mockClient.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('connection-level backoff + retry (#2876)', () => {
+  const refused = (): Error =>
+    Object.assign(new Error('connect ECONNREFUSED 192.168.178.1:21'), { code: 'ECONNREFUSED' });
+
+  it('classifies the FritzBox drops as connection-level, and a service fault as not', () => {
+    expect(isConnectionLevelError(refused())).toBe(true);
+    expect(isConnectionLevelError(new Error('Server sent FIN packet unexpectedly, closing connection.'))).toBe(true);
+    expect(isConnectionLevelError('read ECONNRESET (data socket)')).toBe(true);
+    // A per-service fault must NOT be retried as if the NAS had dropped us.
+    expect(isConnectionLevelError(new Error('EACCES: permission denied, copyfile'))).toBe(false);
+    expect(isConnectionLevelError(new Error('452 Insufficient storage space in system'))).toBe(false);
+    expect(isConnectionLevelError(undefined)).toBe(false);
+  });
+
+  it('backs off and retries service k, and services k+1… still run', async () => {
+    vi.useFakeTimers();
+    try {
+      // The NAS refuses the reconnect twice, then recovers — exactly the shape a
+      // tripped session limit has.
+      mockClient.access
+        .mockRejectedValueOnce(refused())
+        .mockRejectedValueOnce(refused());
+
+      const run = withNasSession(async () => {
+        await nasUpload('sb-backup/k.tar', Buffer.from('k'));        // service k
+        await nasUpload('sb-backup/k-plus-1.tar', Buffer.from('k1')); // service k+1
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      await run;
+
+      // Two refusals + the successful login. Service k+1 rides the same session.
+      expect(mockClient.access).toHaveBeenCalledTimes(3);
+      expect(mockClient.uploadFrom).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up after the last backoff instead of retrying forever', async () => {
+    vi.useFakeTimers();
+    try {
+      mockClient.access.mockRejectedValue(refused());
+      const run = withNasSession(() => nasList('sb-backup'));
+      const assertion = expect(run).rejects.toThrow(/ECONNREFUSED/);
+      await vi.advanceTimersByTimeAsync(120_000);
+      await assertion;
+      // 1 initial attempt + 3 backoffs.
+      expect(mockClient.access).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT retry a per-service failure — one attempt, error straight through', async () => {
+    mockClient.uploadFrom.mockRejectedValueOnce(new Error('EACCES: permission denied'));
+    await expect(
+      withNasSession(() => nasUpload('sb-backup/x.tar', Buffer.from('x'))),
+    ).rejects.toThrow('EACCES');
+    expect(mockClient.access).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws the dropped connection away so the next operation reconnects', async () => {
+    vi.useFakeTimers();
+    try {
+      mockClient.list.mockRejectedValueOnce(new Error('Server sent FIN packet unexpectedly, closing connection.'));
+      const run = withNasSession(() => nasList('sb-backup'));
+      await vi.advanceTimersByTimeAsync(30_000);
+      await run;
+      // The dead client is closed and a fresh session is opened for the retry.
+      expect(mockClient.access).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

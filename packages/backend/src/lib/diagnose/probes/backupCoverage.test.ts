@@ -199,6 +199,54 @@ describe('checkConfigBackup — criterion 3: last nightly result is visible', ()
     expect(r.hint).not.toMatch(/per-service errors/);
   });
 
+  // #2876 — five identical `ECONNREFUSED` rows are ONE fact about the NAS, not
+  // five broken services. Sending the operator to "check the per-service errors"
+  // is the wrong fix for a tripped FTP session limit.
+  it('names a dropped connection as its own state, not a per-service partial', async () => {
+    state.config = {
+      externalBackup: {
+        enabled: true, lastRun: ago(6 * HOUR), lastStatus: 'partial',
+        servicesOk: 8, servicesTotal: 13,
+        lastMessage:
+          'The destination dropped the connection after 8 of 13 services — 5 service(s) never got a write: '
+          + 'paperless, beets, radicale, jellyfin, syncthing (first error: connect ECONNREFUSED 192.168.178.1:21)',
+      },
+    };
+    const r = await checkConfigBackup(NOW);
+    expect(r.state).toBe('connection_dropped');
+    expect(r.status).toBe('warn');
+    expect(r.hint).toMatch(/one fact about the destination/i);
+    expect(r.hint).not.toBe(undefined);
+    // Must NOT be told to go hunting through per-service errors.
+    expect(r.hint).not.toMatch(/check the per-service errors/i);
+  });
+
+  it('still calls a genuine per-service partial a partial', async () => {
+    state.config = {
+      externalBackup: {
+        enabled: true, lastRun: ago(6 * HOUR), lastStatus: 'partial',
+        servicesOk: 12, servicesTotal: 13,
+        lastMessage: 'Not backed up: nginx (EACCES: permission denied, copyfile database.sqlite)',
+      },
+    };
+    const r = await checkConfigBackup(NOW);
+    expect(r.state).toBe('partial');
+    expect(r.hint).toMatch(/per-service errors/i);
+  });
+
+  it('a run that failed outright on a dropped connection gets the same grouping hint', async () => {
+    state.config = {
+      externalBackup: {
+        enabled: true, lastRun: ago(6 * HOUR), lastStatus: 'error',
+        servicesOk: 0, servicesTotal: 13,
+        lastMessage: 'connect ECONNREFUSED 192.168.178.1:21 (control socket)',
+      },
+    };
+    const r = await checkConfigBackup(NOW);
+    expect(r.state).toBe('last_run_failed');
+    expect(r.hint).toMatch(/one fact about the destination/i);
+  });
+
   it('warns when the run failed outright', async () => {
     state.config = {
       externalBackup: {

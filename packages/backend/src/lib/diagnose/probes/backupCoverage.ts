@@ -34,7 +34,7 @@
 
 import { getConfig } from '@/lib/config';
 import { getBackupHistory } from '@/lib/backup/service';
-import { isOutOfSpaceError } from '@/lib/externalBackup/producer';
+import { isOutOfSpaceError, isConnectionLevelError } from '@/lib/externalBackup/producer';
 import { resolveBackupSources, type BackupConfig, type BackupSchedule } from '@/lib/backup/types';
 
 /**
@@ -201,6 +201,7 @@ type ConfigBackupState =
   | 'nothing_installed'
   | 'last_run_failed'
   | 'partial'
+  | 'connection_dropped'
   | 'overdue'
   | 'ok';
 
@@ -233,6 +234,15 @@ const FULL_TARGET_HINT =
 const PARTIAL_HINT =
   'The named services have no config on the NAS from that run. Re-run it from Settings → Backups and check the per-service errors.';
 
+/**
+ * The failures were the DESTINATION dropping the connection, not the services
+ * (#2876). Listing five identical `ECONNREFUSED` rows as five broken services
+ * sent the operator to the wrong fix, so this state is named and hinted
+ * separately from a genuine per-service `partial`.
+ */
+const CONNECTION_DROPPED_HINT =
+  'This is one fact about the destination, not several broken services: the NAS closed the control connection part-way through the run, so every service after that point had nowhere to write. The run now shares one FTP session and backs off before retrying, so a re-run usually gets through. If it keeps happening, the share itself is the thing to look at — a FritzBox USB share that needs re-plugging, or an FTP server with a low concurrent-session limit.';
+
 /** Classify a recorded nightly run: denominator first, always. */
 function classifyConfigRun(record: ExternalBackupRecord, now: Date): ConfigBackupProbeResult {
   const lastRun = record.lastRun ? Date.parse(record.lastRun) : NaN;
@@ -248,6 +258,27 @@ function classifyConfigRun(record: ExternalBackupRecord, now: Date): ConfigBacku
   return classifyRecordedConfigRun(record, lastRun, now);
 }
 
+/**
+ * Which of the three causes the recorded message names, if any. Kept separate
+ * from the classification below so a full destination (#2873) and a dropped
+ * connection (#2876) each reach the operator with their own next step, rather
+ * than the generic "check the per-service errors".
+ */
+function diagnoseRunCause(record: ExternalBackupRecord): {
+  targetFull: boolean;
+  connectionDropped: boolean;
+} {
+  const targetFull = isOutOfSpaceError(record.lastMessage);
+  return { targetFull, connectionDropped: !targetFull && isConnectionLevelError(record.lastMessage) };
+}
+
+/** The hint for a run that did not cover everything, given its cause. */
+function partialRunHint(cause: ReturnType<typeof diagnoseRunCause>, fallback: string): string {
+  if (cause.targetFull) return FULL_TARGET_HINT;
+  if (cause.connectionDropped) return CONNECTION_DROPPED_HINT;
+  return fallback;
+}
+
 function classifyRecordedConfigRun(
   record: ExternalBackupRecord,
   lastRun: number,
@@ -257,15 +288,16 @@ function classifyRecordedConfigRun(
   const ok = record.servicesOk ?? 0;
   const total = record.servicesTotal ?? 0;
   const tally = `${ok}/${total} services`;
-  const targetFull = isOutOfSpaceError(record.lastMessage);
+  const cause = diagnoseRunCause(record);
   if (record.lastStatus === 'error') {
     return withCaveat({
       status: 'warn',
       state: 'last_run_failed',
       detail: `The last config backup (${age} ago) FAILED before it finished: ${record.lastMessage ?? 'no message recorded'}. ${tally} were written.`,
-      hint: targetFull
-        ? FULL_TARGET_HINT
-        : 'Check the "Config backup (FritzBox NAS)" row above — an unreachable or read-only target is the usual cause.',
+      hint: partialRunHint(
+        cause,
+        'Check the "Config backup (FritzBox NAS)" row above — an unreachable or read-only target is the usual cause.',
+      ),
     });
   }
   if (total === 0) {
@@ -278,9 +310,9 @@ function classifyRecordedConfigRun(
   if (ok < total) {
     return withCaveat({
       status: 'warn',
-      state: 'partial',
+      state: cause.connectionDropped ? 'connection_dropped' : 'partial',
       detail: `The last config backup (${age} ago) covered only ${tally}. ${record.lastMessage ?? ''}`.trim(),
-      hint: targetFull ? FULL_TARGET_HINT : PARTIAL_HINT,
+      hint: partialRunHint(cause, PARTIAL_HINT),
     });
   }
   if (now.getTime() - lastRun > CONFIG_BACKUP_INTERVAL_MS * OVERDUE_FACTOR) {
