@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.33.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.2...servicebay-v5.33.3) (2026-09-07)
+
+
+### Bug Fixes
+
+* **backup:** stop chasing the npm sqlite copy with an off-allow-list chmod ([53fe0d6](https://github.com/mdopp/servicebay/commit/53fe0d626ee64db5df5cda2581801a173f471cd7)), closes [#2882](https://github.com/mdopp/servicebay/issues/2882)
+* **backup:** stop chasing the npm sqlite copy with an off-allow-list chmod ([#2882](https://github.com/mdopp/servicebay/issues/2882)) ([afecbcf](https://github.com/mdopp/servicebay/commit/afecbcfa212d5414a22fb23809cacaff32856660))
+
 ## [5.33.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.1...servicebay-v5.33.2) (2026-09-07)
 
 
