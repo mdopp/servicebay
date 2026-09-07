@@ -44,6 +44,7 @@ the wizard substitutes at deploy time. Use these annotations under
 | `servicebay.dependencies` | optional (default `[]`) | Comma-separated list of template names that must install before this one. Drives three things in the wizard: (1) the red **`requires X`** badge under the template name; (2) auto-checking those templates when the operator checks this one; (3) the uncheck-guard that prompts before removing a template another selected template needs. The install loop then topo-sorts the deploy order so deps land first. Example: `servicebay.dependencies: "nginx,auth"`. |
 | `servicebay.requires-api.<name>` | optional | Per-API version the template's `post-deploy.py` calls. Declare one annotation per API name (`lldap`, `authelia`, `portal`), value is a positive integer. Core refuses to invoke `post-deploy.py` if any requested version exceeds what this ServiceBay ships (see `packages/backend/src/lib/template/apiVersions.ts`). Use this on any template whose post-deploy calls `/api/system/<name>/*` (#588). |
 | `servicebay.healthcheck` | optional | YAML block scalar declaring a continuous health probe ServiceBay polls on the configured interval (#626). Shape: `{kind?: http|tcp, url|host+port, interval: 30s, timeout: 5s, startup_timeout: 5m}`. The endpoint should return `{ready, degraded?, deps?, message?}`. Result lands on `twin.services[].health` and is the single source of truth for install gating (`settleWait`), diagnose readers, and the core-health banner. Phase 3C (#628) replaced the install-time `servicebay.readiness` annotation with this single signal. |
+| `servicebay.backup` | optional | YAML block scalar declaring what this service needs backed up (#2858), so a template from any registry can say it — not only the ones listed in ServiceBay's own manifest table. Fields: `include` (required, at least one path), `exclude`, `data`, `collector` (`file` default, `npm-sqlite`, `pg-dump`), `strip` / `transform` rules, and `dataSubdir` **or** `volume` when the state does not live under `DATA_DIR/<template>`. A template with nothing to preserve declares `backup: none` plus a `reason:` — silence is not an opt-out, it is indistinguishable from an oversight. Every path must resolve inside the service's own data dir (ADR 0002): absolute, `~`, `..` and `{{MUSTACHE}}` paths are rejected with the reason logged. |
 
 <!-- AUTOGEN:TEMPLATE_FIELDS_END -->
 
@@ -665,6 +666,70 @@ and the diagnose rework (#484). Templates don't register these.
 - Don't hard-fail post-deploy.py if `/api/health/checks` returns
   non-200 — log a warning and continue. Health-check registration
   is best-effort; the auto-created `service` check is the safety net.
+
+## Backup declaration (`servicebay.backup`)
+
+A template says what it needs backed up; ServiceBay does the backing up
+(#2858). Before this annotation the only place that could be said was
+`SERVICE_BACKUP_MANIFESTS`, a table inside ServiceBay itself — so a
+template from another registry had no way to declare anything at all
+(#2849).
+
+```yaml
+metadata:
+  annotations:
+    servicebay.backup: |
+      # dataSubdir: nginx-proxy-manager   # only when the on-disk dir differs
+      # volume: file-share-syncthing-config  # or a named volume, never both
+      collector: npm-sqlite               # file (default) | npm-sqlite | pg-dump
+      include:
+        - data/database.sqlite
+        - config.json
+      exclude:
+        - data/logs
+      data:                               # big, on-RAID, never backed up
+        - media
+      strip:
+        - file: config.yml
+          dropYamlKeys: [password]
+      transform:
+        - file: .storage/core.config_entries
+          kind: ha-config-entries-addon
+```
+
+| Field | Meaning |
+|---|---|
+| `include` | Required, ≥ 1 entry. The small, critical, hard-to-recreate state (ADR 0002 tier A) that a reinstall must restore. |
+| `exclude` | Paths that must never enter the tarball — bulk, logs, caches, sessions. Excludes win over includes. |
+| `data` | The large on-RAID artifacts (ADR 0002 tier B). Declarative: never backed up, and kept on disk through a `wipe-config` reinstall. |
+| `collector` | `file` (default, plain copy), `npm-sqlite` (in-container `sqlite3 .backup` first — a live WAL database that a plain `cp` would tear), `pg-dump` (`pg_dump` in the service's own Postgres container). |
+| `strip` | Per-file YAML key removals (`{file, dropYamlKeys}`) applied as the file enters the tarball — password hashes and the like. |
+| `transform` | Per-file value rewrites (`{file, kind}`) from a closed set of transform kinds. |
+| `dataSubdir` | On-disk subdir under `DATA_DIR` when it is not the template name (NPM ships as `nginx` but stores under `nginx-proxy-manager/`). |
+| `volume` | The state lives in a podman-managed named volume (a kube PVC `claimName`) instead of a `DATA_DIR` subdir; include paths are then relative to the volume root. Mutually exclusive with `dataSubdir`. |
+
+**Nothing to back up? Say so, with a reason.** Silence is not an opt-out —
+it is indistinguishable from an oversight, which is exactly how state goes
+unprotected for a year:
+
+```yaml
+    servicebay.backup: |
+      backup: none
+      reason: Stateless — every file is re-rendered from the template on deploy.
+```
+
+**The path boundary is enforced by the platform, not trusted to the
+template** (ADR 0002). Every `include` / `exclude` / `data` / `strip.file` /
+`transform.file` path must resolve inside the service's own data dir. These
+are rejected at parse time, with the reason naming the offending path:
+
+- an absolute path (`/etc/shadow`) or a home-relative one (`~/.ssh`);
+- any `..` segment, which leaves the data dir;
+- a `{{MUSTACHE}}` placeholder — its expansion cannot be checked here, so a
+  backup path must be literal;
+- an unknown `collector`, an unknown field (typos fail loudly), a
+  `dataSubdir` **and** a `volume` together, or `backup: none` without a
+  `reason`.
 
 ## What stays in core
 

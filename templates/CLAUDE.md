@@ -67,6 +67,9 @@ metadata:
     #   interval: 30s                       # depends on yours
     #   timeout: 5s
     #   startup_timeout: 5m
+    # servicebay.backup: |                  # what to back up (#2858) — or
+    #   include: [config.json]              #   `backup: none` + a `reason:`
+    #   exclude: [logs]
 ```
 
 ## Healthcheck (#626 + #628)
@@ -110,6 +113,38 @@ changes in a way the operator needs to know about:
 
 Plain image-tag bumps don't need a schema bump — Quadlet's
 `AutoUpdate=registry` handles those transparently.
+
+## Backup declaration (#2858)
+
+Your template declares what it needs preserved; ServiceBay does the backing
+up. Full field table: [../docs/TEMPLATE_AUTHORING.md](../docs/TEMPLATE_AUTHORING.md#backup-declaration-servicebaybackup).
+
+```yaml
+    servicebay.backup: |
+      collector: npm-sqlite        # file (default) | npm-sqlite | pg-dump
+      include: [data/database.sqlite, config.json]
+      exclude: [data/logs]
+      data: [media]                # big + on-RAID: never backed up
+      # dataSubdir: nginx-proxy-manager   # only if the dir ≠ template name
+      # volume: file-share-syncthing-config  # or a named volume, never both
+      # strip:     [{file: config.yml, dropYamlKeys: [password]}]
+      # transform: [{file: .storage/core.config_entries, kind: ha-config-entries-addon}]
+```
+
+Nothing worth preserving? Say so — silence reads as an oversight, not as an
+opt-out:
+
+```yaml
+    servicebay.backup: |
+      backup: none
+      reason: Stateless — every file is re-rendered from the template on deploy.
+```
+
+Paths are relative to the service's own data dir and the platform enforces
+that boundary (ADR 0002): absolute paths, `~`, any `..` segment and
+`{{MUSTACHE}}` placeholders are **rejected** at parse time with the reason
+logged, as is an unknown `collector`, an unknown field, `dataSubdir` together
+with `volume`, or a `backup: none` with no `reason`.
 
 ## Versioning workflow
 
@@ -192,9 +227,12 @@ per service. The diagnose page surfaces failures.
 4. If `schema-version ≥ 2`: `CHANGELOG.md` has matching sections.
 5. If data moves: matching `migrations/v{N-1}-to-v{N}.py` exists
    and is idempotent. Run `python3 -m py_compile templates/<name>/migrations/*.py`.
-6. `npm test` passes — the consistency suite catches typos,
+6. `servicebay.backup` declares what the service needs preserved — or
+   `backup: none` with a `reason:`. Paths stay inside the service's own
+   data dir (#2858).
+7. `npm test` passes — the consistency suite catches typos,
    dangling references, and bad migration filenames at build time.
-7. **No literal secrets.** Express every credential as a `type: "secret"`
+8. **No literal secrets.** Express every credential as a `type: "secret"`
    variable — the wizard generates/injects the value at deploy. Never put a
    real key/token/password in `template.yml`, `variables.json` defaults, or a
    `*.mustache`; `{{VAR}}` placeholders only. A build-time scan

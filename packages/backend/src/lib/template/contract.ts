@@ -24,6 +24,7 @@
  */
 
 import { type TemplateApiVersions, type TemplateApiName, SUPPORTED_API_VERSIONS } from './apiVersions';
+import { parseTemplateBackupYaml } from './backupContract';
 import { parseHealthcheckYaml } from '@/lib/health/serviceHealthcheck';
 
 /** Recognized template tiers. `feature` is the implicit default. */
@@ -120,6 +121,17 @@ export interface TemplateManifest {
    * continuous-monitoring readers use.
    */
   healthcheckRaw?: string;
+  /**
+   * `metadata.annotations['servicebay.backup']` (#2858) — raw YAML body of the
+   * template's backup declaration. Stored unparsed for the same reason as
+   * `healthcheckRaw`: the manifest is the transport, and the consumer
+   * (`parseTemplateBackupYaml` in `./backupContract`) owns the shape.
+   *
+   * Before this annotation, "what counts as this service's config" could only
+   * be expressed as a row in ServiceBay's own `SERVICE_BACKUP_MANIFESTS`
+   * table, which a template from a foreign registry cannot ship (#2849).
+   */
+  backupRaw?: string;
 }
 
 /** Context the caller can pass to enable conditional rules. */
@@ -270,6 +282,20 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
       'single source of truth for install gating (`settleWait`), diagnose readers, and the core-health banner. ' +
       'Phase 3C (#628) replaced the install-time `servicebay.readiness` annotation with this single signal.',
   },
+  {
+    annotation: 'servicebay.backup',
+    field: 'backupRaw',
+    required: false,
+    description:
+      'YAML block scalar declaring what this service needs backed up (#2858), so a template from any '
+      + 'registry can say it — not only the ones listed in ServiceBay\'s own manifest table. Fields: '
+      + '`include` (required, at least one path), `exclude`, `data`, `collector` (`file` default, '
+      + '`npm-sqlite`, `pg-dump`), `strip` / `transform` rules, and `dataSubdir` **or** `volume` when the '
+      + 'state does not live under `DATA_DIR/<template>`. A template with nothing to preserve declares '
+      + '`backup: none` plus a `reason:` — silence is not an opt-out, it is indistinguishable from an '
+      + 'oversight. Every path must resolve inside the service\'s own data dir (ADR 0002): absolute, `~`, '
+      + '`..` and `{{MUSTACHE}}` paths are rejected with the reason logged.',
+  },
 ] as const;
 
 /**
@@ -333,6 +359,20 @@ function readAnnotation(yamlText: string, annotation: string): string | undefine
   if (!m) return undefined;
   const raw = (m[1] ?? m[2] ?? m[3] ?? '').trim();
   return raw === '' ? undefined : raw;
+}
+
+/**
+ * The `servicebay.backup` value when it was written INLINE rather than as a
+ * block scalar (#2858). `readAnnotation` happily returns the block indicator
+ * (`|`, `>`, `|-`) of a well-formed block header, so those are filtered out
+ * here — what is left is an author who wrote `servicebay.backup: "none"` (or
+ * any other one-liner), which declares neither paths nor a reason and must be
+ * refused rather than silently ignored.
+ */
+function readInlineBackupAnnotation(yamlText: string): string | undefined {
+  const raw = readAnnotation(yamlText, 'servicebay.backup');
+  if (raw === undefined) return undefined;
+  return /^[|>][+-]?$/.test(raw) ? undefined : raw;
 }
 
 /**
@@ -520,6 +560,26 @@ export function parseTemplateManifest(
     }
   }
 
+  // backupRaw (#2858): the template's own backup declaration. Two failure
+  // modes are errors rather than warnings: an inline value (`servicebay.backup:
+  // "none"`) carries no reason and no paths, and a declaration whose paths
+  // leave the service data dir would silently back up the wrong tree.
+  const backupRaw = readBlockScalarAnnotation(yamlText, 'servicebay.backup');
+  if (backupRaw !== undefined) {
+    const r = parseTemplateBackupYaml(backupRaw);
+    if (!r.ok) {
+      for (const err of r.errors) {
+        errors.push(`Annotation \`servicebay.backup\`: ${err}`);
+      }
+    }
+  } else if (readInlineBackupAnnotation(yamlText) !== undefined) {
+    errors.push(
+      'Annotation `servicebay.backup` must be a YAML block scalar (`servicebay.backup: |`) '
+      + 'carrying the backup fields, or `backup: none` together with a `reason:`. An inline '
+      + 'value declares neither.',
+    );
+  }
+
   if (errors.length > 0) {
     return { ok: false, errors, warnings };
   }
@@ -537,6 +597,7 @@ export function parseTemplateManifest(
       ports: meta.ports,
       requiresApi: meta.requiresApi,
       healthcheckRaw,
+      backupRaw,
     },
     warnings,
   };
@@ -623,6 +684,12 @@ function resolveAnnotationDefaults(yamlText: string): Partial<TemplateManifest> 
 
   const healthcheckRaw = readBlockScalarAnnotation(yamlText, 'servicebay.healthcheck');
   if (healthcheckRaw !== undefined) out.healthcheckRaw = healthcheckRaw;
+
+  // #2858 — permissive read of the backup declaration. The body is NOT parsed
+  // here; a caller on this path gets the raw block and decides what an invalid
+  // one means. `parseTemplateManifest` is the strict path that rejects it.
+  const backupRaw = readBlockScalarAnnotation(yamlText, 'servicebay.backup');
+  if (backupRaw !== undefined) out.backupRaw = backupRaw;
 
   return out;
 }

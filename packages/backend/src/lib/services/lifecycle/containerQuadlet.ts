@@ -27,6 +27,7 @@ import {
 } from '../containerQuadletState';
 import { isServiceActive, reloadDaemon, restartService, startService } from './units';
 import { SYSTEMD_DIR, backupQuadlets, readExistingQuadletFile, writeFile } from './quadletFiles';
+import { TRASH_DIR, shellPath, trashEntryArg } from './trashPaths';
 
 /** Is a `.container` Quadlet on disk for this service? (#2174/#2618) */
 export async function hasContainerQuadletUnit(nodeName: string, name: string): Promise<boolean> {
@@ -130,14 +131,19 @@ export async function reconcileContainerQuadletShadow(
 
         // Move the shadowing units into the trash bucket (recoverable),
         // mirroring soft-delete's "move, don't rm".
+        // Same trash root as soft-delete — a sibling of the scan directory, and
+        // built with `$HOME` rather than a quoted `~` (#2859/#2862): parked here
+        // inside `containers/systemd/` these retired units stayed visible to the
+        // Quadlet generator, which is the shadowing this reconcile exists to end.
         const trashStamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const trashDir = `~/${SYSTEMD_DIR}/.trash/${trashStamp}-${name}-shadow`;
-        await agent.sendCommand('exec', { command: `mkdir -p '${trashDir}'` });
+        const shadowId = `${trashStamp}-${name}-shadow`;
+        const trashDestArg = shellPath(`${TRASH_DIR}/${shadowId}/`);
+        await agent.sendCommand('exec', { command: `mkdir -p ${trashEntryArg(shadowId)}` });
         await agent.sendCommand('exec', {
-            command: `mv -f ~/${SYSTEMD_DIR}/${name}.kube '${trashDir}/' 2>/dev/null || true`,
+            command: `mv -f ${shellPath(`${SYSTEMD_DIR}/${name}.kube`)} ${trashDestArg} 2>/dev/null || true`,
         });
         await agent.sendCommand('exec', {
-            command: `mv -f ~/${SYSTEMD_DIR}/${yamlName} '${trashDir}/' 2>/dev/null || true`,
+            command: `mv -f ${shellPath(`${SYSTEMD_DIR}/${yamlName}`)} ${trashDestArg} 2>/dev/null || true`,
         });
 
         await reloadDaemon(nodeName);

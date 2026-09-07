@@ -127,6 +127,73 @@ describe('classifyDanglingRoute', () => {
     expect(verdict.kind).toBe('port-moved');
   });
 
+  // #2860 — the ollama.dopp.cloud shape: the container was removed on
+  // 2026-09-06 but `ollama.container` survived the delete, so the twin
+  // still lists the service AND its declared 11434 publish while nothing
+  // has the port open.
+  const OLLAMA_OWNERS: RouteOwner[] = [{ domain: 'ollama.dopp.cloud', service: 'ollama' }];
+  const OLLAMA_SERVICES: RouteTargetService[] = [{
+    name: 'ollama',
+    ports: [{ hostPort: 11434, containerPort: 11434, protocol: 'tcp', hostIp: '127.0.0.1' }],
+  }];
+  const OLLAMA_ROUTE = { domain: 'ollama.dopp.cloud', targetHost: '127.0.0.1', targetPort: 11434 };
+
+  it('calls a route dangling when its forward port has no listener, service entry or not', () => {
+    const verdict = classifyDanglingRoute({ ...OLLAMA_ROUTE, listening: false }, OLLAMA_OWNERS, OLLAMA_SERVICES);
+    expect(verdict).toEqual({ kind: 'no-listener', service: 'ollama' });
+    expect(actionIdsForVerdict(verdict)).toEqual(['delete_route']);
+  });
+
+  it('names the check that failed — the closed port, not the missing service', () => {
+    const item = buildRouteItem(
+      { ...OLLAMA_ROUTE, listening: false },
+      classifyDanglingRoute({ ...OLLAMA_ROUTE, listening: false }, OLLAMA_OWNERS, OLLAMA_SERVICES),
+    );
+    expect(item.detail).toContain('no listener on 127.0.0.1:11434');
+    expect(item.detail).toContain('ollama');
+    expect(item.detail).not.toContain('no service');
+  });
+
+  it('keeps "service gone" as its own reason when the service really is gone', () => {
+    const verdict = classifyDanglingRoute({ ...OLLAMA_ROUTE, listening: false }, OLLAMA_OWNERS, []);
+    // An empty service list is the caller's "twin not populated" case, so
+    // use a populated one that simply has no `ollama` in it.
+    const gone = classifyDanglingRoute({ ...OLLAMA_ROUTE, listening: false }, OLLAMA_OWNERS, SERVICES);
+    expect(verdict.kind).toBe('target-gone');
+    expect(gone).toEqual({ kind: 'target-gone', service: 'ollama' });
+    expect(describeRouteVerdict(OLLAMA_ROUTE, gone)).toContain('no service called ollama');
+    expect(actionIdsForVerdict(gone)).toEqual(['delete_route']);
+  });
+
+  it('leaves a route alone when both checks are fine', () => {
+    // Listener present and the service publishes the very port the route
+    // forwards to: `service-silent` stays `service-silent`, and the run
+    // never classifies such a route in the first place.
+    const verdict = classifyDanglingRoute({ ...OLLAMA_ROUTE, listening: true }, OLLAMA_OWNERS, OLLAMA_SERVICES);
+    expect(verdict).toEqual({ kind: 'service-silent', service: 'ollama' });
+  });
+
+  it('leaves a merely stopped service at "silent" — a closed port is not proof of an orphan', () => {
+    // #2611's guard survives #2860: the record publishes nothing at all,
+    // so the port being closed says "stopped", not "the entry is stale".
+    const stopped: RouteTargetService[] = [{ name: 'ollama', ports: [] }];
+    const verdict = classifyDanglingRoute({ ...OLLAMA_ROUTE, listening: false }, OLLAMA_OWNERS, stopped);
+    expect(verdict).toEqual({ kind: 'service-silent', service: 'ollama' });
+  });
+
+  it('will not read an unavailable listener snapshot as a closed port', () => {
+    const verdict = classifyDanglingRoute({ ...OLLAMA_ROUTE, listening: undefined }, OLLAMA_OWNERS, OLLAMA_SERVICES);
+    expect(verdict.kind).toBe('service-silent');
+  });
+
+  it('still prefers a repoint over "no listener" when the service moved port', () => {
+    // The old port is closed — that is what a moved publish looks like —
+    // but the service is alive on 8701, so deleting is still wrong.
+    const verdict = classifyDanglingRoute({ ...DAGGERHEART, listening: false }, OWNERS, SERVICES);
+    expect(verdict.kind).toBe('port-moved');
+    expect(actionIdsForVerdict(verdict)).toEqual(['repoint_route']);
+  });
+
   it('has no verdict beyond "gone" for an unnamed server block', () => {
     const verdict = classifyDanglingRoute({ targetHost: '192.168.178.100', targetPort: 7000 }, OWNERS, SERVICES);
     expect(verdict).toEqual({ kind: 'target-gone' });
@@ -199,6 +266,20 @@ describe('formatRouteStateDetail', () => {
     expect(detail).toContain('1 of 10 point at a service that publishes nothing right now');
     expect(detail).toContain('1 of 10 point at a service that is gone');
     expect(detail).toContain('2 recorded routes never got created in NPM');
+  });
+
+  it('counts a closed forward port separately from a gone service', () => {
+    const tally = tallyRouteStates(
+      29,
+      [{ kind: 'no-listener', service: 'ollama' }, { kind: 'target-gone', service: 'tor' }],
+      0,
+    );
+    expect(tally.noListener).toBe(1);
+    expect(tally.gone).toBe(1);
+    const detail = formatRouteStateDetail(tally);
+    expect(detail).toContain('1 of 29 forward to a port nothing is listening on');
+    expect(detail).toContain('1 of 29 point at a service that is gone');
+    expect(formatRouteStateHint(tally)).toContain('Delete route');
   });
 
   it('counts an ambiguous route as a wrong port, not as a gone target', () => {

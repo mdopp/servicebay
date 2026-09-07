@@ -14,6 +14,8 @@
 import { agentManager } from '../../agent/manager';
 import { logger } from '../../logger';
 import { assertTrashId } from '../../api/schemas';
+import { getConfig, saveConfig } from '../../config';
+import { getTemplateVariables } from '../../registry';
 import {
     reconstructTemplateVariables,
     emitFeatureUninstalling,
@@ -26,6 +28,13 @@ import type { StackVariable } from '../../stackInstall/types';
 import { ServiceListing } from '../serviceListing';
 import { reloadDaemon, startAndWaitForActive, type StartSettleResult } from './units';
 import { SYSTEMD_DIR, backupQuadlets, refreshAgent } from './quadletFiles';
+import {
+    TRASH_DIR,
+    ensureTrashRootMigrated,
+    shellPath,
+    trashDisplayPath,
+    trashEntryArg,
+} from './trashPaths';
 
 /**
  * Pre-stop half of an uninstall (#2541): reconstruct the install-time
@@ -39,6 +48,24 @@ async function beginUninstall(serviceName: string): Promise<StackVariable[]> {
         logger.warn('ServiceManager', `Could not reconstruct variables for ${serviceName}:`, e);
         return [] as StackVariable[];
     });
+    // #2859 — the NPM/Authelia/AdGuard handlers match a registration to a
+    // service through the template's DECLARED variables. A service whose
+    // template manifest is gone (removed from the catalogue, or never
+    // template-installed) therefore has nothing to match on and its proxy host
+    // survives the delete — silently, until now. Say so in the journal, and
+    // keep the `delete_service` tool description honest about it.
+    const declarations = await getTemplateVariables(serviceName).catch(() => null);
+    if (declarations) {
+        logger.info(
+            'ServiceManager',
+            `Cross-service cleanup for ${serviceName}: matching its Authelia client / NPM proxy host / AdGuard rewrite off the template manifest`,
+        );
+    } else {
+        logger.warn(
+            'ServiceManager',
+            `No template manifest for ${serviceName} — cross-service cleanup has nothing to match on; an NPM proxy host or AdGuard rewrite for it stays and must be removed manually (remove_proxy_route)`,
+        );
+    }
     for (const f of await emitFeatureUninstalling(serviceName, lastKnownVariables)) {
         logger.warn('ServiceManager', `${f.handler} (uninstalling ${serviceName}): ${f.message}`);
     }
@@ -74,10 +101,61 @@ async function finishUninstall(
     );
 }
 
+/** The `config.installedTemplates` value shape (see lib/config.ts). */
+type InstalledTemplateRecord = { schemaVersion: number; installedAt: string };
+
 /**
- * Soft-delete a service: stop the unit, then *move* its .kube and .yml
- * files into ~/.config/containers/systemd/.trash/<ts>-<name>/ instead
- * of deleting them. The operator (or an MCP client) can `restore_from_trash`
+ * Take the service's `installedTemplates` record out of the persisted config
+ * and hand it to the caller for the trash manifest (#2863).
+ *
+ * read → mutate → `saveConfig` (NOT `updateConfig`, whose deepMerge cannot
+ * delete a key — the same reason `pruneOrphanedTemplates` writes this way).
+ * Returns `null` when there was no record, which is also what a non-template
+ * service looks like.
+ */
+async function takeInstalledTemplateRecord(serviceName: string): Promise<InstalledTemplateRecord | null> {
+    try {
+        const config = await getConfig();
+        const installed = config.installedTemplates ?? {};
+        const record = installed[serviceName];
+        if (!record) return null;
+        const next = { ...installed };
+        delete next[serviceName];
+        config.installedTemplates = next;
+        await saveConfig(config);
+        logger.info('ServiceManager', `Dropped installedTemplates record for deleted ${serviceName} (#2863)`);
+        return record;
+    } catch (e) {
+        logger.warn('ServiceManager', `Could not drop installedTemplates record for ${serviceName}:`, e);
+        return null;
+    }
+}
+
+/** Put a trashed service's `installedTemplates` record back (#2863). Restoring
+ *  the files without it leaves upgrade planning, migrations and backup gating
+ *  blind to a service that is running again. */
+async function putBackInstalledTemplateRecord(
+    serviceName: string,
+    record: InstalledTemplateRecord | null | undefined,
+): Promise<void> {
+    if (!record) return;
+    try {
+        const config = await getConfig();
+        config.installedTemplates = { ...(config.installedTemplates ?? {}), [serviceName]: record };
+        await saveConfig(config);
+        logger.info('ServiceManager', `Restored installedTemplates record for ${serviceName} (#2863)`);
+    } catch (e) {
+        logger.warn('ServiceManager', `Could not restore installedTemplates record for ${serviceName}:`, e);
+    }
+}
+
+/**
+ * Soft-delete a service: stop the unit, then *move* its .kube/.container and
+ * .yml files into ~/.config/containers/systemd-trash/<ts>-<name>/ instead
+ * of deleting them. That root is a SIBLING of the Quadlet scan directory on
+ * purpose (#2862): trash kept *inside* `containers/systemd/` is read by the
+ * Quadlet generator, so a deleted service comes back as a unit wired to
+ * `default.target` and starts on the next boot. The operator (or an MCP client) can `restore_from_trash`
  * to undo within 7 days; `purge_trash` actually removes them. Auto-purge
  * older than 7 days runs on server startup.
  *
@@ -114,25 +192,47 @@ export async function deleteService(
         await agent.sendCommand('exec', { command: `systemctl --user stop ${serviceName}.service` });
     } catch { /* ignore if already stopped */ }
 
+    // Sweep any legacy trash (in-scan `.trash/`, or the literal `~` directory
+    // #2859 created) into the sibling root first, so a delete never adds to a
+    // location the Quadlet generator reads.
+    await ensureTrashRootMigrated(nodeName);
+
     // Move the files into the trash bucket. ISO-8601 with no colons in
     // the name so it sorts by timestamp and survives shells that hate
     // colons in paths.
     const trashStamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const trashDir = `~/${SYSTEMD_DIR}/.trash/${trashStamp}-${serviceName}`;
-    await agent.sendCommand('exec', { command: `mkdir -p '${trashDir}'` });
+    const trashId = `${trashStamp}-${serviceName}`;
+    const trashDirArg = trashEntryArg(trashId);
+    /** Destination for `mv` — trailing slash INSIDE the quotes, so the shell
+     *  sees one word and the move can only ever land inside the directory. */
+    const trashDestArg = shellPath(`${TRASH_DIR}/${trashId}/`);
+    await agent.sendCommand('exec', { command: `mkdir -p ${trashDirArg}` });
 
-    // Move kube file
-    await agent.sendCommand('exec', {
-        command: `mv -f ~/${SYSTEMD_DIR}/${serviceName}.kube '${trashDir}/' 2>/dev/null || true`
-    });
-
-    // Move yaml file
-    if (yamlPath) {
-        const resolvedYaml = yamlPath.startsWith('/') ? yamlPath : `~/${yamlPath}`;
+    // Move the unit and EVERY sibling of the same name. A `.kube` alone is not
+    // the service: a post-deploy can swap it to a `.container` (#2174), and the
+    // pod spec lives next to it as `<name>.yml`. Leaving one behind kept
+    // `ollama` listed as inactive/dead after its delete (#2859).
+    const siblings = [`${serviceName}.kube`, `${serviceName}.container`, `${serviceName}.yml`];
+    for (const sibling of siblings) {
         await agent.sendCommand('exec', {
-            command: `mv -f ${resolvedYaml} '${trashDir}/' 2>/dev/null || true`,
+            command: `mv -f ${shellPath(`${SYSTEMD_DIR}/${sibling}`)} ${trashDestArg} 2>/dev/null || true`,
         });
     }
+
+    // …plus the yaml the unit actually points at, when it lives elsewhere
+    // (legacy migrations put it outside SYSTEMD_DIR).
+    const yamlBasename = yamlPath ? yamlPath.split('/').pop() : null;
+    if (yamlPath && yamlBasename && !siblings.includes(yamlBasename)) {
+        await agent.sendCommand('exec', {
+            command: `mv -f ${shellPath(yamlPath)} ${trashDestArg} 2>/dev/null || true`,
+        });
+    }
+
+    // #2863 — the `installedTemplates` record is part of the service, so it
+    // goes into the trash WITH the files, in this same code path. Anything
+    // else lets config.json drift from the real service set the moment a
+    // delete half-succeeds (5 orphaned records measured on the box).
+    const installedTemplate = await takeInstalledTemplateRecord(serviceName);
 
     // Stash a small manifest so restore knows the original yaml path
     // even if it lived outside the systemd dir (legacy migrations did).
@@ -140,10 +240,13 @@ export async function deleteService(
         service: serviceName,
         deletedAt: new Date().toISOString(),
         originalYamlPath: yamlPath || null,
-        originalKubePath: `~/${SYSTEMD_DIR}/${serviceName}.kube`,
+        // `$HOME`-relative, never `~/…`: this value is read back into a
+        // command on restore, and a tilde there is what #2859 was.
+        originalKubePath: `${SYSTEMD_DIR}/${serviceName}.kube`,
+        installedTemplate,
     });
     await agent.sendCommand('exec', {
-        command: `printf '%s' ${JSON.stringify(manifest)} > '${trashDir}/.manifest.json'`,
+        command: `printf '%s' ${JSON.stringify(manifest)} > ${trashEntryArg(`${trashId}/.manifest.json`)}`,
     });
 
     await reloadDaemon(nodeName);
@@ -158,7 +261,39 @@ export async function deleteService(
 
     await finishUninstall(serviceName, lastKnownVariables, emitEvents);
 
-    logger.info('ServiceManager', `Soft-deleted ${serviceName} on ${nodeName} → ${trashDir}`);
+    logger.info('ServiceManager', `Soft-deleted ${serviceName} on ${nodeName} → ${trashDisplayPath(trashId)}`);
+}
+
+/**
+ * Move EVERY file a delete took back where it came from — the `.kube`, a
+ * `.container` sibling and the pod spec. The entry, not just the kube, is the
+ * service: restoring one file leaves the rest in the trash and the service
+ * half-dead (#2859).
+ */
+async function moveTrashedFilesBack(
+    agent: { sendCommand: (action: string, params: unknown) => Promise<{ stdout?: unknown } | unknown> },
+    trashId: string,
+    originalYamlPath: string | null,
+): Promise<void> {
+    const yamlBasename = originalYamlPath?.split('/').pop() ?? null;
+    const ls = await agent.sendCommand('exec', { command: `ls -1 ${trashEntryArg(trashId)} 2>/dev/null` }) as { stdout?: unknown };
+    const entries = String((ls?.stdout ?? '') as string)
+        .trim()
+        .split('\n')
+        .map(e => e.trim())
+        .filter(e => e && e !== '.manifest.json');
+    for (const entry of entries) {
+        // Names come off the box; anything outside the Quadlet filename shape
+        // is left in the trash rather than interpolated into a command.
+        if (!/^[A-Za-z0-9._-]+$/.test(entry)) {
+            logger.warn('ServiceManager', `Skipping unexpected trash file name in ${trashId}: ${entry}`);
+            continue;
+        }
+        const target = entry === yamlBasename && originalYamlPath ? originalYamlPath : `${SYSTEMD_DIR}/${entry}`;
+        await agent.sendCommand('exec', {
+            command: `mv -f ${shellPath(`${TRASH_DIR}/${trashId}/${entry}`)} ${shellPath(target)} 2>/dev/null || true`,
+        });
+    }
 }
 
 /** What a restore did (#2541 re-provisioning, #2756 unit startup). */
@@ -194,16 +329,23 @@ export async function restoreTrashedService(nodeName: string, trashId: string): 
     // no separators, no traversal, no shell metacharacters.
     assertTrashId(trashId);
     const agent = await agentManager.ensureAgent(nodeName);
-    const trashRoot = `~/${SYSTEMD_DIR}/.trash`;
-    const trashDir = `${trashRoot}/${trashId}`;
+    // A restore may target an entry that is still in a legacy location, so
+    // sweep first and then look in exactly one place.
+    await ensureTrashRootMigrated(nodeName);
+    const trashDirArg = trashEntryArg(trashId);
 
     // Read manifest. Manifest is the source of truth for original
     // paths because the service may have referenced a yaml file
     // outside SYSTEMD_DIR.
     const m = await agent.sendCommand('exec', {
-        command: `cat '${trashDir}/.manifest.json' 2>/dev/null`,
+        command: `cat ${trashEntryArg(`${trashId}/.manifest.json`)} 2>/dev/null`,
     });
-    let manifest: { service?: string; originalYamlPath?: string | null; originalKubePath?: string };
+    let manifest: {
+        service?: string;
+        originalYamlPath?: string | null;
+        originalKubePath?: string;
+        installedTemplate?: InstalledTemplateRecord | null;
+    };
     try {
         manifest = JSON.parse(((m?.stdout ?? '') as string) || '{}');
     } catch {
@@ -213,25 +355,13 @@ export async function restoreTrashedService(nodeName: string, trashId: string): 
         throw new Error(`Trash entry ${trashId} has no service name in manifest`);
     }
 
-    const kubePath = manifest.originalKubePath || `~/${SYSTEMD_DIR}/${manifest.service}.kube`;
-    const yamlPath = manifest.originalYamlPath
-        ? (manifest.originalYamlPath.startsWith('/') ? manifest.originalYamlPath : `~/${manifest.originalYamlPath}`)
-        : null;
-
-    await agent.sendCommand('exec', {
-        command: `mv '${trashDir}/${manifest.service}.kube' ${kubePath} 2>/dev/null || true`,
-    });
-    if (yamlPath) {
-        // The yaml lives in the trash dir under its basename.
-        const yamlBasename = manifest.originalYamlPath?.split('/').pop();
-        if (yamlBasename) {
-            await agent.sendCommand('exec', {
-                command: `mv '${trashDir}/${yamlBasename}' ${yamlPath} 2>/dev/null || true`,
-            });
-        }
-    }
+    await moveTrashedFilesBack(agent, trashId, manifest.originalYamlPath ?? null);
     // Wipe the now-empty trash dir.
-    await agent.sendCommand('exec', { command: `rm -rf '${trashDir}'` });
+    await agent.sendCommand('exec', { command: `rm -rf ${trashDirArg}` });
+
+    // #2863 — the record went into the trash with the files; it comes back
+    // with them, before anything reads `installedTemplates` again.
+    await putBackInstalledTemplateRecord(manifest.service, manifest.installedTemplate);
 
     await reloadDaemon(nodeName);
     await refreshAgent(nodeName);
@@ -264,11 +394,10 @@ export async function restoreTrashedService(nodeName: string, trashId: string): 
  *  given retention (in milliseconds). */
 export async function purgeTrash(nodeName: string, opts: { trashId?: string; olderThanMs?: number }): Promise<{ purged: string[] }> {
     const agent = await agentManager.ensureAgent(nodeName);
-    const trashRoot = `~/${SYSTEMD_DIR}/.trash`;
     if (opts.trashId) {
         // Strict basename — no traversal allowed.
         assertTrashId(opts.trashId);
-        await agent.sendCommand('exec', { command: `rm -rf '${trashRoot}/${opts.trashId}'` });
+        await agent.sendCommand('exec', { command: `rm -rf ${trashEntryArg(opts.trashId)}` });
         logger.info('ServiceManager', `Purged trash entry ${opts.trashId} on ${nodeName}`);
         return { purged: [opts.trashId] };
     }
@@ -281,7 +410,7 @@ export async function purgeTrash(nodeName: string, opts: { trashId?: string; old
             return (now - ts) > opts.olderThanMs!;
         });
         for (const entry of toPurge) {
-            await agent.sendCommand('exec', { command: `rm -rf '${trashRoot}/${entry.id}'` });
+            await agent.sendCommand('exec', { command: `rm -rf ${trashEntryArg(entry.id)}` });
         }
         if (toPurge.length > 0) {
             logger.info('ServiceManager', `Purged ${toPurge.length} trash entr${toPurge.length === 1 ? 'y' : 'ies'} older than ${Math.round(opts.olderThanMs / 86_400_000)}d on ${nodeName}`);

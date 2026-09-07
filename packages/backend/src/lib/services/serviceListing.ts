@@ -13,6 +13,7 @@ import { agentManager } from '../agent/manager';
 import { logger } from '../logger';
 import yaml from 'js-yaml';
 import { buildExpectedContainerNames, pickContainerForService, type PodLikeDoc } from './containerNameMatcher';
+import { TRASH_DIR, ensureTrashRootMigrated, shellPath, trashDisplayPath } from './lifecycle/trashPaths';
 import { parseQuadletYaml } from './yamlExtractor';
 
 const SYSTEMD_DIR = '.config/containers/systemd';
@@ -684,6 +685,35 @@ export class ServiceListing {
         return { kubeContent, yamlContent, yamlPath, serviceContent, kubePath, servicePath, quadletKind };
     }
 
+    /**
+     * Base names of the Quadlet units on disk (`<name>.kube` / `<name>.container`).
+     *
+     * Read straight off the node rather than out of the Digital Twin: the
+     * `installedTemplates` reconcile (#2863) runs at boot, before the agent has
+     * necessarily synced, and an empty twin would make every installed template
+     * look orphaned. `null` means "could not read" — the caller must then do
+     * nothing, never treat it as "no services".
+     */
+    static async listQuadletBaseNames(nodeName: string): Promise<string[] | null> {
+        try {
+            const agent = await agentManager.ensureAgent(nodeName);
+            const res = await agent.sendCommand('exec', {
+                command: `ls -1 ${shellPath(SYSTEMD_DIR)} 2>/dev/null`,
+            });
+            if (!res || res.code !== 0) return null;
+            const names = String((res.stdout ?? '') as string)
+                .trim()
+                .split('\n')
+                .map(f => f.trim())
+                .filter(f => f.endsWith('.kube') || f.endsWith('.container'))
+                .map(f => f.replace(/\.(kube|container)$/, ''));
+            return [...new Set(names)];
+        } catch (e) {
+            logger.warn('ServiceManager', `Could not list Quadlet units on ${nodeName}:`, e);
+            return null;
+        }
+    }
+
     static async listTrashedServices(nodeName: string): Promise<Array<{
         id: string;
         service: string;
@@ -691,10 +721,14 @@ export class ServiceListing {
         path: string;
     }>> {
         const agent = await agentManager.ensureAgent(nodeName);
-        const trashRoot = `~/${SYSTEMD_DIR}/.trash`;
+        // #2859/#2862 — sweep the two legacy trash locations (the in-scan
+        // `.trash/`, and the literal `~` directory the old quoting created)
+        // into the sibling root before listing, so entries deleted by an
+        // older build are visible here instead of silently unrecoverable.
+        await ensureTrashRootMigrated(nodeName);
         try {
             const res = await agent.sendCommand('exec', {
-                command: `ls -1 ${trashRoot} 2>/dev/null`,
+                command: `ls -1 ${shellPath(TRASH_DIR)} 2>/dev/null`,
             });
             const out = (res?.stdout ?? '') as string;
             const entries = out.trim().split('\n').filter(Boolean);
@@ -703,7 +737,7 @@ export class ServiceListing {
                 let manifest: { service?: string; deletedAt?: string } = {};
                 try {
                     const m = await agent.sendCommand('exec', {
-                        command: `cat '${trashRoot}/${entry}/.manifest.json' 2>/dev/null`,
+                        command: `cat ${shellPath(`${TRASH_DIR}/${entry}/.manifest.json`)} 2>/dev/null`,
                     });
                     manifest = JSON.parse(((m?.stdout ?? '') as string) || '{}');
                 } catch { /* fall back to filename parse */ }
@@ -713,7 +747,7 @@ export class ServiceListing {
                     id: entry,
                     service: manifest.service || fallback?.[2] || entry,
                     deletedAt: manifest.deletedAt || (fallback ? fallback[1].replace(/-(\d\d)-(\d\d)Z$/, ':$1:$2Z') : ''),
-                    path: `${trashRoot}/${entry}`,
+                    path: trashDisplayPath(entry),
                 });
             }
             return results.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
