@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.33.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.3...servicebay-v5.33.4) (2026-09-07)
+
+
+### Bug Fixes
+
+* **templates:** drop the jellyfin catalog DB from the media config backup ([05b2373](https://github.com/mdopp/servicebay/commit/05b2373cd2f6e1e197649e7fd01d7f7b8fdce074)), closes [#2885](https://github.com/mdopp/servicebay/issues/2885)
+* **templates:** drop the jellyfin catalog DB from the media config backup ([#2885](https://github.com/mdopp/servicebay/issues/2885)) ([414e865](https://github.com/mdopp/servicebay/commit/414e8652f9d714fa019f8433b75ba06fd566f13f))
+
 ## [5.33.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.2...servicebay-v5.33.3) (2026-09-07)
 
 
