@@ -708,6 +708,37 @@ metadata:
 | `dataSubdir` | On-disk subdir under `DATA_DIR` when it is not the template name (NPM ships as `nginx` but stores under `nginx-proxy-manager/`). |
 | `volume` | The state lives in a podman-managed named volume (a kube PVC `claimName`) instead of a `DATA_DIR` subdir; include paths are then relative to the volume root. Mutually exclusive with `dataSubdir`. |
 
+### The `pg-dump` collector (Postgres)
+
+A running Postgres cluster directory is not a backup: copied while the
+server is up, `pgdata/` is a torn, version-locked tree no restore accepts.
+So `collector: pg-dump` takes a logical dump through the service's own
+Postgres container and stages that file instead (#2864):
+
+1. `pg_dump --format=custom` runs **inside the service's Postgres
+   container**, over its local socket as the container's own superuser — no
+   password reaches a command line or a log;
+2. the dump is copied out (`podman cp`) into the service data dir and
+   staged under its declared name (`<database>.dump` by default);
+3. **`pgdata/` is excluded by the collector itself**, whatever the template
+   declared — the platform never ships a raw cluster dir;
+4. a failed dump is **reported**, not papered over: the previous run's dump
+   is deleted first, and the worker marks that service's backup as an error
+   rather than shipping a tarball with no database in it.
+
+**Restoring** is two commands against the fresh container — the tools ship
+inside the Postgres image, so ServiceBay does not wrap them:
+
+```bash
+podman cp <DATA_DIR>/<service>/<database>.dump <service>-db:/tmp/restore.dump
+podman exec <service>-db pg_restore --username <user> --dbname <database> \
+  --clean --if-exists /tmp/restore.dump
+```
+
+Custom format (not plain `.sql`) is deliberate: it is compressed,
+`pg_restore --clean --if-exists` rebuilds objects that a reinstall
+recreated differently, and large objects round-trip.
+
 **Nothing to back up? Say so, with a reason.** Silence is not an opt-out —
 it is indistinguishable from an oversight, which is exactly how state goes
 unprotected for a year:

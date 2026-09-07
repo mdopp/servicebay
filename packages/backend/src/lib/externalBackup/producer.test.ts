@@ -397,6 +397,174 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
   });
 });
 
+describe('runBackupCollector — pg-dump in the service\'s own Postgres container (#2864)', () => {
+  const DATA_DIR = '/mnt/data/stacks';
+  const HOST_DUMP = `${DATA_DIR}/paperless/paperless.dump.sb-dump`;
+
+  const pgManifest = (over: Partial<ServiceBackupManifest> = {}): ServiceBackupManifest => ({
+    service: 'paperless',
+    include: ['media'],
+    exclude: [],
+    collector: { kind: 'pg-dump', container: 'paperless-db', user: 'paperless', database: 'paperless' },
+    ...over,
+  });
+
+  type ExecReply = { stdout?: string; stderr?: string; code?: number };
+
+  /** Answer each `safe_exec` by what it actually runs, so a test asserts on the
+   *  argv rather than on a fragile call-order chain. */
+  function mockPgAgent(over: { ps?: ExecReply; dump?: ExecReply; cp?: ExecReply } = {}): void {
+    mockSendCommand.mockImplementation(async (_op: string, args: { argv?: string[] }) => {
+      const argv = args.argv ?? [];
+      const ok = { stdout: '', stderr: '', code: 0 };
+      if (argv[0] === 'podman' && argv[1] === 'ps') return { ...ok, stdout: 'paperless-db\n', ...over.ps };
+      if (argv.includes('pg_dump')) return { ...ok, ...over.dump };
+      if (argv[0] === 'podman' && argv[1] === 'cp') return { ...ok, ...over.cp };
+      return ok;
+    });
+  }
+
+  const argvOf = (i: number): string[] =>
+    (mockSendCommand.mock.calls[i][1] as { argv: string[] }).argv;
+  const allArgv = (): string[][] =>
+    mockSendCommand.mock.calls.map(c => (c[1] as { argv?: string[] }).argv ?? []);
+
+  beforeEach(() => {
+    mockGetConfig.mockResolvedValue({ templateSettings: { DATA_DIR } });
+  });
+
+  it('builds a structured pg_dump argv — no shell string, no credential on the command line', async () => {
+    mockPgAgent();
+    await runBackupCollector(pgManifest(), 'Local');
+
+    // Every step goes through the agent's argv path (`safe_exec`); a shell
+    // string would re-parse a foreign template's container/user/db names.
+    expect(mockSendCommand.mock.calls.every(c => c[0] === 'safe_exec')).toBe(true);
+    const dumpArgv = allArgv().find(a => a.includes('pg_dump'))!;
+    expect(dumpArgv).toEqual([
+      'podman', 'exec', 'paperless-db',
+      'pg_dump',
+      '--username', 'paperless',
+      '--dbname', 'paperless',
+      '--format=custom',
+      '--file', '/tmp/sb-paperless.sb-dump',
+    ]);
+    // pg_dump authenticates over the container's local socket — nothing that
+    // looks like a password may ride the argv or the env of the exec.
+    expect(dumpArgv.join(' ')).not.toMatch(/password|PGPASSWORD/i);
+  });
+
+  it('deletes the previous run\'s dump BEFORE dumping, then copies the new one out', async () => {
+    mockPgAgent();
+    const out = await runBackupCollector(pgManifest(), 'Local');
+
+    // A stale dump must never be shipped as if it were today's — so the delete
+    // is the FIRST thing that happens, before anything can fail.
+    expect(argvOf(0)).toEqual(['rm', '-f', HOST_DUMP]);
+    expect(allArgv()).toContainEqual([
+      'podman', 'ps', '--filter', 'name=paperless-db', '--format', '{{.Names}}',
+    ]);
+    expect(allArgv()).toContainEqual([
+      'podman', 'cp', 'paperless-db:/tmp/sb-paperless.sb-dump', HOST_DUMP,
+    ]);
+    // The container-side scratch copy is cleaned up.
+    expect(allArgv()).toContainEqual(['podman', 'exec', 'paperless-db', 'rm', '-f', '/tmp/sb-paperless.sb-dump']);
+    expect(out.renames).toEqual({ 'paperless.dump.sb-dump': 'paperless.dump' });
+  });
+
+  it('excludes pgdata/ even when the manifest declares it as an include', async () => {
+    mockPgAgent();
+    const out = await runBackupCollector(pgManifest({ include: ['media', 'pgdata'] }), 'Local');
+    expect(out.exclude).toContain('pgdata');
+    expect(out.include).toContain('paperless.dump.sb-dump');
+  });
+
+  it('never stages the raw cluster dir through the staging path', async () => {
+    // End-to-end over the real staging: the collector-remapped manifest must
+    // leave pgdata/ on disk and carry the dump under its canonical name.
+    const src = await mkTmp();
+    const staging = await mkTmp();
+    await writeFile(src, 'media/doc.pdf', 'PDF');
+    await writeFile(src, 'pgdata/base/1/2345', 'TORN-CLUSTER-PAGE');
+    await writeFile(src, 'paperless.dump.sb-dump', 'PGDUMP-CUSTOM');
+
+    mockPgAgent();
+    const remapped = await runBackupCollector(pgManifest({ include: ['media', 'pgdata'] }), 'Local');
+    const staged = await stageServiceBackup(src, remapped, staging);
+
+    expect(staged).toEqual(['media/doc.pdf', 'paperless.dump']);
+    expect(await fs.readFile(path.join(staging, 'paperless.dump'), 'utf8')).toBe('PGDUMP-CUSTOM');
+    await expect(fs.access(path.join(staging, 'pgdata'))).rejects.toThrow();
+  });
+
+  it('reports the failure and stages NO dump when pg_dump fails', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    mockPgAgent({ dump: { code: 1, stderr: 'pg_dump: error: connection to server failed' } });
+
+    const manifest = pgManifest();
+    const out = await runBackupCollector(manifest, 'Local');
+
+    // No remap: nothing claims a dump exists. The stale dump was already
+    // removed, so the worker finds none and fails the service loudly rather
+    // than shipping a tarball with no database in it.
+    expect(out).toBe(manifest);
+    expect(allArgv().some(a => a[1] === 'cp')).toBe(false);
+    expect(warn.mock.calls.map(c => String(c[1])).join('\n')).toContain('connection to server failed');
+    warn.mockRestore();
+  });
+
+  it('reports the failure when the Postgres container is not running', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    mockPgAgent({ ps: { stdout: '' } });
+    const manifest = pgManifest();
+    expect(await runBackupCollector(manifest, 'Local')).toBe(manifest);
+    expect(allArgv().some(a => a.includes('pg_dump'))).toBe(false);
+    expect(warn.mock.calls.map(c => String(c[1])).join('\n')).toMatch(/is not running/);
+    warn.mockRestore();
+  });
+
+  it('does not match a container whose name merely CONTAINS the declared one', async () => {
+    // `podman ps --filter name=` is a substring/regex match; the collector must
+    // dump the declared container, not `paperless-db-backup-test`.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    mockPgAgent({ ps: { stdout: 'paperless-db-restore-test\n' } });
+    const manifest = pgManifest();
+    expect(await runBackupCollector(manifest, 'Local')).toBe(manifest);
+    expect(allArgv().some(a => a.includes('pg_dump'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('reports the failure when the dump cannot be copied out of the container', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    mockPgAgent({ cp: { code: 1, stderr: 'no such file' } });
+    const manifest = pgManifest();
+    expect(await runBackupCollector(manifest, 'Local')).toBe(manifest);
+    expect(warn.mock.calls.map(c => String(c[1])).join('\n')).toContain('no such file');
+    warn.mockRestore();
+  });
+
+  it('refuses a misconfigured collector before it execs anything', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    mockPgAgent();
+    const manifest = pgManifest({
+      collector: { kind: 'pg-dump', container: 'paperless-db', user: '', database: 'paperless' },
+    });
+    expect(await runBackupCollector(manifest, 'Local')).toBe(manifest);
+    expect(mockSendCommand).not.toHaveBeenCalled();
+    expect(warn.mock.calls.map(c => String(c[1])).join('\n')).toMatch(/misconfigured/);
+    warn.mockRestore();
+  });
+
+  it('degrades honestly when the agent rejects (feedback_agent_sendcommand_rejects)', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    mockSendCommand.mockRejectedValue(new Error('agent exec EACCES'));
+    const manifest = pgManifest();
+    expect(await runBackupCollector(manifest, 'Local')).toBe(manifest);
+    expect(warn.mock.calls.map(c => String(c[1])).join('\n')).toContain('agent exec EACCES');
+    warn.mockRestore();
+  });
+});
+
 describe('buildServiceBackupTar', () => {
   it('produces a tar containing the staged + stripped files', async () => {
     const src = await mkTmp();

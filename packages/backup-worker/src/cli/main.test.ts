@@ -91,6 +91,36 @@ describe('applyCollectorRemap', () => {
     const m = getServiceManifest('adguard')!;
     expect(await applyCollectorRemap(tmp, m)).toBe(m);
   });
+
+  describe('pg-dump (#2864)', () => {
+    const pgManifest: ServiceBackupManifest = {
+      service: 'paperless',
+      include: ['media', 'pgdata'],
+      exclude: [],
+      collector: { kind: 'pg-dump', container: 'paperless-db', user: 'paperless', database: 'paperless' },
+    };
+
+    it('stages the dump under its canonical name and drops the cluster dir', async () => {
+      await fs.writeFile(path.join(tmp, 'paperless.dump.sb-dump'), 'PGDUMP-CUSTOM');
+      const remapped = await applyCollectorRemap(tmp, pgManifest);
+      expect(remapped.include).toContain('paperless.dump.sb-dump');
+      expect(remapped.renames).toEqual({ 'paperless.dump.sb-dump': 'paperless.dump' });
+      // Excluded by the COLLECTOR, though the manifest declared it an include.
+      expect(remapped.exclude).toContain('pgdata');
+    });
+
+    it('THROWS when the host-side pg_dump left no dump — the run reports the service as failed', async () => {
+      // There is nothing to degrade to (the raw cluster dir is never staged), so
+      // a missing dump must be loud. A silent pass would ship a paperless tarball
+      // with media and no database in it.
+      await expect(applyCollectorRemap(tmp, pgManifest)).rejects.toThrow(/produced no dump/);
+    });
+
+    it('THROWS on an empty dump rather than shipping a 0-byte file', async () => {
+      await fs.writeFile(path.join(tmp, 'paperless.dump.sb-dump'), '');
+      await expect(applyCollectorRemap(tmp, pgManifest)).rejects.toThrow(/EMPTY dump/);
+    });
+  });
 });
 
 describe('runWorker', () => {

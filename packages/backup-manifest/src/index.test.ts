@@ -10,6 +10,11 @@ import {
   applyStripRules,
   applyTransformRules,
   translateHaAddonConfigEntries,
+  pgDumpPaths,
+  pgDumpRemap,
+  pgDumpCollectorProblems,
+  type PgDumpCollector,
+  type ServiceBackupManifest,
 } from './index';
 
 /** The manifest's DATA class (#1585) — the large on-RAID artifacts a
@@ -405,5 +410,90 @@ describe('translateHaAddonConfigEntries (#1595)', () => {
     // A different file is passed through untouched.
     const other = applyTransformRules(ha, 'configuration.yaml', 'default_config:\n');
     expect(other).toBe('default_config:\n');
+  });
+});
+
+describe('pg-dump collector descriptor (#2864)', () => {
+  const paperless = (
+    collector: Partial<PgDumpCollector> = {},
+  ): ServiceBackupManifest => ({
+    service: 'paperless',
+    include: ['media'],
+    exclude: [],
+    collector: {
+      kind: 'pg-dump',
+      container: 'paperless-db',
+      user: 'paperless',
+      database: 'paperless',
+      ...collector,
+    },
+  });
+
+  it('defaults the cluster dir to pgdata/ and the dump to <database>.dump', () => {
+    const paths = pgDumpPaths(paperless().collector as PgDumpCollector);
+    expect(paths).toEqual({
+      pgdataRel: 'pgdata',
+      dumpRel: 'paperless.dump',
+      stagedRel: 'paperless.dump.sb-dump',
+      containerPath: '/tmp/sb-paperless.sb-dump',
+    });
+  });
+
+  it('honours a declared cluster dir and dump path', () => {
+    const paths = pgDumpPaths(
+      paperless({ pgdata: 'db/data/', dumpPath: 'dumps/pl.dump' }).collector as PgDumpCollector,
+    );
+    expect(paths.pgdataRel).toBe('db/data');
+    expect(paths.dumpRel).toBe('dumps/pl.dump');
+    expect(paths.stagedRel).toBe('dumps/pl.dump.sb-dump');
+  });
+
+  it('excludes the cluster dir even when the manifest declares it as an include', () => {
+    // The whole point: a template cannot talk the platform into shipping a live
+    // Postgres data dir, no matter what it declares.
+    const declared = paperless();
+    const remapped = pgDumpRemap({ ...declared, include: ['media', 'pgdata'] });
+    expect(remapped.exclude).toContain('pgdata');
+    expect(remapped.include).toContain('paperless.dump.sb-dump');
+    expect(remapped.renames).toEqual({ 'paperless.dump.sb-dump': 'paperless.dump' });
+    // Unrelated includes survive untouched.
+    expect(remapped.include).toContain('media');
+  });
+
+  it('stages the dump exactly once even when the manifest also names it', () => {
+    const remapped = pgDumpRemap({
+      ...paperless(),
+      include: ['media', 'paperless.dump', 'paperless.dump.sb-dump'],
+    });
+    expect(remapped.include.filter(p => p.startsWith('paperless.dump'))).toEqual([
+      'paperless.dump.sb-dump',
+    ]);
+  });
+
+  it('leaves a non-pg-dump manifest alone', () => {
+    const npm = getServiceManifest('nginx')!;
+    expect(pgDumpRemap(npm)).toBe(npm);
+    expect(pgDumpCollectorProblems(npm)).toEqual([]);
+  });
+
+  it('reports a misconfigured collector instead of running a half-specified dump', () => {
+    expect(pgDumpCollectorProblems(paperless({ container: '' }))[0]).toMatch(/`container` is required/);
+    expect(pgDumpCollectorProblems(paperless({ user: 'pg user' }))[0]).toMatch(/whitespace/);
+    // A dump written inside the excluded cluster dir would be excluded right
+    // back out again — the backup would silently carry no database.
+    expect(pgDumpCollectorProblems(paperless({ dumpPath: 'pgdata/pl.dump' }))[0])
+      .toMatch(/lives inside the excluded cluster dir/);
+    // ADR 0002 path boundary.
+    expect(pgDumpCollectorProblems(paperless({ dumpPath: '../../etc/pl.dump' }))[0])
+      .toMatch(/`\.\.` segment/);
+    expect(pgDumpCollectorProblems(paperless({ dumpPath: '/srv/pl.dump' }))[0])
+      .toMatch(/not relative to the service data dir/);
+    // A named-volume manifest has no data dir to copy the dump into.
+    expect(pgDumpCollectorProblems({ ...paperless(), volume: 'paperless-db' })[0])
+      .toMatch(/`volume` manifests are not supported/);
+  });
+
+  it('accepts a fully specified collector', () => {
+    expect(pgDumpCollectorProblems(paperless())).toEqual([]);
   });
 });

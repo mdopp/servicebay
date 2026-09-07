@@ -35,6 +35,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   getServiceManifest,
+  pgDumpPaths,
+  pgDumpRemap,
+  type PgDumpCollector,
   type ServiceBackupManifest,
 } from '@servicebay/backup-manifest';
 import { buildServiceBackupTar } from '../engine/staging';
@@ -147,17 +150,55 @@ export function resolveServiceDataDir(
 }
 
 /**
+ * A pg-dump service's state is its DUMP, and the raw `pgdata/` cluster dir is
+ * never staged — so unlike the sqlite collector there is nothing to degrade to
+ * (#2864). A missing or empty dump means the host-side `pg_dump` did not run or
+ * failed, and this service's backup is incomplete: THROW, so runWorker records
+ * the service as an `error` in status.json instead of shipping a tarball that
+ * looks fine and carries no database.
+ */
+async function applyPgDumpRemap(
+  serviceDataDir: string,
+  manifest: ServiceBackupManifest,
+  collector: PgDumpCollector,
+): Promise<ServiceBackupManifest> {
+  const paths = pgDumpPaths(collector);
+  const dump = path.join(serviceDataDir, paths.stagedRel);
+  let bytes: number;
+  try {
+    bytes = (await fs.stat(dump)).size;
+  } catch {
+    throw new Error(
+      `pg-dump collector produced no dump at "${paths.stagedRel}" for "${manifest.service}" — `
+      + `the pg_dump in container "${collector.container}" did not run or failed (see the servicebay log). `
+      + `Refusing to ship a backup without the database; the raw "${paths.pgdataRel}/" cluster dir is never staged.`,
+    );
+  }
+  if (bytes === 0) {
+    throw new Error(
+      `pg-dump collector produced an EMPTY dump at "${paths.stagedRel}" for "${manifest.service}" — refusing to ship it.`,
+    );
+  }
+  return pgDumpRemap(manifest);
+}
+
+/**
  * When the npm-sqlite collector ran host-side, the consistent snapshot lives at
  * `data/database.sqlite.sb-backup`. Remap the manifest to stage THAT under the
  * canonical `data/database.sqlite` name (mirrors the backend producer's
  * post-collector manifest). A no-op for any other manifest, or when the snapshot
  * isn't present (servicebay then left the live file in place to copy as-is).
+ * A `pg-dump` manifest goes through {@link applyPgDumpRemap} instead.
  */
 export async function applyCollectorRemap(
   serviceDataDir: string,
   manifest: ServiceBackupManifest,
 ): Promise<ServiceBackupManifest> {
-  if (manifest.collector?.kind !== 'npm-sqlite') return manifest;
+  const collector = manifest.collector;
+  if (collector?.kind === 'pg-dump') {
+    return applyPgDumpRemap(serviceDataDir, manifest, collector);
+  }
+  if (collector?.kind !== 'npm-sqlite') return manifest;
   const snap = path.join(serviceDataDir, 'data/database.sqlite.sb-backup');
   try {
     await fs.access(snap);

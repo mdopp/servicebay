@@ -89,9 +89,149 @@ const HA_SUPERVISOR_ONLY_DOMAINS: ReadonlySet<string> = new Set([
  * container's bundled `sqlite3`, then stages the snapshot file as a normal
  * include. Pure descriptor — the producer owns the actual exec.
  */
-export interface BackupCollector {
+export interface NpmSqliteCollector {
   /** Discriminator for which collector the producer runs. */
   kind: 'npm-sqlite';
+}
+
+/**
+ * `pg_dump` inside the service's OWN Postgres container (#2864, epic #2858).
+ *
+ * A live Postgres cluster directory is not a backup: copying `pgdata/` while
+ * the server runs yields a torn, version-locked tree that no restore path
+ * accepts. So the collector takes a logical dump through the container's own
+ * `pg_dump` and stages THAT file; `pgdata/` is excluded by the collector
+ * itself ({@link pgDumpRemap}) no matter what the manifest or the template
+ * declared, so a template can never talk the platform into shipping the raw
+ * cluster dir.
+ *
+ * Only names live here — no password. `pg_dump` runs as the container's own
+ * superuser over the local socket (peer/trust inside the container), so no
+ * credential ever reaches an argv or a log line.
+ */
+export interface PgDumpCollector {
+  kind: 'pg-dump';
+  /** The podman container running this service's Postgres (`<service>-db`). */
+  container: string;
+  /** Postgres role `pg_dump` connects as. */
+  user: string;
+  /** Database to dump. */
+  database: string;
+  /**
+   * The raw cluster dir, relative to the service data dir. NEVER staged — the
+   * collector adds it to `exclude` on every run. Defaults to `pgdata`.
+   */
+  pgdata?: string;
+  /**
+   * Where the dump lands INSIDE the tarball (and therefore where a restore
+   * finds it), relative to the service data dir. Defaults to
+   * `<database>.dump`. Must not live inside `pgdata`.
+   */
+  dumpPath?: string;
+}
+
+export type BackupCollector = NpmSqliteCollector | PgDumpCollector;
+
+/** Suffix the on-disk dump carries before staging renames it to `dumpPath` —
+ *  mirrors npm-sqlite's `.sb-backup`, so a half-written dump can never be
+ *  mistaken for the canonical file a restore reads. */
+const PG_DUMP_STAGED_SUFFIX = '.sb-dump';
+const PG_DUMP_DEFAULT_PGDATA = 'pgdata';
+
+/**
+ * The four paths a pg-dump run touches. Pure — shared by the producer (which
+ * runs `pg_dump` and copies the file out of the container) and the worker
+ * (which stages it), so the two sides cannot drift.
+ */
+export function pgDumpPaths(collector: PgDumpCollector): {
+  /** Raw cluster dir, relative to the service data dir — never staged. */
+  pgdataRel: string;
+  /** Path inside the tarball (what a restore reads). */
+  dumpRel: string;
+  /** Path on disk before staging renames it. */
+  stagedRel: string;
+  /** Path `pg_dump` writes to INSIDE the Postgres container. */
+  containerPath: string;
+} {
+  const dumpRel = (collector.dumpPath ?? `${collector.database}.dump`).trim();
+  return {
+    pgdataRel: (collector.pgdata ?? PG_DUMP_DEFAULT_PGDATA).trim().replace(/\/+$/, ''),
+    dumpRel,
+    stagedRel: `${dumpRel}${PG_DUMP_STAGED_SUFFIX}`,
+    // The container's own /tmp, not the mounted cluster dir: the dump leaves
+    // the container by `podman cp`, so it never has to be written into (and
+    // then excluded out of) the data volume.
+    containerPath: `/tmp/sb-${collector.database}${PG_DUMP_STAGED_SUFFIX}`,
+  };
+}
+
+/** A rel path that would leave the service's data dir (ADR 0002), or `null`. */
+function outsideDataDir(rel: string): string | null {
+  if (rel === '' || rel === '.') return 'is empty';
+  if (rel.startsWith('/') || rel.startsWith('~')) return 'is not relative to the service data dir';
+  if (rel.split('/').includes('..')) return 'contains a `..` segment';
+  return null;
+}
+
+/**
+ * Why this pg-dump manifest cannot run, or `[]` when it can. The producer
+ * refuses (and logs) rather than execing a half-specified collector — a dump
+ * that silently never happens is the failure mode this whole slice exists to
+ * prevent.
+ */
+export function pgDumpCollectorProblems(manifest: ServiceBackupManifest): string[] {
+  const collector = manifest.collector;
+  if (collector?.kind !== 'pg-dump') return [];
+  const problems: string[] = [];
+  for (const field of ['container', 'user', 'database'] as const) {
+    const value = collector[field];
+    if (typeof value !== 'string' || value.trim() === '') {
+      problems.push(`\`${field}\` is required`);
+    } else if (/\s/.test(value)) {
+      problems.push(`\`${field}\` must not contain whitespace (got "${value}")`);
+    }
+  }
+  if (manifest.volume) {
+    problems.push(
+      '`volume` manifests are not supported by the pg-dump collector — the dump is '
+      + 'copied out to the service data dir, which a named-volume manifest does not have',
+    );
+  }
+  const { pgdataRel, dumpRel } = pgDumpPaths(collector);
+  for (const [field, rel] of [['pgdata', pgdataRel], ['dumpPath', dumpRel]] as const) {
+    const reason = outsideDataDir(rel);
+    if (reason) problems.push(`\`${field}\` "${rel}" ${reason}`);
+  }
+  if (dumpRel === pgdataRel || dumpRel.startsWith(`${pgdataRel}/`)) {
+    problems.push(
+      `\`dumpPath\` "${dumpRel}" lives inside the excluded cluster dir "${pgdataRel}/", `
+      + 'so the dump would be excluded from the tarball it is meant to carry',
+    );
+  }
+  return problems;
+}
+
+/**
+ * The manifest the STAGING actually runs for a pg-dump service: the dump is
+ * staged (under its canonical `dumpPath` name), and `pgdata/` is excluded —
+ * by the collector, unconditionally, whatever the manifest or the template
+ * declared. A non-pg-dump manifest is returned unchanged.
+ */
+export function pgDumpRemap(manifest: ServiceBackupManifest): ServiceBackupManifest {
+  const collector = manifest.collector;
+  if (collector?.kind !== 'pg-dump') return manifest;
+  const { pgdataRel, dumpRel, stagedRel } = pgDumpPaths(collector);
+  return {
+    ...manifest,
+    // The declared include list keeps its other paths (media dirs etc.); the
+    // dump replaces any hand-declared reference to itself so it is staged
+    // exactly once, from the file the collector actually wrote.
+    include: [...manifest.include.filter(p => p !== dumpRel && p !== stagedRel), stagedRel],
+    exclude: manifest.exclude.includes(pgdataRel)
+      ? manifest.exclude
+      : [...manifest.exclude, pgdataRel],
+    renames: { ...manifest.renames, [stagedRel]: dumpRel },
+  };
 }
 
 export interface ServiceBackupManifest {

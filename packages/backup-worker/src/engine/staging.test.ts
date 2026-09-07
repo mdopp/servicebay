@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { stageServiceBackup, buildServiceBackupTar } from './staging';
-import { getServiceManifest, type ServiceBackupManifest } from '@servicebay/backup-manifest';
+import { getServiceManifest, pgDumpRemap, type ServiceBackupManifest } from '@servicebay/backup-manifest';
 
 const execFileAsync = promisify(execFile);
 
@@ -104,6 +104,29 @@ describe('stageServiceBackup', () => {
 
     expect(staged).toEqual(['data/database.sqlite']);
     await expect(fs.readFile(path.join(staging, 'data/database.sqlite'), 'utf8')).resolves.toBe('SNAPSHOT');
+  });
+
+  it('stages a pg-dump manifest\'s dump and never the raw cluster dir (#2864)', async () => {
+    // The worker stages what the host-side collector produced: a fake dump file
+    // beside a live-looking pgdata/ tree. Only the dump may reach the tar.
+    const src = await mkTmp();
+    await write(src, 'paperless.dump.sb-dump', 'PGDUMP-CUSTOM');
+    await write(src, 'pgdata/base/1/2345', 'TORN-CLUSTER-PAGE');
+    await write(src, 'media/doc.pdf', 'PDF');
+    const staging = await mkTmp();
+    const manifest = pgDumpRemap({
+      service: 'paperless',
+      // The template declared the cluster dir; the collector excludes it anyway.
+      include: ['media', 'pgdata'],
+      exclude: [],
+      collector: { kind: 'pg-dump', container: 'paperless-db', user: 'paperless', database: 'paperless' },
+    });
+
+    const staged = await stageServiceBackup(src, manifest, staging);
+
+    expect(staged).toEqual(['media/doc.pdf', 'paperless.dump']);
+    await expect(fs.readFile(path.join(staging, 'paperless.dump'), 'utf8')).resolves.toBe('PGDUMP-CUSTOM');
+    await expect(fs.access(path.join(staging, 'pgdata'))).rejects.toThrow();
   });
 
   // #2454 — a compromised service must not be able to point one of its own
