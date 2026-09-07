@@ -57,6 +57,25 @@ describe('checkNasBackupReachable', () => {
     expect(r.hint).toMatch(/attach a USB drive/i);
   });
 
+  it('does not tell the operator to attach a drive when the share is simply full (#2873)', async () => {
+    state.uploadThrows = new Error('553 .sb-write-test-1-2: No space left on device.');
+    const r = await checkNasBackupReachable();
+    expect(r.status).toBe('warn');
+    expect(r.detail).toMatch(/No space left on device/);
+    expect(r.hint).toMatch(/out of space/i);
+    expect(r.hint).toMatch(/prunes the oldest snapshots/i);
+    expect(r.hint).not.toMatch(/attach a USB drive/i);
+  });
+
+  it('removes its own write-test file after a failed write test (#2873)', async () => {
+    const { nasRemove } = await import('@/lib/externalBackup/nasClient');
+    vi.mocked(nasRemove).mockClear();
+    state.uploadThrows = new Error('553 out of space: No space left on device.');
+    await checkNasBackupReachable();
+    const removed = vi.mocked(nasRemove).mock.calls.map(c => String(c[0]));
+    expect(removed.some(pth => pth.startsWith('sb-backup/.sb-write-test-'))).toBe(true);
+  });
+
   it('returns ok when reachable, authed, and writable', async () => {
     const r = await checkNasBackupReachable();
     expect(r.status).toBe('ok');

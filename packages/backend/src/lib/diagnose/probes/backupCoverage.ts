@@ -34,6 +34,7 @@
 
 import { getConfig } from '@/lib/config';
 import { getBackupHistory } from '@/lib/backup/service';
+import { isOutOfSpaceError } from '@/lib/externalBackup/producer';
 import { resolveBackupSources, type BackupConfig, type BackupSchedule } from '@/lib/backup/types';
 
 /**
@@ -217,6 +218,21 @@ function withCaveat(result: Omit<ConfigBackupProbeResult, 'detail'> & { detail: 
 
 type ExternalBackupRecord = NonNullable<Awaited<ReturnType<typeof getConfig>>['externalBackup']>;
 
+/**
+ * What to tell the operator when the run's own failure message says the NAS is
+ * full (#2873). "Re-run it and check the per-service errors" is the wrong advice
+ * there — the run already prunes and retries by itself, so the only remaining
+ * operator action is capacity.
+ */
+const FULL_TARGET_HINT =
+  'The destination reported itself full. Each run now sweeps partial uploads and prunes the oldest ' +
+  'snapshots across all services before writing, then retries once, so the next run usually recovers on ' +
+  'its own. If the message says the target is too small for one snapshot of each service, that is the one ' +
+  'case left for you: a larger drive, or a lower retention count under Settings → Backups.';
+
+const PARTIAL_HINT =
+  'The named services have no config on the NAS from that run. Re-run it from Settings → Backups and check the per-service errors.';
+
 /** Classify a recorded nightly run: denominator first, always. */
 function classifyConfigRun(record: ExternalBackupRecord, now: Date): ConfigBackupProbeResult {
   const lastRun = record.lastRun ? Date.parse(record.lastRun) : NaN;
@@ -241,12 +257,15 @@ function classifyRecordedConfigRun(
   const ok = record.servicesOk ?? 0;
   const total = record.servicesTotal ?? 0;
   const tally = `${ok}/${total} services`;
+  const targetFull = isOutOfSpaceError(record.lastMessage);
   if (record.lastStatus === 'error') {
     return withCaveat({
       status: 'warn',
       state: 'last_run_failed',
       detail: `The last config backup (${age} ago) FAILED before it finished: ${record.lastMessage ?? 'no message recorded'}. ${tally} were written.`,
-      hint: 'Check the "Config backup (FritzBox NAS)" row above — an unreachable or read-only target is the usual cause.',
+      hint: targetFull
+        ? FULL_TARGET_HINT
+        : 'Check the "Config backup (FritzBox NAS)" row above — an unreachable or read-only target is the usual cause.',
     });
   }
   if (total === 0) {
@@ -261,7 +280,7 @@ function classifyRecordedConfigRun(
       status: 'warn',
       state: 'partial',
       detail: `The last config backup (${age} ago) covered only ${tally}. ${record.lastMessage ?? ''}`.trim(),
-      hint: 'The named services have no config on the NAS from that run. Re-run it from Settings → Backups and check the per-service errors.',
+      hint: targetFull ? FULL_TARGET_HINT : PARTIAL_HINT,
     });
   }
   if (now.getTime() - lastRun > CONFIG_BACKUP_INTERVAL_MS * OVERDUE_FACTOR) {
