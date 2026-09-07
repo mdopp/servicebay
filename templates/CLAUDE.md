@@ -112,8 +112,13 @@ changes in a way the operator needs to know about:
 - Data paths moved on disk
 - A new required mount that won't be auto-created
 
-Plain image-tag bumps don't need a schema bump — Quadlet's
-`AutoUpdate=registry` handles those transparently.
+Plain image-tag bumps don't need a schema bump — ServiceBay derives the
+generated `.kube`'s `AutoUpdate=` policy from the pod's own images
+(registry-backed → `AutoUpdate=registry`, all `localhost/…` →
+`AutoUpdate=local`, mixed → per-container `io.containers.autoupdate/<name>`
+annotations instead of a `[Kube]` line — see
+`packages/backend/src/lib/services/quadletAutoUpdate.ts`) and handles those
+transparently.
 
 ## Backup declaration (#2858)
 

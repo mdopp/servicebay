@@ -223,7 +223,10 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
     description:
       'Bump when the pod structure or variable shape changes in a way operators need to be aware of ' +
       '(containers extracted, variables renamed, data paths moved). Plain image-tag bumps don\'t need ' +
-      'this — Quadlet\'s `AutoUpdate=registry` handles those silently. Each bump should ship a ' +
+      'this — ServiceBay derives the generated `.kube`\'s auto-update policy from the pod\'s own images ' +
+      '(`AutoUpdate=registry` when all images are registry-backed, `AutoUpdate=local` when all are ' +
+      '`localhost/…`, or per-container `io.containers.autoupdate/<name>` annotations for a mixed pod — ' +
+      'see `quadletAutoUpdate.ts`) and handles those silently. Each bump should ship a ' +
       '`CHANGELOG.md` section + (if data needs to move) a `migrations/v{N-1}-to-v{N}.py` script. See #352.',
   },
   {
