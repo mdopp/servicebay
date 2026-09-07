@@ -708,7 +708,7 @@ metadata:
 | `include` | Required, ≥ 1 entry. The small, critical, hard-to-recreate state (ADR 0002 tier A) that a reinstall must restore. |
 | `exclude` | Paths that must never enter the tarball — bulk, logs, caches, sessions. Excludes win over includes. |
 | `data` | The large on-RAID artifacts (ADR 0002 tier B). Declarative: never backed up, and kept on disk through a `wipe-config` reinstall. |
-| `collector` | `file` (default, plain copy), `npm-sqlite` (in-container `sqlite3 .backup` first — a live WAL database that a plain `cp` would tear), `pg-dump` (`pg_dump` in the service's own Postgres container). |
+| `collector` | `file` (default, plain copy), `npm-sqlite` (in-container `sqlite3 .backup` first — a live WAL database that a plain `cp` would tear; when the image ships no `sqlite3` it falls back to a live container-side copy, recorded as `consistent: false` in the backup meta, never a host-side copy of the root-owned file), `pg-dump` (`pg_dump` in the service's own Postgres container). |
 | `strip` | Per-file YAML key removals (`{file, dropYamlKeys}`) applied as the file enters the tarball — password hashes and the like. |
 | `transform` | Per-file value rewrites (`{file, kind}`) from a closed set of transform kinds. |
 | `dataSubdir` | On-disk subdir under `DATA_DIR` when it is not the template name (NPM ships as `nginx` but stores under `nginx-proxy-manager/`). |

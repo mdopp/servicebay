@@ -26,7 +26,15 @@ const { mockNas, mockGetConfig, mockSendCommand, mockExecutor, mockGetExecutor }
   mockGetExecutor: vi.fn(),
 }));
 
-vi.mock('./nasClient', () => mockNas);
+// Keep the REAL connection-error classifier: `summariseBackupRun` and the
+// `config_backup` probe both key off it, so a hand-rolled stub here would let
+// the grouping drift from what the transport actually reports (#2876).
+vi.mock('./nasClient', async () => ({
+  ...mockNas,
+  withNasSession: <T,>(fn: () => Promise<T>): Promise<T> => fn(),
+  isConnectionLevelError: (await vi.importActual<typeof import('./nasClient')>('./nasClient'))
+    .isConnectionLevelError,
+}));
 vi.mock('../config', () => ({ getConfig: () => mockGetConfig(), updateConfig: vi.fn(async () => ({})) }));
 vi.mock('../agent/manager', () => ({
   agentManager: { ensureAgent: vi.fn(async () => ({ sendCommand: mockSendCommand })) },
@@ -49,6 +57,7 @@ import {
   NAS_BACKUP_DIR,
   DEFAULT_BACKUP_RETENTION,
   latestServiceBackupName,
+  summariseBackupRun,
 } from './producer';
 import { type ServiceBackupManifest } from '@servicebay/backup-manifest';
 import { builtinManifest } from '../../../../../tests/fixtures/builtinBackupManifests';
@@ -252,7 +261,7 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
 
   it('returns the manifest unchanged for a service with no collector', async () => {
     const ha = builtinManifest('home-assistant');
-    expect(await runBackupCollector(ha, 'Local')).toBe(ha);
+    expect((await runBackupCollector(ha, 'Local')).manifest).toBe(ha);
     expect(mockSendCommand).not.toHaveBeenCalled();
   });
 
@@ -261,44 +270,69 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
       .mockResolvedValueOnce({ stdout: 'npm_proxy-manager docker.io/jc21/nginx-proxy-manager', code: 0 })
       .mockResolvedValueOnce({ stdout: 'ok', code: 0 });
 
-    const out = await runBackupCollector(npm, 'Local');
+    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out.include).toContain('data/database.sqlite.sb-backup');
     expect(out.include).not.toContain('data/database.sqlite');
     expect(out.renames).toEqual({ 'data/database.sqlite.sb-backup': 'data/database.sqlite' });
     // certs are untouched by the remap.
     expect(out.include).toContain('letsencrypt');
+    // `sqlite3 .backup` is torn-free, so the meta must NOT be flagged.
+    expect(consistent).toBe(true);
   });
 
   it('falls back to the original manifest (live file) when the container is missing', async () => {
     mockSendCommand.mockResolvedValueOnce({ stdout: '', code: 0 });
-    const out = await runBackupCollector(npm, 'Local');
+    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out).toBe(npm);
     expect(out.include).toContain('data/database.sqlite');
+    expect(consistent).toBe(false);
   });
 
   it('falls back when the in-container snapshot command fails', async () => {
     mockSendCommand
       .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
       .mockResolvedValueOnce({ stdout: 'sqlite3: not found', code: 1 });
-    const out = await runBackupCollector(npm, 'Local');
+    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out).toBe(npm);
+    expect(consistent).toBe(false);
   });
 
-  it('degrades gracefully (live file) and logs the real reason when sqlite3 is missing from the image (#1894)', async () => {
+  it('with no sqlite3 in the image, takes a LIVE copy INSIDE the container and marks it inconsistent (#2877)', async () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    // The snapshot script probes for sqlite3 and emits the `no-sqlite3` sentinel
-    // (exit 0) when it's absent — NOT a misleading "(unknown)".
+    // No sqlite3 → the script `cat`s the DB container-side into the .sb-backup
+    // sidecar and prints `live`. The old behaviour left the manifest pointing at
+    // the live HOST file, which is root-owned 0600 → EACCES in the worker every
+    // single run, so NPM's proxy-host/cert DB was never on the NAS.
     mockSendCommand
       .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
-      .mockResolvedValueOnce({ stdout: 'no-sqlite3', stderr: '', code: 0 });
-    const out = await runBackupCollector(npm, 'Local');
-    // Degrades to copying the live DB under its canonical name (manifest unchanged).
-    expect(out).toBe(npm);
-    expect(out.include).toContain('data/database.sqlite');
+      .mockResolvedValueOnce({ stdout: 'live', stderr: '', code: 0 });
+    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
+    expect(out).not.toBe(npm);
+    expect(out.include).toContain('data/database.sqlite.sb-backup');
+    expect(out.include).not.toContain('data/database.sqlite');
+    expect(out.renames).toEqual({ 'data/database.sqlite.sb-backup': 'data/database.sqlite' });
+    // A live copy is not torn-free — the meta must say so.
+    expect(consistent).toBe(false);
     const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
-    expect(msg).toMatch(/sqlite3 not present/i);
-    expect(msg).not.toMatch(/unknown/);
+    expect(msg).toMatch(/no sqlite3/i);
+    expect(msg).toMatch(/LIVE/);
     warn.mockRestore();
+  });
+
+  it('the snapshot script never falls back to a HOST-side copy of the root-owned live DB (#2877)', async () => {
+    // The whole point: no sqlite3 must NOT mean "let the host copy the file".
+    // Both branches of the script write the .sb-backup sidecar from inside the
+    // container and chmod it so the (differently-uid'd) worker can read it back.
+    mockSendCommand
+      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
+      .mockResolvedValueOnce({ stdout: 'live', stderr: '', code: 0 });
+    await runBackupCollector(npm, 'Local');
+    const command = (mockSendCommand.mock.calls[1][1] as { command: string }).command;
+    const script = Buffer.from(/echo ([A-Za-z0-9+/=]+) \|/.exec(command)![1], 'base64').toString();
+    expect(script).toContain('cat "$DB" > "$DB.sb-snap"');
+    expect(script).toContain('chmod 0644 "$DB.sb-backup"');
+    // The sentinel the old code emitted (and gave up on) is gone.
+    expect(script).not.toContain('no-sqlite3');
   });
 
   it('surfaces the container stderr (not "(unknown)") when the snapshot errors (#1894)', async () => {
@@ -306,11 +340,12 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
     mockSendCommand
       .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
       .mockResolvedValueOnce({ stdout: '', stderr: 'sh: 1: sqlite3: Permission denied', code: 1 });
-    const out = await runBackupCollector(npm, 'Local');
+    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out).toBe(npm);
     const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
     expect(msg).toContain('Permission denied'); // the REAL stderr is logged
     expect(msg).not.toMatch(/\(unknown\)/);
+    expect(consistent).toBe(false);
     warn.mockRestore();
   });
 
@@ -322,12 +357,14 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
     mockSendCommand
       .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
       .mockResolvedValueOnce({ stdout: 'nodb', stderr: '', code: 0 });
-    const out = await runBackupCollector(npm, 'Local');
+    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     // Regression guard: `nodb` must not be swallowed into the live-file fallback.
     expect(out).not.toBe(npm);
     expect(out.include).toContain('data/database.sqlite.sb-backup');
     expect(out.include).not.toContain('data/database.sqlite');
     expect(out.renames).toEqual({ 'data/database.sqlite.sb-backup': 'data/database.sqlite' });
+    // Nothing to snapshot is not an inconsistent snapshot.
+    expect(consistent).toBe(true);
   });
 
   it('drives the snapshot exec against the container name discovered by the ps/awk probe', async () => {
@@ -354,11 +391,12 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
     mockSendCommand
       .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
       .mockResolvedValueOnce({ stdout: 'partial garbage', stderr: '', code: 0 });
-    const out = await runBackupCollector(npm, 'Local');
+    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out).toBe(npm);
     expect(out.include).toContain('data/database.sqlite');
     const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
     expect(msg).toMatch(/snapshot failed/i);
+    expect(consistent).toBe(false);
     warn.mockRestore();
   });
 
@@ -371,11 +409,12 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
     mockSendCommand
       .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
       .mockRejectedValueOnce(new Error('agent exec EACCES'));
-    const out = await runBackupCollector(npm, 'Local');
+    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out).toBe(npm); // live file, not a phantom snapshot remap
     expect(out.include).toContain('data/database.sqlite');
     const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
     expect(msg).toContain('agent exec EACCES'); // the real error is surfaced
+    expect(consistent).toBe(false);
     warn.mockRestore();
   });
 
@@ -388,11 +427,12 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
       .spyOn(agentManager, 'ensureAgent')
       .mockRejectedValueOnce(new Error('node offline'));
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    const out = await runBackupCollector(npm, 'Local');
+    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out).toBe(npm);
     expect(mockSendCommand).not.toHaveBeenCalled();
     const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
     expect(msg).toContain('node offline');
+    expect(consistent).toBe(false);
     warn.mockRestore();
     spy.mockRestore();
   });
@@ -457,7 +497,7 @@ describe('runBackupCollector — pg-dump in the service\'s own Postgres containe
 
   it('deletes the previous run\'s dump BEFORE dumping, then copies the new one out', async () => {
     mockPgAgent();
-    const out = await runBackupCollector(pgManifest(), 'Local');
+    const { manifest: out } = await runBackupCollector(pgManifest(), 'Local');
 
     // A stale dump must never be shipped as if it were today's — so the delete
     // is the FIRST thing that happens, before anything can fail.
@@ -475,7 +515,7 @@ describe('runBackupCollector — pg-dump in the service\'s own Postgres containe
 
   it('excludes pgdata/ even when the manifest declares it as an include', async () => {
     mockPgAgent();
-    const out = await runBackupCollector(pgManifest({ include: ['media', 'pgdata'] }), 'Local');
+    const { manifest: out } = await runBackupCollector(pgManifest({ include: ['media', 'pgdata'] }), 'Local');
     expect(out.exclude).toContain('pgdata');
     expect(out.include).toContain('paperless.dump.sb-dump');
   });
@@ -490,7 +530,7 @@ describe('runBackupCollector — pg-dump in the service\'s own Postgres containe
     await writeFile(src, 'paperless.dump.sb-dump', 'PGDUMP-CUSTOM');
 
     mockPgAgent();
-    const remapped = await runBackupCollector(pgManifest({ include: ['media', 'pgdata'] }), 'Local');
+    const { manifest: remapped } = await runBackupCollector(pgManifest({ include: ['media', 'pgdata'] }), 'Local');
     const staged = await stageServiceBackup(src, remapped, staging);
 
     expect(staged).toEqual(['media/doc.pdf', 'paperless.dump']);
@@ -503,7 +543,7 @@ describe('runBackupCollector — pg-dump in the service\'s own Postgres containe
     mockPgAgent({ dump: { code: 1, stderr: 'pg_dump: error: connection to server failed' } });
 
     const manifest = pgManifest();
-    const out = await runBackupCollector(manifest, 'Local');
+    const { manifest: out } = await runBackupCollector(manifest, 'Local');
 
     // No remap: nothing claims a dump exists. The stale dump was already
     // removed, so the worker finds none and fails the service loudly rather
@@ -518,7 +558,7 @@ describe('runBackupCollector — pg-dump in the service\'s own Postgres containe
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     mockPgAgent({ ps: { stdout: '' } });
     const manifest = pgManifest();
-    expect(await runBackupCollector(manifest, 'Local')).toBe(manifest);
+    expect((await runBackupCollector(manifest, 'Local')).manifest).toBe(manifest);
     expect(allArgv().some(a => a.includes('pg_dump'))).toBe(false);
     expect(warn.mock.calls.map(c => String(c[1])).join('\n')).toMatch(/is not running/);
     warn.mockRestore();
@@ -530,7 +570,7 @@ describe('runBackupCollector — pg-dump in the service\'s own Postgres containe
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     mockPgAgent({ ps: { stdout: 'paperless-db-restore-test\n' } });
     const manifest = pgManifest();
-    expect(await runBackupCollector(manifest, 'Local')).toBe(manifest);
+    expect((await runBackupCollector(manifest, 'Local')).manifest).toBe(manifest);
     expect(allArgv().some(a => a.includes('pg_dump'))).toBe(false);
     warn.mockRestore();
   });
@@ -539,7 +579,7 @@ describe('runBackupCollector — pg-dump in the service\'s own Postgres containe
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     mockPgAgent({ cp: { code: 1, stderr: 'no such file' } });
     const manifest = pgManifest();
-    expect(await runBackupCollector(manifest, 'Local')).toBe(manifest);
+    expect((await runBackupCollector(manifest, 'Local')).manifest).toBe(manifest);
     expect(warn.mock.calls.map(c => String(c[1])).join('\n')).toContain('no such file');
     warn.mockRestore();
   });
@@ -550,7 +590,7 @@ describe('runBackupCollector — pg-dump in the service\'s own Postgres containe
     const manifest = pgManifest({
       collector: { kind: 'pg-dump', container: 'paperless-db', user: '', database: 'paperless' },
     });
-    expect(await runBackupCollector(manifest, 'Local')).toBe(manifest);
+    expect((await runBackupCollector(manifest, 'Local')).manifest).toBe(manifest);
     expect(mockSendCommand).not.toHaveBeenCalled();
     expect(warn.mock.calls.map(c => String(c[1])).join('\n')).toMatch(/misconfigured/);
     warn.mockRestore();
@@ -560,7 +600,7 @@ describe('runBackupCollector — pg-dump in the service\'s own Postgres containe
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     mockSendCommand.mockRejectedValue(new Error('agent exec EACCES'));
     const manifest = pgManifest();
-    expect(await runBackupCollector(manifest, 'Local')).toBe(manifest);
+    expect((await runBackupCollector(manifest, 'Local')).manifest).toBe(manifest);
     expect(warn.mock.calls.map(c => String(c[1])).join('\n')).toContain('agent exec EACCES');
     warn.mockRestore();
   });
@@ -1187,5 +1227,52 @@ describe('deleteServiceBackup (#1890)', () => {
   ])('rejects a %s tarName without touching the NAS', async (_label, name) => {
     await expect(deleteServiceBackup(name)).rejects.toThrow();
     expect(mockNas.nasRemove).not.toHaveBeenCalled();
+  });
+});
+
+// #2876 — a FritzBox that drops the control connection after ~8 services used to
+// produce five identical `connect ECONNREFUSED …` rows, one per remaining service.
+// That reads as "five broken services" and sends the operator to the wrong fix.
+describe('summariseBackupRun — connection drops are ONE fact, not N broken services (#2876)', () => {
+  const refused = 'connect ECONNREFUSED 192.168.178.1:21 (control socket)';
+
+  it('reports a clean run as the plain tally', () => {
+    expect(summariseBackupRun([
+      { service: 'adguard', ok: true },
+      { service: 'nginx', ok: true },
+    ])).toBe('2/2 services backed up');
+  });
+
+  it('groups the connection-level failures and names them once, with the tally', () => {
+    const msg = summariseBackupRun([
+      { service: 'adguard', ok: true },
+      { service: 'authelia', ok: true },
+      { service: 'paperless', ok: false, error: refused },
+      { service: 'beets', ok: false, error: refused },
+      { service: 'radicale', ok: false, error: 'Server sent FIN packet unexpectedly, closing connection.' },
+    ]);
+    expect(msg).toMatch(/dropped the connection after 2 of 5 services/);
+    expect(msg).toContain('paperless, beets, radicale');
+    // The five identical rows collapse to one "first error" mention.
+    expect(msg.match(/ECONNREFUSED/g)).toHaveLength(1);
+    expect(msg).not.toMatch(/Not backed up/);
+  });
+
+  it('keeps genuine per-service errors listed separately from the drop', () => {
+    const msg = summariseBackupRun([
+      { service: 'adguard', ok: true },
+      { service: 'nginx', ok: false, error: 'EACCES: permission denied, copyfile database.sqlite' },
+      { service: 'paperless', ok: false, error: refused },
+    ]);
+    expect(msg).toMatch(/dropped the connection after 1 of 3 services/);
+    expect(msg).toMatch(/Not backed up: nginx \(EACCES/);
+    // nginx must NOT be swept into the connection group — it is a real fault.
+    expect(msg).not.toMatch(/never got a write: [^.]*nginx/);
+  });
+
+  it('keeps the old shape when nothing was a connection failure', () => {
+    expect(summariseBackupRun([
+      { service: 'adguard', ok: false, error: 'No config files to back up' },
+    ])).toBe('Not backed up: adguard (No config files to back up)');
   });
 });

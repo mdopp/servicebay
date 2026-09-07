@@ -54,6 +54,13 @@ export interface BackupRun {
   exec: SafeExec;
   run: BackupWorkerRun;
   status: WorkerStatus;
+  /**
+   * Services whose staged copy is a LIVE copy rather than a torn-free snapshot
+   * (#2877) — the collector could not take a consistent one. The NAS write
+   * records this as `consistent: false` in the tar's meta sidecar, so a restore
+   * knows what it has. Absent from the map means "consistent".
+   */
+  inconsistent?: ReadonlySet<string>;
 }
 
 /** Build the launcher's `SafeExec` seam over the agent's structured `safe_exec`. */
@@ -89,10 +96,14 @@ async function selectInstalledBackupManifests(): Promise<ServiceBackupManifest[]
 async function runHostCollectors(
   manifests: readonly ServiceBackupManifest[],
   node: string,
-): Promise<void> {
+): Promise<Set<string>> {
+  const inconsistent = new Set<string>();
   for (const manifest of manifests) {
-    if (manifest.collector) await runBackupCollector(manifest, node);
+    if (!manifest.collector) continue;
+    const result = await runBackupCollector(manifest, node);
+    if (!result.consistent) inconsistent.add(manifest.service);
   }
+  return inconsistent;
 }
 
 /**
@@ -153,13 +164,13 @@ export async function runBackupForServices(services: string[], node = 'Local'): 
   const manifests = services
     .map(s => findServiceManifest(resolved, s))
     .filter((m): m is ServiceBackupManifest => m !== undefined);
-  await runHostCollectors(manifests, node);
+  const inconsistent = await runHostCollectors(manifests, node);
   const result = await runWorkerToCompletion(exec, services, manifests, stacksDir);
   if (result.status.phase === 'error') {
     await cleanupBackupRun(result.exec, result.run);
     throw new Error(result.status.error ?? 'backup-worker run failed');
   }
-  return result;
+  return { ...result, inconsistent };
 }
 
 /**

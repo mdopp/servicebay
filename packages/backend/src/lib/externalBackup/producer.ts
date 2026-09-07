@@ -22,7 +22,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getConfig, updateConfig } from '../config';
 import { logger } from '../logger';
-import { nasUpload, nasDownload, nasList, nasRemove } from './nasClient';
+import { nasUpload, nasDownload, nasList, nasRemove, withNasSession, isConnectionLevelError } from './nasClient';
 import {
   applyStripRules,
   applyTransformRules,
@@ -32,6 +32,10 @@ import { resolveServiceBackupManifest } from './templateManifests';
 // Re-exported for back-compat: the collector moved to its own module to break the
 // producer ↔ backupWorker/service import cycle (#1955).
 export { runBackupCollector } from './collector';
+// Re-exported so the `config_backup` probe can classify a recorded run message
+// the same way the live run classifies an error (#2876), without reaching into
+// the transport module itself.
+export { isConnectionLevelError } from './nasClient';
 
 const execFileAsync = promisify(execFile);
 
@@ -152,6 +156,13 @@ export interface ServiceBackupMeta {
   /** Hostname of the node that produced the backup — survives a reinstall to
    *  tell the operator which box the config came from. */
   nodeId: string;
+  /**
+   * False when the service's database was captured as a LIVE copy rather than a
+   * torn-free snapshot (#2877) — e.g. NPM's `database.sqlite` on an image with
+   * no `sqlite3`, where the alternative was no backup at all. Absent means the
+   * copy is consistent (every backup written before this field existed).
+   */
+  consistent?: boolean;
 }
 
 export interface ServiceBackupResult {
@@ -503,7 +514,9 @@ async function uploadBackupRun(
       if (r.ok && r.tarName) {
         try {
           const tar = await readBackupTar(exec, run, r.tarName);
-          const written = await writeServiceBackupToNas(r.service, tar);
+          const written = await writeServiceBackupToNas(r.service, tar, {
+            consistent: !completed.inconsistent?.has(r.service),
+          });
           results.push({ service: r.service, ok: true, tarName: written.tarName, size: written.size });
         } catch (e) {
           results.push({ service: r.service, ok: false, error: e instanceof Error ? e.message : String(e) });
@@ -536,7 +549,13 @@ export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEn
     // Nothing installed ships a manifest — a real, recordable 0/0 outcome, not
     // a success and not a failure. The probe names that state; recording it
     // here is what stops "never ran" and "had nothing to do" looking alike.
-    const results = completed ? await uploadBackupRun(completed) : [];
+    //
+    // ONE destination session for the whole upload phase (#2876): the sweep,
+    // every per-service prune and every tar/meta upload share one FTP control
+    // connection. A connection per call opened 50–70 sessions in ~10 s, which
+    // tripped the FritzBox's session budget after ~8 services and left the same
+    // tail of services unbacked-up every night.
+    const results = completed ? await withNasSession(() => uploadBackupRun(completed)) : [];
     await recordExternalBackupRun(results);
     return results;
   } catch (e) {
@@ -553,16 +572,50 @@ export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEn
  * and swallowed — the probe then reports the previous (stale) run, which is
  * itself the honest answer.
  */
-async function recordExternalBackupRun(results: ServiceBackupRunEntry[], error?: unknown): Promise<void> {
+/**
+ * The run's one-line outcome for `config.externalBackup.lastMessage`, with the
+ * two failure classes told apart (#2876).
+ *
+ * A FritzBox that drops the control connection after ~8 services produced five
+ * identical `connect ECONNREFUSED …` rows, one per remaining service — which
+ * reads as "these five services are broken" and sends the operator to the wrong
+ * fix. Connection-level failures are therefore summarised as ONE fact about the
+ * destination, and only the genuine per-service errors are listed by name.
+ * Exported for the unit test and for `recordExternalBackupRun`.
+ */
+export function summariseBackupRun(results: ServiceBackupRunEntry[]): string {
   const total = results.length;
   const ok = results.filter(r => r.ok).length;
   const failed = results.filter(r => !r.ok);
+  if (failed.length === 0) return `${ok}/${total} services backed up`;
+  const dropped = failed.filter(r => isConnectionLevelError(r.error));
+  const perService = failed.filter(r => !isConnectionLevelError(r.error));
+  const parts: string[] = [];
+  if (dropped.length > 0) {
+    parts.push(
+      `The destination dropped the connection after ${ok} of ${total} services — ` +
+        `${dropped.length} service(s) never got a write: ${dropped.map(r => r.service).join(', ')} ` +
+        `(first error: ${dropped[0].error ?? 'no reason recorded'})`,
+    );
+  }
+  if (perService.length > 0) {
+    parts.push(
+      `Not backed up: ${perService
+        .slice(0, 5)
+        .map(r => `${r.service} (${r.error ?? 'no reason recorded'})`)
+        .join('; ')}`,
+    );
+  }
+  return parts.join('. ');
+}
+
+async function recordExternalBackupRun(results: ServiceBackupRunEntry[], error?: unknown): Promise<void> {
+  const total = results.length;
+  const ok = results.filter(r => r.ok).length;
   const lastStatus = error ? 'error' : ok < total ? 'partial' : 'success';
   const lastMessage = error
     ? error instanceof Error ? error.message : String(error)
-    : failed.length > 0
-      ? `Not backed up: ${failed.slice(0, 5).map(r => `${r.service} (${r.error ?? 'no reason recorded'})`).join('; ')}`
-      : `${ok}/${total} services backed up`;
+    : summariseBackupRun(results);
   try {
     const current = (await getConfig()).externalBackup;
     await updateConfig({
@@ -895,13 +948,20 @@ async function pruneServiceBackups(
  * — if the destination still reports itself full — prunes the oldest snapshots
  * across ALL services and retries once.
  */
-async function writeServiceBackupToNas(service: string, tar: Buffer): Promise<ServiceBackupResult> {
+async function writeServiceBackupToNas(
+  service: string,
+  tar: Buffer,
+  opts: { consistent?: boolean } = {},
+): Promise<ServiceBackupResult> {
   const now = new Date();
   const meta: ServiceBackupMeta = {
     service,
     schemaVersion: META_SCHEMA_VERSION,
     createdAt: now.toISOString(),
     nodeId: os.hostname(),
+    // Only recorded when it is FALSE: a restore reading an older meta (or any
+    // service without a collector) must keep reading as "consistent".
+    ...(opts.consistent === false ? { consistent: false } : {}),
   };
   const tarName = `${service}-${backupStamp(now)}.tar`;
   const metaName = `${tarName}.meta.json`;
