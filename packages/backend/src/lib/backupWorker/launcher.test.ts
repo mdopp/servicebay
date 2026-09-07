@@ -15,10 +15,13 @@ import {
   isBackupWorkerRunning,
   stopBackupWorker,
   readBackupTar,
+  ensureBackupWorkerImage,
+  refreshBackupWorkerImage,
   BACKUP_WORKER_IMAGE,
   BACKUP_WORKER_MEMORY,
   type SafeExec,
 } from './launcher';
+import { AgentTimeoutError } from '@/lib/util/domainError';
 import type { ServiceBackupManifest } from '@servicebay/backup-worker';
 
 /**
@@ -214,5 +217,72 @@ describe('readBackupTar', () => {
     await expect(readBackupTar(exec, run, 'x.tar')).rejects.toThrow(
       new RegExp(`failed to read x\\.tar from ${inContainerTar('x.tar').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`),
     );
+  });
+});
+
+describe('ensureBackupWorkerImage', () => {
+  // #2880: the run pulled the worker image unconditionally through the agent's
+  // 30 s `safe_exec` budget. A real pull took 47 s, so `backup-now` answered
+  // HTTP 400 "Agent request timeout (safe_exec after 30000ms)" before a single
+  // service was written. A cached image must mean NO pull at all.
+  it('does NOT pull when the image already exists', async () => {
+    const { exec, calls } = recExec({ 'podman image exists': { code: 0 } });
+    await ensureBackupWorkerImage(exec);
+    expect(calls).toContainEqual(['podman', 'image', 'exists', BACKUP_WORKER_IMAGE]);
+    expect(calls.some(c => c[0] === 'podman' && c[1] === 'pull')).toBe(false);
+  });
+
+  it('pulls only when the image is missing', async () => {
+    const { exec, calls } = recExec({ 'podman image exists': { code: 1 } });
+    await ensureBackupWorkerImage(exec);
+    expect(calls).toContainEqual(['podman', 'pull', BACKUP_WORKER_IMAGE]);
+  });
+
+  it('gives the cold pull its own generous timeout (the 30 s default is too short)', async () => {
+    const optsSeen: Array<{ timeoutMs?: number } | undefined> = [];
+    const exec: SafeExec = vi.fn(async (argv: string[], options?: { timeoutMs?: number; sudo?: boolean }) => {
+      if (argv[0] === 'podman' && argv[1] === 'pull') optsSeen.push(options);
+      return { stdout: '', stderr: '', code: argv[1] === 'image' ? 1 : 0 };
+    });
+    await ensureBackupWorkerImage(exec);
+    expect(optsSeen[0]?.timeoutMs).toBeGreaterThanOrEqual(120_000);
+  });
+
+  it('surfaces a slow pull as a NAMED pull failure, not the generic agent timeout', async () => {
+    const exec: SafeExec = vi.fn(async (argv: string[]) => {
+      if (argv[1] === 'image') return { stdout: '', stderr: '', code: 1 };
+      throw new AgentTimeoutError({ action: 'safe_exec', timeoutMs: 600_000 });
+    });
+    const err = await ensureBackupWorkerImage(exec).then(() => null, (e: unknown) => e as Error);
+    expect(err?.message).toMatch(/backup-worker image pull took longer than \d+ s — retry/);
+    // The operator must NOT see the raw agent timeout as the run's failure.
+    expect(err?.message).not.toMatch(/Agent request timeout/);
+  });
+
+  it('names a failed pull by its exit output rather than bubbling a bare exit code', async () => {
+    const { exec } = recExec({ 'podman image exists': { code: 1 }, 'podman pull': { code: 125 } });
+    await expect(ensureBackupWorkerImage(exec)).rejects.toThrow(/backup-worker image pull failed/);
+  });
+});
+
+describe('refreshBackupWorkerImage', () => {
+  // The hot path only pulls when the image is MISSING, so this out-of-band
+  // refresh (servicebay startup) is what carries a `:latest` worker rebuild
+  // onto the box — it must ALWAYS pull and must not gate on `image exists`.
+  it('always pulls, even when the image is already present', async () => {
+    const { exec, calls } = recExec({ 'podman image exists': { code: 0 } });
+    await refreshBackupWorkerImage(exec);
+    expect(calls).toContainEqual(['podman', 'pull', BACKUP_WORKER_IMAGE]);
+    expect(calls.some(c => c[1] === 'image' && c[2] === 'exists')).toBe(false);
+  });
+
+  it('passes the generous timeout so a slow pull does not trip the 30 s default', async () => {
+    const optsSeen: Array<{ timeoutMs?: number } | undefined> = [];
+    const exec: SafeExec = vi.fn(async (argv: string[], options?: { timeoutMs?: number; sudo?: boolean }) => {
+      if (argv[0] === 'podman' && argv[1] === 'pull') optsSeen.push(options);
+      return { stdout: '', stderr: '', code: 0 };
+    });
+    await refreshBackupWorkerImage(exec);
+    expect(optsSeen[0]?.timeoutMs).toBeGreaterThanOrEqual(120_000);
   });
 });

@@ -27,6 +27,7 @@ import type { ServiceBackupManifest, WorkerStatus } from '@servicebay/backup-wor
 import { STATUS_FILE } from '@servicebay/backup-worker';
 
 import { DATA_DIR } from '@/lib/dirs';
+import { AgentTimeoutError } from '@/lib/util/domainError';
 
 /** Result of one structured `safe_exec` argv invocation (the agent seam). */
 interface SafeExecResult {
@@ -218,9 +219,73 @@ export async function stopBackupWorker(exec: SafeExec, run: BackupWorkerRun): Pr
   await exec(['podman', 'rm', '-f', run.container]).catch(() => {});
 }
 
-/** Ensure the worker image is present on the node (pull if missing). */
+/**
+ * Timeout for the worker image pull. The agent's default command timeout is
+ * only 30 s (handler `timeoutMs ?? 30000`), sized for `podman inspect`; a real
+ * registry pull of the multi-layer worker image took 47 s on the box, so the
+ * whole `backup-now` run died with "Agent request timeout (safe_exec after
+ * 30000ms)" before a single service was written (#2880). A cold pull
+ * legitimately takes minutes, so the pull passes this generous timeout
+ * explicitly. Same value + same reasoning as the disk-import worker's
+ * `SLOW_OP_TIMEOUT_MS` (#1993).
+ */
+const BACKUP_WORKER_PULL_TIMEOUT_MS = 600_000; // 10 min
+
+/**
+ * Pull the worker image with its own generous timeout, and surface a failure as
+ * a NAMED pull failure rather than the generic agent timeout (#2880). The
+ * operator needs to read "the image pull was slow, retry", not a bare
+ * `safe_exec after 30000ms` from three layers down.
+ */
+async function pullBackupWorkerImage(exec: SafeExec): Promise<void> {
+  const seconds = Math.round(BACKUP_WORKER_PULL_TIMEOUT_MS / 1000);
+  let result;
+  try {
+    result = await exec(['podman', 'pull', BACKUP_WORKER_IMAGE], { timeoutMs: BACKUP_WORKER_PULL_TIMEOUT_MS });
+  } catch (e) {
+    // Dispatch on the TYPED error, not on the message wording (domainError.ts):
+    // an agent timeout here means the pull itself outran the budget.
+    if (e instanceof AgentTimeoutError) {
+      throw new Error(`backup-worker image pull took longer than ${seconds} s — retry`, { cause: e });
+    }
+    const message = e instanceof Error ? e.message : String(e);
+    throw new Error(`backup-worker image pull failed: ${message}`, { cause: e });
+  }
+  if (result.code !== 0) {
+    throw new Error(`backup-worker image pull failed: ${result.stderr || result.stdout || `exit ${result.code}`}`);
+  }
+}
+
+/**
+ * Ensure the worker image is present on the node — pull ONLY if missing.
+ *
+ * Pulling unconditionally on the backup hot path was the bug behind #2880:
+ * `podman pull` does a registry round-trip even when the image is already
+ * local, which blew the agent's 30 s default and killed the whole run. The
+ * image is refreshed out-of-band on startup ({@link refreshBackupWorkerImage}),
+ * so the hot path skips the pull entirely when the image exists, and the cold
+ * pull (first run after a fresh install) gets its own generous timeout.
+ */
 export async function ensureBackupWorkerImage(exec: SafeExec): Promise<void> {
-  await exec(['podman', 'pull', BACKUP_WORKER_IMAGE]);
+  const present = await exec(['podman', 'image', 'exists', BACKUP_WORKER_IMAGE])
+    .catch(() => ({ stdout: '', stderr: '', code: 1 }));
+  if (present.code === 0) return; // already present — don't re-pull on the hot path
+  await pullBackupWorkerImage(exec);
+}
+
+/**
+ * Refresh the worker image OUT-OF-BAND — always pull, present or not. The
+ * counterpart to {@link ensureBackupWorkerImage}'s pull-only-when-missing hot
+ * path: since the backup run never re-pulls a present image, a `:latest` worker
+ * rebuild (build-images.yml on main) would otherwise never reach the box.
+ * Called in the BACKGROUND on servicebay startup — the same moment the app
+ * image itself was just pulled — so the next backup starts against the current
+ * image with no pull on its critical path. Best-effort: the caller logs and
+ * swallows a failure (a stale-but-present image still backs up; the next
+ * startup retries).
+ */
+export async function refreshBackupWorkerImage(exec: SafeExec): Promise<void> {
+  await pullBackupWorkerImage(exec);
 }
 
 /**
