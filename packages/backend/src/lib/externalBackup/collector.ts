@@ -6,10 +6,11 @@
  *
  * Two collectors exist:
  *
- *  - `npm-sqlite` — NPM's consistent sqlite snapshot: it execs into the running
- *    NPM container (over the node agent) and writes a torn-free
- *    `database.sqlite.sb-backup` on disk. The worker / producer then stages that
- *    file under the canonical `database.sqlite` name (via the manifest's
+ *  - `npm-sqlite` — NPM's sqlite snapshot: a torn-free `sqlite3 .backup` taken
+ *    inside the running NPM container when the image can do it, otherwise a LIVE
+ *    `podman cp` of `/data/database.sqlite` out of the container. Either way the
+ *    result is `database.sqlite.sb-backup` on disk, which the worker / producer
+ *    stages under the canonical `database.sqlite` name (via the manifest's
  *    `renames`).
  *  - `pg-dump` (#2864) — `pg_dump` inside the service's own Postgres container,
  *    copied out to the service data dir as `<dumpPath>.sb-dump` and staged under
@@ -45,47 +46,43 @@ import {
   type ServiceBackupManifest,
 } from '@servicebay/backup-manifest';
 
-// Runs inside the NPM container: a snapshot of the live WAL-mode
+// Runs inside the NPM container: a torn-free snapshot of the live WAL-mode
 // /data/database.sqlite to /data/database.sqlite.sb-backup, which the worker then
 // stages under the canonical name.
 //
-// Preferred path — sqlite3's online `.backup`. Since #1679 the live DB runs in WAL
-// mode, so committed writes can sit in the `-wal` sidecar rather than the main
-// file. We first `wal_checkpoint(TRUNCATE)` to fold the WAL back into the main DB
-// and truncate the sidecar, then take the online `.backup` (itself WAL-aware) into
-// a single self-contained file. The checkpoint is best-effort; `.backup` guarantees
-// consistency regardless.
+// This is the PREFERRED path — sqlite3's online `.backup`. Since #1679 the live DB
+// runs in WAL mode, so committed writes can sit in the `-wal` sidecar rather than
+// the main file. We first `wal_checkpoint(TRUNCATE)` to fold the WAL back into the
+// main DB and truncate the sidecar, then take the online `.backup` (itself
+// WAL-aware) into a single self-contained file.
 //
-// Fallback path (#2877) — the jc21 NPM image ships NO sqlite3. The old code gave up
-// here and let the host copy `/data/database.sqlite` directly, which can never work:
-// that file is owned by the container's (uid-mapped) root at mode 0600, and the
-// backup worker runs as a different uid, so every single run ended in EACCES and the
-// proxy-host/cert database — the one file whose loss means re-creating every route by
-// hand — was the only service never on the NAS. So take the copy from INSIDE the
-// container instead, where the file's own uid can read it, and `chmod` the copy so the
-// worker can read it back off the bind mount. `cat` needs no binary the image might
-// lack. The copy is LIVE (no checkpoint is possible without sqlite3), so it is
-// reported as `live` and recorded `consistent: false` in the backup meta.
+// It only works when the image HAS sqlite3 and the container's exec user can READ
+// /data/database.sqlite. The jc21 NPM image satisfies neither (#2877): it ships no
+// sqlite3, and `podman exec` into that pod does not land as the file's uid-mapped
+// owner, so even a plain `cat` comes back "Permission denied". Both of those exit
+// this script without a snapshot, and the caller falls back to `podman cp` — a
+// primitive that reads through podman's own storage layer and therefore does not
+// depend on in-container permissions at all (the pg-dump collector below already
+// copies its archive out that way).
 const NPM_SQLITE_SNAPSHOT_SH = [
   'set -e',
   'DB=/data/database.sqlite',
   'if [ ! -f "$DB" ]; then echo "nodb"; exit 0; fi',
-  'if command -v sqlite3 >/dev/null 2>&1; then',
-  '  sqlite3 "$DB" "PRAGMA wal_checkpoint(TRUNCATE);" || true',
-  '  sqlite3 "$DB" ".backup \'$DB.sb-snap\'"',
-  '  mv -f "$DB.sb-snap" "$DB.sb-backup"',
-  '  chmod 0644 "$DB.sb-backup"',
-  '  echo "ok"',
-  '  exit 0',
-  'fi',
-  // No sqlite3 in this image: stream the live DB out through the container's own
-  // uid into a host-readable sidecar. Written to a scratch name and moved into
-  // place so a half-written copy is never staged.
-  'cat "$DB" > "$DB.sb-snap"',
+  'if ! command -v sqlite3 >/dev/null 2>&1; then echo "nosqlite3"; exit 0; fi',
+  'sqlite3 "$DB" "PRAGMA wal_checkpoint(TRUNCATE);" || true',
+  'sqlite3 "$DB" ".backup \'$DB.sb-snap\'"',
   'mv -f "$DB.sb-snap" "$DB.sb-backup"',
   'chmod 0644 "$DB.sb-backup"',
-  'echo "live"',
+  'echo "ok"',
 ].join('\n');
+
+/** Where the npm-sqlite collector's snapshot lands, relative to the service data
+ *  dir — the same rel path the worker's `applyCollectorRemap` looks for. */
+const NPM_SNAPSHOT_REL = 'data/database.sqlite.sb-backup';
+/** The live DB inside the NPM container. */
+const NPM_DB_CONTAINER_PATH = '/data/database.sqlite';
+/** A `podman cp` of a proxy-host/cert DB is megabytes, not gigabytes. */
+const NPM_CP_TIMEOUT_MS = 2 * 60_000;
 
 /** What a collector run produced. */
 export interface CollectorResult {
@@ -123,31 +120,81 @@ export async function runBackupCollector(
 
 /** The snapshot script's sentinel, or null when it did not complete. A failure
  *  is logged here with the REAL reason — the container's stderr first, then any
- *  stdout, before "(unknown)" (#1894). */
-function readSnapshotSentinel(res: unknown): 'ok' | 'live' | 'nodb' | null {
+ *  stdout, before "(unknown)" (#1894). `nosqlite3` is NOT a failure: it is the
+ *  expected answer from the jc21 image and routes to the `podman cp` fallback. */
+function readSnapshotSentinel(res: unknown): 'ok' | 'nodb' | 'nosqlite3' | null {
   const out = ((res as { stdout?: string }).stdout || '').trim();
   const errOut = ((res as { stderr?: string }).stderr || '').trim();
   const code = (res as { code?: number }).code;
-  if (code === 0 && (out === 'ok' || out === 'live' || out === 'nodb')) return out;
+  if (code === 0 && (out === 'ok' || out === 'nodb' || out === 'nosqlite3')) return out;
   logger.warn(
     'ExternalBackup',
-    `NPM sqlite snapshot failed (${errOut || out || 'unknown'}) — backing up database.sqlite as-is`,
+    `NPM sqlite snapshot failed (${errOut || out || 'unknown'}) — falling back to a podman cp of the live DB`,
   );
   return null;
 }
 
+/** The manifest with `data/database.sqlite` swapped for the snapshot the
+ *  collector wrote, staged back under the canonical name. */
+function npmSqliteRemap(manifest: ServiceBackupManifest): ServiceBackupManifest {
+  return {
+    ...manifest,
+    include: manifest.include.map(p => (p === 'data/database.sqlite' ? NPM_SNAPSHOT_REL : p)),
+    renames: { [NPM_SNAPSHOT_REL]: 'data/database.sqlite' },
+  };
+}
+
+/**
+ * Copy the live DB out of the container with `podman cp` (#2877, fix-forward).
+ *
+ * This is the primitive that does NOT depend on in-container permissions: podman
+ * reads the file through its own storage layer as the podman user, so it works
+ * even though `podman exec … cat /data/database.sqlite` in this pod answers
+ * "Permission denied". The copy is then chmod'd — `podman cp` preserves the
+ * source's 0600, and the backup worker runs as a different uid, so without this
+ * we would only have moved the EACCES one file along.
+ *
+ * The copy is LIVE (no checkpoint is possible without sqlite3), so the caller
+ * records it `consistent: false`.
+ */
+async function copyLiveDbOutOfContainer(
+  agent: ExecAgent,
+  container: string,
+  hostSnap: string,
+): Promise<boolean> {
+  await safeExec(agent, ['mkdir', '-p', path.dirname(hostSnap)], 30_000);
+  const copy = await safeExec(
+    agent,
+    ['podman', 'cp', `${container}:${NPM_DB_CONTAINER_PATH}`, hostSnap],
+    NPM_CP_TIMEOUT_MS,
+  );
+  if (copy.code !== 0) {
+    logger.warn('ExternalBackup', `podman cp of NPM's database.sqlite out of "${container}" failed (${copy.stderr.trim() || copy.stdout.trim() || 'unknown'}) — no snapshot staged`);
+    return false;
+  }
+  const chmod = await safeExec(agent, ['chmod', '0644', hostSnap], 30_000);
+  if (chmod.code !== 0) {
+    logger.warn('ExternalBackup', `Could not make the NPM sqlite snapshot readable (${chmod.stderr.trim() || 'unknown'}) — the backup worker runs as a different uid, so it would EACCES; no snapshot staged`);
+    return false;
+  }
+  return true;
+}
+
 /**
  * NPM: snapshots the live `database.sqlite` to `database.sqlite.sb-backup` on
- * disk from inside the container, then remaps the manifest's
- * `data/database.sqlite` include to that snapshot path so the copy is staged
- * under the original name.
+ * disk, then remaps the manifest's `data/database.sqlite` include to that
+ * snapshot path so the copy is staged under the original name.
  *
- * Two grades of snapshot, both taken container-side (see
- * {@link NPM_SQLITE_SNAPSHOT_SH}): a torn-free `sqlite3 .backup` when the image
- * has sqlite3, otherwise a live `cat` — which is what makes the difference
- * between "inconsistent" and "not backed up at all" on the jc21 image (#2877).
- * Best-effort: if neither can be taken the original manifest comes back and the
- * staging copies the live host file (which is where the EACCES used to be).
+ * Two grades of snapshot: a torn-free in-container `sqlite3 .backup` when the
+ * image has sqlite3 AND the exec user can read the DB, otherwise a LIVE
+ * `podman cp` out of the container — which is what makes the difference between
+ * "inconsistent" and "not backed up at all" on the jc21 image (#2877).
+ *
+ * A STALE snapshot is removed before anything can fail, so a failed run can never
+ * ship yesterday's database as if it were today's (the worker remaps on the mere
+ * presence of the sidecar). If neither grade can be taken, the original manifest
+ * comes back: the staging then finds the live host file unreadable and records it
+ * as a skipped file rather than failing the whole service.
  */
 async function runNpmSqliteCollector(
   manifest: ServiceBackupManifest,
@@ -164,34 +211,35 @@ async function runNpmSqliteCollector(
       logger.warn('ExternalBackup', 'NPM container not found — backing up database.sqlite as-is (may be inconsistent)');
       return { manifest, consistent: false };
     }
+    const dataDir = (await getConfig()).templateSettings?.DATA_DIR || DEFAULT_STACKS_DIR;
+    const hostSnap = path.join(dataDir, manifest.dataSubdir ?? manifest.service, NPM_SNAPSHOT_REL);
+    // Stale snapshot out of the way BEFORE anything can fail (see the docblock).
+    await safeExec(agent, ['rm', '-f', hostSnap], 30_000);
     const b64 = Buffer.from(NPM_SQLITE_SNAPSHOT_SH).toString('base64');
     const res = await agent.sendCommand('exec', {
       command: `echo ${b64} | base64 -d | podman exec -i ${container} sh -`,
     }, { timeoutMs: 30_000 });
     const sentinel = readSnapshotSentinel(res);
-    if (!sentinel) return { manifest, consistent: false };
-    if (sentinel === 'live') {
-      // The image has no sqlite3, so there is no way to checkpoint the WAL or
-      // take an online `.backup`. The live copy IS the backup — say so plainly
-      // rather than letting the meta imply a torn-free snapshot (#2877).
+    // `nodb` remaps too (the never-created sidecar is a no-op at staging) and is
+    // not an inconsistent copy — there was nothing to copy.
+    if (sentinel === 'ok' || sentinel === 'nodb') return { manifest: npmSqliteRemap(manifest), consistent: true };
+    // No sqlite3, or the exec user cannot read the DB. Either way the snapshot
+    // must not depend on in-container permissions — copy it out through podman.
+    if (await copyLiveDbOutOfContainer(agent, container, hostSnap)) {
       logger.warn(
         'ExternalBackup',
-        'NPM image has no sqlite3 — took a LIVE container-side copy of database.sqlite instead ' +
+        'NPM: no in-container sqlite3 snapshot was possible — took a LIVE `podman cp` of database.sqlite instead ' +
           '(marked consistent:false; writes still in the -wal sidecar are not in it). ' +
           'A host-side copy is not an option: the live file is root-owned 0600 and the backup worker cannot read it.',
       );
+      return { manifest: npmSqliteRemap(manifest), consistent: false };
     }
-    // Stage the snapshot in place of the live DB, under the original rel path.
-    return {
-      manifest: {
-        ...manifest,
-        include: manifest.include.map(p => (p === 'data/database.sqlite' ? 'data/database.sqlite.sb-backup' : p)),
-        renames: { 'data/database.sqlite.sb-backup': 'data/database.sqlite' },
-      },
-      // `nodb` remaps too (the never-created sidecar is a no-op at staging) and
-      // is not an inconsistent copy — there was nothing to copy.
-      consistent: sentinel !== 'live',
-    };
+    logger.warn(
+      'ExternalBackup',
+      'NPM: no snapshot of database.sqlite could be taken — the live host file is root-owned 0600, so the backup ' +
+        'worker will skip it and nginx ships WITHOUT its proxy-host/cert database.',
+    );
+    return { manifest, consistent: false };
   } catch (e) {
     logger.warn('ExternalBackup', `NPM sqlite snapshot errored (${e instanceof Error ? e.message : String(e)}) — backing up database.sqlite as-is`);
     return { manifest, consistent: false };

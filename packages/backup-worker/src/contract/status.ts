@@ -45,6 +45,17 @@ export interface ServiceBackupResult {
   outcome: 'ok' | 'skip' | 'error';
   /** Failure message when outcome is "error"; the skip reason for "skip"; else null. */
   detail: string | null;
+  /**
+   * Tar-relative paths of DECLARED config files the worker could not read, so
+   * the tar shipped without them (#2877 — NPM's `database.sqlite` is owned by
+   * the container's uid-mapped root at 0600). Absent/empty means the backup is
+   * complete. An incomplete-but-shipped backup must be visible: servicebay
+   * records these in the tar's `.meta.json` and the `config_backup` probe names
+   * the cause, rather than an `ok` row hiding a missing database.
+   *
+   * Additive and optional — a worker that predates it simply omits it.
+   */
+  skipped?: string[];
 }
 
 /**

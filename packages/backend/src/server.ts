@@ -911,6 +911,30 @@ app.prepare().then(() => {
       })();
     }, 90_000);
 
+    // Same deal for the BACKUP worker image (#2880). The backup run now only
+    // pulls when the image is MISSING — pulling on every run blew the agent's
+    // 30 s safe_exec budget (a real pull took 47 s) and killed the whole
+    // `backup-now` before a single service was written. That makes this
+    // out-of-band refresh the thing that gets a `:latest` worker rebuild onto
+    // the box, and it runs at the same moment the app image itself was just
+    // pulled, so the nightly/manual backup never carries a pull on its critical
+    // path. Fire-and-forget, best-effort: a stale-but-present image still backs
+    // up and the next startup retries.
+    setTimeout(() => {
+      void (async () => {
+        try {
+          const { AgentExecutor } = await import('./lib/agent/executor');
+          const { refreshBackupWorkerImage } = await import('./lib/backupWorker/launcher');
+          const node = (await listNodes())[0]?.Name ?? 'Local';
+          const executor = new AgentExecutor(node);
+          await refreshBackupWorkerImage((argv, options) => executor.execSafe(argv, { ...(options ?? {}), check: false }));
+          logger.info('Server', 'Backup worker image refreshed in background.');
+        } catch (err) {
+          logger.warn('Server', `Backup worker image refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      })();
+    }, 120_000);
+
     // Auto-update logic to be migrated to Executor Task
   });
 });

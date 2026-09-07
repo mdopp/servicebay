@@ -23,9 +23,12 @@
  * touches servicebay (feedback_control_plane_vs_worker).
  *
  * A live WAL-mode SQLite (NPM's database.sqlite) is snapshotted host-side by
- * servicebay BEFORE launch (it needs to exec into the running NPM container, which
- * the worker can't); the worker just stages the resulting `…sqlite.sb-backup`
- * under its canonical name when the npm-sqlite collector manifest sees it.
+ * servicebay BEFORE launch (it needs the running NPM container, which the worker
+ * can't reach); the worker just stages the resulting `…sqlite.sb-backup` under its
+ * canonical name when the npm-sqlite collector manifest sees it. When no snapshot
+ * was taken, the live file is root-owned 0600 and unreadable here — the staging
+ * records it as a SKIPPED file and still ships the rest of the service's config
+ * (#2877), rather than failing the whole service on one file.
  *
  * Per-service failures do NOT abort the run — they land in the status `results`
  * as outcome "error"/"skip"; the container still exits 0 so servicebay reads a
@@ -246,8 +249,9 @@ export async function applyCollectorRemap(
 
 /** IO seam so the run is unit-testable without a real fs/tar. */
 export interface WorkerIO {
-  /** Stage + tar one service's config to `tarPath`; throws on "no config". */
-  buildTar: (serviceDataDir: string, manifest: ServiceBackupManifest, tarPath: string) => Promise<{ files: number; bytes: number }>;
+  /** Stage + tar one service's config to `tarPath`; throws on "no config".
+   *  `skipped` lists declared files that could not be read (#2877). */
+  buildTar: (serviceDataDir: string, manifest: ServiceBackupManifest, tarPath: string) => Promise<{ files: number; bytes: number; skipped?: string[] }>;
   /** Persist the compact status doc. */
   writeStatus: (out: string, status: WorkerStatus) => void;
 }
@@ -282,8 +286,17 @@ export async function runWorker(opts: WorkerOptions, io: WorkerIO): Promise<Work
       // any other failure rather than aborting the whole run.
       const serviceDataDir = resolveServiceDataDir(opts.stacks, manifest, opts.volumes);
       const effective = await applyCollectorRemap(serviceDataDir, manifest);
-      const { files, bytes } = await io.buildTar(serviceDataDir, effective, path.join(opts.out, tarName));
-      results.push({ service, ok: true, tarName, bytes, files, outcome: 'ok', detail: null });
+      const { files, bytes, skipped } = await io.buildTar(serviceDataDir, effective, path.join(opts.out, tarName));
+      // An `ok` row that quietly dropped a declared file is the shape that hides
+      // a missing database — carry the misses through so servicebay can record
+      // them in the meta and the probe can name the cause (#2877).
+      results.push({
+        service, ok: true, tarName, bytes, files, outcome: 'ok',
+        detail: skipped?.length
+          ? `${skipped.length} declared file(s) unreadable and not in the tar: ${skipped.join(', ')}`
+          : null,
+        ...(skipped?.length ? { skipped } : {}),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       // "No config files to back up" is a skip (service has no config yet),

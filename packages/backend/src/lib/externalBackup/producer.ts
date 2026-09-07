@@ -163,6 +163,12 @@ export interface ServiceBackupMeta {
    * copy is consistent (every backup written before this field existed).
    */
   consistent?: boolean;
+  /**
+   * Declared config files the worker could NOT read, so this tar shipped without
+   * them (#2877). Absent means the backup is complete. Recorded so a restore is
+   * told what is missing instead of finding out at recovery time.
+   */
+  skippedFiles?: string[];
 }
 
 export interface ServiceBackupResult {
@@ -495,6 +501,9 @@ export interface ServiceBackupRunEntry {
   tarName?: string;
   size?: number;
   error?: string;
+  /** Declared config files that were unreadable, so the tar shipped without them
+   *  (#2877). An `ok:true` entry with entries here is an INCOMPLETE backup. */
+  skipped?: string[];
 }
 
 /**
@@ -516,8 +525,12 @@ async function uploadBackupRun(
           const tar = await readBackupTar(exec, run, r.tarName);
           const written = await writeServiceBackupToNas(r.service, tar, {
             consistent: !completed.inconsistent?.has(r.service),
+            skipped: r.skipped,
           });
-          results.push({ service: r.service, ok: true, tarName: written.tarName, size: written.size });
+          results.push({
+            service: r.service, ok: true, tarName: written.tarName, size: written.size,
+            ...(r.skipped?.length ? { skipped: r.skipped } : {}),
+          });
         } catch (e) {
           results.push({ service: r.service, ok: false, error: e instanceof Error ? e.message : String(e) });
         }
@@ -572,6 +585,14 @@ export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEn
  * and swallowed — the probe then reports the previous (stale) run, which is
  * itself the honest answer.
  */
+/** Lead-in for the incomplete-services clause of a run message. */
+const INCOMPLETE_SUMMARY_PREFIX = 'Backed up WITHOUT some declared files:';
+
+/** Services whose tar landed but is missing declared config files (#2877). */
+function incompleteServices(results: ServiceBackupRunEntry[]): ServiceBackupRunEntry[] {
+  return results.filter(r => r.ok && (r.skipped?.length ?? 0) > 0);
+}
+
 /**
  * The run's one-line outcome for `config.externalBackup.lastMessage`, with the
  * two failure classes told apart (#2876).
@@ -587,7 +608,18 @@ export function summariseBackupRun(results: ServiceBackupRunEntry[]): string {
   const total = results.length;
   const ok = results.filter(r => r.ok).length;
   const failed = results.filter(r => !r.ok);
-  if (failed.length === 0) return `${ok}/${total} services backed up`;
+  // A service can land on the NAS and still be INCOMPLETE (#2877): NPM's
+  // database.sqlite is root-owned 0600, so with no collector snapshot the worker
+  // skips it and ships the rest. That is not a failure of the run, but it must
+  // not read as a clean "13/13" either.
+  const incomplete = incompleteServices(results);
+  const incompleteNote = incomplete.length === 0
+    ? ''
+    : `${INCOMPLETE_SUMMARY_PREFIX} ${incomplete
+        .map(r => `${r.service} (${(r.skipped ?? []).join(', ')})`)
+        .join('; ')}`;
+  const withNote = (base: string): string => (incompleteNote ? `${base}. ${incompleteNote}` : base);
+  if (failed.length === 0) return withNote(`${ok}/${total} services backed up`);
   const dropped = failed.filter(r => isConnectionLevelError(r.error));
   const perService = failed.filter(r => !isConnectionLevelError(r.error));
   const parts: string[] = [];
@@ -606,13 +638,17 @@ export function summariseBackupRun(results: ServiceBackupRunEntry[]): string {
         .join('; ')}`,
     );
   }
-  return parts.join('. ');
+  return withNote(parts.join('. '));
 }
 
 async function recordExternalBackupRun(results: ServiceBackupRunEntry[], error?: unknown): Promise<void> {
   const total = results.length;
   const ok = results.filter(r => r.ok).length;
-  const lastStatus = error ? 'error' : ok < total ? 'partial' : 'success';
+  // A tar that landed without its database is not a `success` — the probe reads
+  // this field, and "13/13" with a missing proxy-host DB is the exact shape of
+  // "reported success, did nothing" (#2877).
+  const incomplete = incompleteServices(results).map(r => r.service);
+  const lastStatus = error ? 'error' : ok < total || incomplete.length > 0 ? 'partial' : 'success';
   const lastMessage = error
     ? error instanceof Error ? error.message : String(error)
     : summariseBackupRun(results);
@@ -629,6 +665,7 @@ async function recordExternalBackupRun(results: ServiceBackupRunEntry[], error?:
         lastMessage,
         servicesOk: ok,
         servicesTotal: total,
+        servicesIncomplete: incomplete,
       },
     });
   } catch (e) {
@@ -951,7 +988,7 @@ async function pruneServiceBackups(
 async function writeServiceBackupToNas(
   service: string,
   tar: Buffer,
-  opts: { consistent?: boolean } = {},
+  opts: { consistent?: boolean; skipped?: string[] } = {},
 ): Promise<ServiceBackupResult> {
   const now = new Date();
   const meta: ServiceBackupMeta = {
@@ -962,6 +999,9 @@ async function writeServiceBackupToNas(
     // Only recorded when it is FALSE: a restore reading an older meta (or any
     // service without a collector) must keep reading as "consistent".
     ...(opts.consistent === false ? { consistent: false } : {}),
+    // Only recorded when something IS missing — an absent field keeps meaning
+    // "this tar holds everything the manifest declared".
+    ...(opts.skipped?.length ? { skippedFiles: opts.skipped } : {}),
   };
   const tarName = `${service}-${backupStamp(now)}.tar`;
   const metaName = `${tarName}.meta.json`;
