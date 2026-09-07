@@ -27,7 +27,7 @@ import path from 'path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { backupServiceToNas, type ServiceBackupResult } from './producer';
-import { getServiceManifest } from '@servicebay/backup-manifest';
+import { resolveServiceBackupManifest } from './templateManifests';
 
 const execFileAsync = promisify(execFile);
 
@@ -147,7 +147,7 @@ export async function extractHaConfigDir(
  * fresh install's restore. Cleans up its temp work dir.
  */
 export async function importHaOsBackupToNas(haBackupTarPath: string): Promise<ServiceBackupResult> {
-  const manifest = getServiceManifest(HA_SERVICE);
+  const manifest = await resolveServiceBackupManifest(HA_SERVICE);
   if (!manifest) throw new Error(`No backup manifest for service "${HA_SERVICE}"`);
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sb-haimport-'));
   try {

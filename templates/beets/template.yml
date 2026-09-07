@@ -20,6 +20,16 @@ metadata:
     # The music/audiobook trees this pod mounts are file-share's data
     # volume, so file-share must be installed and settled first.
     servicebay.dependencies: "file-share"
+    # Backup declaration (#2858): the tagger's own state, not the music it
+    # tags. `config.yaml` is hand-tuned (plugin list, AcoustID key, import
+    # safety settings) and `musiclibrary.db` is what beets already imported,
+    # so a restored box doesn't re-walk and re-tag the whole library.
+    servicebay.backup: |
+      dataSubdir: beets/config
+      include:
+        - config.yaml
+        - musiclibrary.db
+      exclude: []
     # Continuous health probe (#628). `beet web`'s /stats returns
     # `{"items": N, "albums": M}` — a 200 there proves more than "the
     # process is up": it proves the web plugin loaded AND the library

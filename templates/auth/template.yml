@@ -32,6 +32,33 @@ metadata:
     # without this the wizard's path resolver would also consider lldap's
     # mounts and pick whichever lands first in the parsed YAML.
     servicebay.config-mount: "/config"
+    # Backup declaration (#2858). The `auth` template has no store of its
+    # own — `authelia-config/configuration.yml` is re-rendered from the
+    # mustache on every deploy — but it ships two APPS whose state is the
+    # household's identity, and neither has an installedTemplates key of its
+    # own (#2595: that is exactly how both sat un-backed-up).
+    servicebay.backup: |
+      stores:
+        authelia:
+          dataSubdir: auth/authelia-data
+          # TOTP secrets, WebAuthn credentials and OIDC consent grants.
+          # WAL-mode since #1679, so the `-wal`/`-shm` sidecars ride along
+          # and a live copy restores whole. Encrypted at rest with
+          # AUTHELIA_STORAGE_ENCRYPTION_KEY; kept verbatim.
+          include:
+            - db.sqlite3
+            - db.sqlite3-wal
+            - db.sqlite3-shm
+          exclude: []
+        lldap:
+          dataSubdir: auth/lldap
+          # The family identity store — every user, group and membership
+          # (docs/CREDENTIAL_SELF_HEAL.md). Identities cannot be regenerated.
+          include:
+            - users.db
+            - users.db-wal
+            - users.db-shm
+          exclude: []
     # Continuous health probe (#626 / #628). Authelia's `/api/health`
     # returns `{"status":"OK"}` and is unauthenticated. Proves both
     # Authelia is alive AND has loaded its config; LLDAP is implicitly

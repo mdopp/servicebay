@@ -56,8 +56,12 @@ export async function runKubePlayPhase(ctx: DeployContext, item: JobInputItem): 
   // The service plus any sibling-store services that ride its deploy (#1594 —
   // e.g. home-assistant carries `home-assistant-zwave`, the zwave-js key store
   // in a sibling dir with no template name of its own).
-  const { getSiblingBackupServices } = await import('@servicebay/backup-manifest');
-  const backupServices = [item.name, ...getSiblingBackupServices(item.name)];
+  const { siblingBackupServices } = await import('@servicebay/backup-manifest');
+  const { resolveTemplateManifests } = await import('@/lib/externalBackup/templateManifests');
+  const backupServices = [
+    item.name,
+    ...siblingBackupServices(await resolveTemplateManifests(item.name), item.name),
+  ];
 
   {
     const { wipeServiceForReinstall } = await import('@/lib/externalBackup/restore');

@@ -43,6 +43,68 @@ metadata:
     # map. See tests/backend/template_consistency.test.ts § "hostNetwork
     # templates expose no unguarded admin/control port".
     servicebay.ports: "8123/tcp,8091/tcp,3001/tcp,5580/tcp"
+    # Backup declaration (#2858). What HA's config actually is, and what it
+    # is not: the recorder DB and the Z-Wave mesh DB are heavy on-RAID DATA
+    # (kept through a wipe-config, never in a tarball), while the zwave_js
+    # NETWORK KEYS are config the mesh cannot be re-secured without. HACS
+    # and every component it installed ride along, because a restore without
+    # the code re-seeds config entries for integrations that no longer exist
+    # (#1596); HACS's disposable frontend asset cache does not (#1894 OOM).
+    # `stores.home-assistant-zwave` is the zwave-js-ui key store (#1594) —
+    # a SIBLING dir of HA's config root with no template name of its own, so
+    # it is declared here, on the template whose presence activates it.
+    servicebay.backup: |
+      dataSubdir: home-assistant/homeassistant
+      include:
+        - automations.yaml
+        - scripts.yaml
+        - scenes.yaml
+        - configuration.yaml
+        - .storage/core.config_entries
+        - .storage/core.device_registry
+        - .storage/core.entity_registry
+        - .storage/core.area_registry
+        # HA names each dashboard `.storage/lovelace.<url_path>`; the bare
+        # exact-match dropped every dashboard's contents (#1595).
+        - .storage/lovelace*
+        - .storage/zwave_js
+        - custom_components
+        - .storage/hacs*
+      exclude:
+        - home-assistant_v2.db
+        - home-assistant_v2.db-wal
+        - home-assistant_v2.db-shm
+        - history
+        - logs
+        - home-assistant.log
+        - tts
+        - image
+        - www
+        - deps
+        - custom_components/hacs/hacs_frontend
+        - custom_components/hacs_frontend
+      data:
+        - home-assistant_v2.db
+        - home-assistant_v2.db-wal
+        - home-assistant_v2.db-shm
+        - zwave_js_network.db
+      transform:
+        - file: .storage/core.config_entries
+          kind: ha-config-entries-addon
+      stores:
+        home-assistant-zwave:
+          dataSubdir: home-assistant/zwave-js
+          include:
+            # The network securityKeys (S0_Legacy + the three S2 classes),
+            # the serial port and enableSoftReset. Without them a reinstall
+            # destroys the whole Z-Wave security context; kept verbatim.
+            - settings.json
+            - sb-external-settings.json
+          exclude:
+            - logs
+            - store.jsonl
+          data:
+            - store.jsonl
     # Continuous health probe (#628). `/manifest.json` is the PWA
     # manifest — unauthenticated, served once HA's HTTP listener is up.
     # Avoids the /api token requirement of the regular /api endpoint.

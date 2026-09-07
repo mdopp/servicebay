@@ -40,12 +40,20 @@ const datedTarRe = (service: string) => new RegExp(`/${service}-\\d{8}-\\d{4}\\.
 vi.mock('./nasClient', () => mockNas);
 // configUpload + the producer's box path read config; keep DATA_DIR unset so the
 // CLI's explicit serviceDataDir is the only source (the local fs backend).
-vi.mock('../config', () => ({ getConfig: vi.fn(async () => ({ templateSettings: {} })) }));
+// `installedTemplates` carries `auth`: since #2858 the authelia store is
+// declared by the template that hosts it, so it resolves only when that
+// template is installed.
+vi.mock('../config', () => ({
+  getConfig: vi.fn(async () => ({
+    templateSettings: {},
+    installedTemplates: { auth: { schemaVersion: 1, installedAt: '2026-01-01T00:00:00.000Z' } },
+  })),
+}));
 
 import { stageServiceBackup } from './producer';
 import { runConfigUpload, type UploadIO } from './configUpload';
 import { importHaOsBackupToNas } from './haOsImport';
-import { getServiceManifest } from '@servicebay/backup-manifest';
+import { builtinManifest } from '../../../../../tests/fixtures/builtinBackupManifests';
 
 let tmpDirs: string[] = [];
 async function mkTmp(prefix = 'atomreg-'): Promise<string> {
@@ -107,7 +115,7 @@ describe('GOLDEN: stageServiceBackup selection per real manifest', () => {
     await write(src, 'data/sessions.db', 'SESS');
     await write(src, 'data/filters/0.txt', 'rules');
     const staging = await mkTmp();
-    const staged = await stageServiceBackup(src, getServiceManifest('adguard')!, staging);
+    const staged = await stageServiceBackup(src, builtinManifest('adguard'), staging);
     expect(staged).toEqual(['conf/AdGuardHome.yaml']);
   });
 
@@ -120,7 +128,7 @@ describe('GOLDEN: stageServiceBackup selection per real manifest', () => {
     // stray file is present, it must NOT enter the tarball.
     await write(src, 'users_database.yml', 'users:\n  alice:\n    password: $argon2id$SECRET\n');
     const staging = await mkTmp();
-    const staged = await stageServiceBackup(src, getServiceManifest('authelia')!, staging);
+    const staged = await stageServiceBackup(src, builtinManifest('authelia'), staging);
     expect(staged).toEqual(['db.sqlite3']);
     expect(await fs.readFile(path.join(staging, 'db.sqlite3'), 'utf8')).toBe('AUTHELIA-SQLITE-SECRETS');
     await expect(fs.access(path.join(staging, 'users_database.yml'))).rejects.toThrow();
@@ -168,7 +176,7 @@ describe('GOLDEN: stageServiceBackup selection per real manifest', () => {
     await write(src, 'deps/lib.py', 'dep');
 
     const staging = await mkTmp();
-    const staged = await stageServiceBackup(src, getServiceManifest('home-assistant')!, staging);
+    const staged = await stageServiceBackup(src, builtinManifest('home-assistant'), staging);
 
     expect(staged).toEqual([
       '.storage/core.area_registry',
@@ -207,7 +215,7 @@ describe('GOLDEN: stageServiceBackup selection per real manifest', () => {
     await write(src, 'sb-external-settings.json', '{"serverPort":3001}');
     await write(src, 'store.jsonl', '{"node":1}');
     await write(src, 'logs/zwave.log', 'noise');
-    const manifest = getServiceManifest('home-assistant-zwave')!;
+    const manifest = builtinManifest('home-assistant-zwave');
     const staging = await mkTmp();
     const staged = await stageServiceBackup(src, manifest, staging);
     expect(staged).toEqual(['sb-external-settings.json', 'settings.json']);
@@ -225,7 +233,7 @@ describe('GOLDEN: stageServiceBackup selection per real manifest', () => {
     await write(src, 'data/logs/access.log', 'noise');
     const staging = await mkTmp();
     // No collector runs here (stageServiceBackup is the pure selection step).
-    const staged = await stageServiceBackup(src, getServiceManifest('nginx')!, staging);
+    const staged = await stageServiceBackup(src, builtinManifest('nginx'), staging);
     expect(staged).toEqual([
       'data/custom_ssl/cert.pem',
       'data/database.sqlite',

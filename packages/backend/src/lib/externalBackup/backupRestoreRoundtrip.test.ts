@@ -49,7 +49,12 @@ beforeEach(async () => {
   });
   mockNas.nasRemove.mockImplementation(async (p: string) => { nas.delete(`${NAS_BACKUP_DIR}/${p.split('/').pop()}`); });
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'roundtrip-'));
-  mockCfg.getConfig.mockResolvedValue({ templateSettings: { DATA_DIR: tmpRoot } });
+  mockCfg.getConfig.mockResolvedValue({
+    templateSettings: { DATA_DIR: tmpRoot },
+    // #2858: a sibling store resolves only when the template that DECLARES it
+    // is installed — the gate `gateOn` used to express.
+    installedTemplates: { auth: { schemaVersion: 1, installedAt: '2026-01-01T00:00:00.000Z' } },
+  });
 });
 afterEach(async () => { await fs.rm(tmpRoot, { recursive: true, force: true }); });
 

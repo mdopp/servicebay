@@ -12,6 +12,17 @@ metadata:
     # file-share supplies the read-only photo areas for the disk-import
     # External Libraries (#1904) — its data root is mounted below.
     servicebay.dependencies: "nginx,auth,file-share"
+    # Backup declaration (#2858). Immich holds a lot of bytes and none of
+    # them belong in a NAS config tarball, so it opts out explicitly —
+    # silence would be indistinguishable from an oversight.
+    servicebay.backup: |
+      backup: none
+      reason: >-
+        Every Immich volume is bulk or credential-coupled: `upload/` is the
+        multi-GB photo/video library (RAID-resident, covered by Backup Sync,
+        not by the config tarball), `model-cache/` is re-downloaded on
+        demand, and `pgdata/` is a live Postgres cluster dir reconciled by
+        the rekey path (#2165), never restored from a NAS tarball.
     # Continuous health probe (#628). `/api/server/ping` is Immich's
     # unauthenticated liveness endpoint — returns `{"res":"pong"}`.
     # (Pre-v2.7 this lived at `/api/server-info/ping`; the old path now

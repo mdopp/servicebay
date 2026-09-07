@@ -129,7 +129,10 @@ export interface TemplateManifest {
    *
    * Before this annotation, "what counts as this service's config" could only
    * be expressed as a row in ServiceBay's own `SERVICE_BACKUP_MANIFESTS`
-   * table, which a template from a foreign registry cannot ship (#2849).
+   * table, which a template from a foreign registry cannot ship (#2849). Slice
+   * C made this the only source: the table is an empty deprecated shim, and
+   * `lib/externalBackup/backupDeclaration.ts` builds the runtime manifests
+   * from what is stored here.
    */
   backupRaw?: string;
 }
@@ -288,13 +291,20 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
     required: false,
     description:
       'YAML block scalar declaring what this service needs backed up (#2858), so a template from any '
-      + 'registry can say it — not only the ones listed in ServiceBay\'s own manifest table. Fields: '
-      + '`include` (required, at least one path), `exclude`, `data`, `collector` (`file` default, '
-      + '`npm-sqlite`, `pg-dump`), `strip` / `transform` rules, and `dataSubdir` **or** `volume` when the '
-      + 'state does not live under `DATA_DIR/<template>`. A template with nothing to preserve declares '
-      + '`backup: none` plus a `reason:` — silence is not an opt-out, it is indistinguishable from an '
-      + 'oversight. Every path must resolve inside the service\'s own data dir (ADR 0002): absolute, `~`, '
-      + '`..` and `{{MUSTACHE}}` paths are rejected with the reason logged.',
+      + 'registry can say it. This is now the ONLY place it can be said — the central '
+      + '`SERVICE_BACKUP_MANIFESTS` table is an empty deprecated shim. Fields: `include`, `exclude`, '
+      + '`data`, `collector` (`file` default, `npm-sqlite`, or the `pg-dump` object form with '
+      + '`container`/`user`/`database`), `strip` / `transform` rules, `dataSubdir` **or** `volume` when '
+      + 'the state does not live under `DATA_DIR/<template>`, and `stores` for extra stores installed '
+      + 'under another name (a sibling dir, or one app of a multi-app template — the declaring template '
+      + 'is the gate). A template with nothing to preserve declares `backup: none` plus a `reason:` — '
+      + 'silence is not an opt-out, it is indistinguishable from an oversight, and '
+      + '`check:backup-coverage` fails the build on a shipped template that declares neither. Optional '
+      + 'at parse time so a foreign template still installs; the gate is where it is required. Two '
+      + 'limits are the platform\'s, not the template\'s (ADR 0002): every path must resolve inside the '
+      + 'service\'s own data dir (absolute, `~`, `..` and `{{MUSTACHE}}` paths are rejected with the '
+      + 'reason logged), and an include that lands in a bulk volume is clamped out producer-side '
+      + 'whatever the template asked for.',
   },
 ] as const;
 

@@ -1,7 +1,8 @@
 // External/config backup — worker orchestration (#1955, slice of #1949).
 //
 // The control-plane glue around the resource-capped backup worker. servicebay:
-//   1. picks the installed services with a backup manifest,
+//   1. resolves the installed templates' `servicebay.backup` declarations into
+//      manifests (#2858 slice C — the list is no longer a table in ServiceBay),
 //   2. runs any host-side collector (NPM's consistent sqlite snapshot) — this
 //      must stay in servicebay: it execs INTO the running NPM container, which the
 //      worker can't reach,
@@ -22,12 +23,10 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { AgentExecutor } from '@/lib/agent/executor';
 import { resolveHostDataDir } from '@/lib/hostDataDir';
 import { getConfig } from '@/lib/config';
-import {
-  SERVICE_BACKUP_MANIFESTS,
-  getBackupGate,
-  getServiceManifest,
-} from '@servicebay/backup-worker';
-import type { WorkerStatus } from '@servicebay/backup-worker';
+import type { ServiceBackupManifest, WorkerStatus } from '@servicebay/backup-worker';
+import { findServiceManifest } from '@servicebay/backup-worker';
+
+import { resolveInstalledBackupManifests } from '../externalBackup/templateManifests';
 
 import { runBackupCollector } from '../externalBackup/collector';
 import {
@@ -71,13 +70,13 @@ async function resolveStacksDir(): Promise<string> {
 }
 
 /**
- * The installed services with a backup manifest, gated correctly (a sibling-store
- * entry like `home-assistant-zwave` gates on its parent template). Returns the
- * manifest service names to hand the worker.
+ * The manifests the installed templates DECLARE (#2858 slice C). The gate is
+ * now the declaration itself: a template contributes its own store plus any
+ * `stores:` entry it declares on another name's behalf (the old `gateOn`
+ * rows), so nothing can be listed here that no installed template asked for.
  */
-async function selectInstalledBackupServices(): Promise<string[]> {
-  const installed = new Set(Object.keys((await getConfig()).installedTemplates ?? {}));
-  return SERVICE_BACKUP_MANIFESTS.filter(m => installed.has(getBackupGate(m))).map(m => m.service);
+async function selectInstalledBackupManifests(): Promise<ServiceBackupManifest[]> {
+  return resolveInstalledBackupManifests();
 }
 
 /**
@@ -87,10 +86,12 @@ async function selectInstalledBackupServices(): Promise<string[]> {
  * worker then stages that under the canonical name). Best-effort: a snapshot
  * failure is logged inside runBackupCollector, never fatal.
  */
-async function runHostCollectors(services: string[], node: string): Promise<void> {
-  for (const service of services) {
-    const manifest = getServiceManifest(service);
-    if (manifest?.collector) await runBackupCollector(manifest, node);
+async function runHostCollectors(
+  manifests: readonly ServiceBackupManifest[],
+  node: string,
+): Promise<void> {
+  for (const manifest of manifests) {
+    if (manifest.collector) await runBackupCollector(manifest, node);
   }
 }
 
@@ -103,6 +104,7 @@ async function runHostCollectors(services: string[], node: string): Promise<void
 async function runWorkerToCompletion(
   exec: SafeExec,
   services: string[],
+  manifests: ServiceBackupManifest[],
   stacksDir: string,
 ): Promise<BackupRun> {
   await ensureBackupWorkerImage(exec);
@@ -111,7 +113,7 @@ async function runWorkerToCompletion(
   // the /app/data mount source → default), not the container-internal path —
   // the out volume must be created + bind-mounted on the host (#1966).
   const dataDir = await resolveHostDataDir(exec);
-  const run = await launchBackupWorker({ exec, services, runId, dataDir, stacksDir });
+  const run = await launchBackupWorker({ exec, services, manifests, runId, dataDir, stacksDir });
 
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   for (;;) {
@@ -144,8 +146,15 @@ async function runWorkerToCompletion(
 export async function runBackupForServices(services: string[], node = 'Local'): Promise<BackupRun> {
   const exec = makeExec(node);
   const stacksDir = await resolveStacksDir();
-  await runHostCollectors(services, node);
-  const result = await runWorkerToCompletion(exec, services, stacksDir);
+  const resolved = await resolveInstalledBackupManifests();
+  // Resolve each requested service against the declarations; a service whose
+  // template declares nothing is passed through so the worker records it as a
+  // visible per-service error rather than being dropped from the denominator.
+  const manifests = services
+    .map(s => findServiceManifest(resolved, s))
+    .filter((m): m is ServiceBackupManifest => m !== undefined);
+  await runHostCollectors(manifests, node);
+  const result = await runWorkerToCompletion(exec, services, manifests, stacksDir);
   if (result.status.phase === 'error') {
     await cleanupBackupRun(result.exec, result.run);
     throw new Error(result.status.error ?? 'backup-worker run failed');
@@ -158,7 +167,7 @@ export async function runBackupForServices(services: string[], node = 'Local'): 
  * (no launch) when nothing is installed; otherwise the completed run handle.
  */
 export async function runBackupForInstalled(node = 'Local'): Promise<BackupRun | null> {
-  const services = await selectInstalledBackupServices();
+  const services = (await selectInstalledBackupManifests()).map(m => m.service);
   if (services.length === 0) return null;
   return runBackupForServices(services, node);
 }

@@ -38,12 +38,13 @@ transform:
       kind: 'declared',
       dataSubdir: 'nginx-proxy-manager',
       volume: undefined,
-      collector: 'npm-sqlite',
+      collector: { kind: 'npm-sqlite' },
       include: ['data/database.sqlite', 'config.json'],
       exclude: ['data/logs'],
       data: ['media'],
       strip: [{ file: 'config.yml', dropYamlKeys: ['password'] }],
       transform: [{ file: '.storage/core.config_entries', kind: 'ha-config-entries-addon' }],
+      stores: {},
     });
   });
 
@@ -51,23 +52,58 @@ transform:
     const r = parseTemplateBackupYaml('include: [config.json]\n');
     expect(r.ok).toBe(true);
     if (!r.ok || r.backup.kind !== 'declared') return;
-    expect(r.backup.collector).toBe('file');
+    expect(r.backup.collector).toEqual({ kind: 'file' });
     expect(r.backup.exclude).toEqual([]);
     expect(r.backup.data).toEqual([]);
     expect(r.backup.strip).toEqual([]);
+    expect(r.backup.stores).toEqual({});
   });
 
-  it('accepts `pg-dump` and a named volume', () => {
-    const r = parseTemplateBackupYaml('collector: pg-dump\nvolume: paperless-db\ninclude: [dump.sql]\n');
+  it('accepts a configured `pg-dump` collector and a named volume', () => {
+    const r = parseTemplateBackupYaml(
+      'collector:\n  kind: pg-dump\n  container: paperless-db\n  user: paperless\n  database: paperless\n'
+      + 'volume: paperless-data\ninclude: [media]\n',
+    );
     expect(r.ok).toBe(true);
     if (!r.ok || r.backup.kind !== 'declared') return;
-    expect(r.backup.collector).toBe('pg-dump');
-    expect(r.backup.volume).toBe('paperless-db');
+    expect(r.backup.collector).toEqual({
+      kind: 'pg-dump', container: 'paperless-db', user: 'paperless', database: 'paperless',
+    });
+    expect(r.backup.volume).toBe('paperless-data');
   });
 
-  it('refuses a declaration with an empty include list — say `none` instead', () => {
+  it('refuses a bare `collector: pg-dump` — it names a dump that could never run', () => {
+    // Without container/user/database there is nothing to exec. Accepting the
+    // bare name would ship a "backup" whose database silently never arrives.
+    const r = parseTemplateBackupYaml('collector: pg-dump\ninclude: [media]\n');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors.join('\n')).toMatch(/collector/);
+  });
+
+  it('accepts sibling `stores:` and validates each one (#1594/#2595)', () => {
+    const r = parseTemplateBackupYaml(
+      'stores:\n  authelia:\n    dataSubdir: auth/authelia-data\n    include: [db.sqlite3]\n',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.backup.kind !== 'declared') return;
+    // A template that owns nothing itself declares only stores.
+    expect(r.backup.include).toEqual([]);
+    expect(r.backup.stores.authelia.include).toEqual(['db.sqlite3']);
+  });
+
+  it('applies the ADR 0002 path boundary inside a `stores:` entry too', () => {
+    const r = parseTemplateBackupYaml('stores:\n  evil:\n    include: ["../../etc/shadow"]\n');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors.join('\n')).toMatch(/stores\.evil\.include/);
+  });
+
+  it('refuses a declaration with neither includes nor stores — say `none` instead', () => {
     const r = parseTemplateBackupYaml('include: []\n');
     expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors.join('\n')).toMatch(/`backup: none`/);
   });
 
   it('refuses `dataSubdir` and `volume` together', () => {

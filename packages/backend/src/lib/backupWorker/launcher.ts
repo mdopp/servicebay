@@ -23,8 +23,8 @@
 
 import { readFile } from 'node:fs/promises';
 
-import type { WorkerStatus } from '@servicebay/backup-worker';
-import { STATUS_FILE, getServiceManifest } from '@servicebay/backup-worker';
+import type { ServiceBackupManifest, WorkerStatus } from '@servicebay/backup-worker';
+import { STATUS_FILE } from '@servicebay/backup-worker';
 
 import { DATA_DIR } from '@/lib/dirs';
 
@@ -93,11 +93,17 @@ function backupWorkerOutBase(dataDir: string): string {
 /**
  * The podman named volumes this run must bind, in request order and de-duped —
  * the `volume` claim of every requested service whose manifest has one (#2596).
- * Pure over its input so the launch wiring is testable without podman.
+ * Pure over its inputs so the launch wiring is testable without podman. The
+ * manifests come from the caller (resolved from the installed templates'
+ * declarations, #2858) — the launcher never looks a service up in a table.
  */
-export function requiredVolumeClaims(services: readonly string[]): string[] {
+export function requiredVolumeClaims(
+  services: readonly string[],
+  manifests: readonly ServiceBackupManifest[],
+): string[] {
+  const byService = new Map(manifests.map(m => [m.service, m]));
   const claims = services
-    .map(s => getServiceManifest(s)?.volume)
+    .map(s => byService.get(s)?.volume)
     .filter((v): v is string => typeof v === 'string' && v.length > 0);
   return [...new Set(claims)];
 }
@@ -113,13 +119,16 @@ export function requiredVolumeClaims(services: readonly string[]): string[] {
 export async function launchBackupWorker(args: {
   exec: SafeExec;
   services: string[];
+  /** The manifests servicebay resolved for this run — handed to the worker as
+   *  `BACKUP_MANIFESTS` so it stages exactly what the templates declared. */
+  manifests: ServiceBackupManifest[];
   runId: string;
   /** HOST-side data dir (HOST_DATA_DIR) — where the out volume is created. */
   dataDir: string;
   /** HOST-side stacks root (e.g. /mnt/data/stacks) bind-mounted RO into the worker. */
   stacksDir: string;
 }): Promise<BackupWorkerRun> {
-  const { exec, services, runId, dataDir, stacksDir } = args;
+  const { exec, services, manifests, runId, dataDir, stacksDir } = args;
   if (services.length === 0) throw new Error('backup-worker: no services to back up');
   const outDir = `${backupWorkerOutBase(dataDir)}/${runId}`;
   const container = containerName(runId);
@@ -143,7 +152,7 @@ export async function launchBackupWorker(args: {
   // leave a stray volume behind. A claim that doesn't exist yet (the template was
   // never deployed) simply isn't mounted, and the worker reports that service as
   // a skip — the same outcome as a hostPath dir that isn't there yet.
-  const claims = requiredVolumeClaims(services);
+  const claims = requiredVolumeClaims(services, manifests);
   const volumeArgs: string[] = [];
   for (const claim of claims) {
     const { code } = await exec(['podman', 'volume', 'exists', claim]);
@@ -165,6 +174,10 @@ export async function launchBackupWorker(args: {
     // status + tars back from this dir. (#1955 box-verify, rootless podman.)
     '-v', `${outDir}:/out:z`,
     '-e', `BACKUP_RUN_ID=${runId}`,
+    // The resolved declarations (#2858 slice C). An env var, not an argv
+    // entry: the set is a few KB and argv is world-readable via `podman
+    // inspect`/`ps` on the host, while the worker's env is scoped to it.
+    '-e', `BACKUP_MANIFESTS=${JSON.stringify(manifests)}`,
     BACKUP_WORKER_IMAGE,
     '--stacks', STACKS_MOUNT,
     // Passed whenever a requested service is volume-held, even if the claim

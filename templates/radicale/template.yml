@@ -10,6 +10,13 @@ metadata:
     servicebay.ports: "{{RADICALE_PORT}}/tcp"
     # caldav.<domain> goes through nginx; auth is the SSO front.
     servicebay.dependencies: "nginx,auth"
+    # Backup declaration (#2858): the `collections` tree is every calendar
+    # event and contact card. Plain files, no secrets, kept verbatim.
+    servicebay.backup: |
+      dataSubdir: radicale/data
+      include:
+        - collections
+      exclude: []
     # Continuous health probe (#628). Radicale's `/` root returns the
     # web client — 200 once the HTTP listener accepted the config.
     servicebay.healthcheck: |

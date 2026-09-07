@@ -12,6 +12,28 @@ metadata:
     # post-deploy OIDC-client registration can talk to Authelia and the
     # vault.<domain> proxy route resolves to a running NPM.
     servicebay.dependencies: "nginx,auth"
+    # Backup declaration (#2858). Small config-grade state, maximal value:
+    # `db.sqlite3` is the vault ciphertext (encrypted with each user's master
+    # password, so useless to an attacker holding the NAS), and `rsa_key.*`
+    # are the JWT signing keys that MUST persist or every session and invite
+    # token breaks after a reinstall. Attachments and sends are bulk user
+    # data kept on the RAID through a wipe-config.
+    servicebay.backup: |
+      include:
+        - db.sqlite3
+        - db.sqlite3-wal
+        - db.sqlite3-shm
+        - rsa_key.pem
+        - rsa_key.pub.pem
+        - config.json
+      exclude:
+        - icon_cache
+        - tmp
+        - attachments
+        - sends
+      data:
+        - attachments
+        - sends
     # Continuous health probe (#628). `/alive` is Vaultwarden's
     # unauthenticated liveness endpoint — returns the current UTC
     # timestamp on a healthy instance.

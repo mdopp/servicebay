@@ -34,6 +34,34 @@ metadata:
     # feedback_hermes_config_bak_selinux: a root-owned stray in a shared
     # tree is a relabel footgun.)
     io.podman.annotations.label/jellyfin: "disable"
+    # Backup declaration (#2858). The `media` template has no store of its
+    # own — the library itself is multi-TB and lives on the RAID — but its
+    # jellyfin APP has small, irreplaceable config-grade state and no
+    # installedTemplates key of its own (#2595).
+    servicebay.backup: |
+      stores:
+        jellyfin:
+          dataSubdir: media/jellyfin-config
+          include:
+            # Server settings (system.xml, network.xml, encoding.xml, the
+            # LDAP plugin config), the users/libraries DB, and the plugins.
+            - config
+            - data/jellyfin.db
+            - data/jellyfin.db-wal
+            - data/jellyfin.db-shm
+            - plugins
+          exclude:
+            - cache
+            - log
+            - transcodes
+            - metadata
+            - data/subtitles
+            - data/transcodes
+          # Artwork/metadata caches are large and re-scannable — kept on the
+          # RAID through a wipe-config rather than re-downloaded.
+          data:
+            - metadata
+            - cache
     # Continuous health probe (#628). Jellyfin's /System/Info/Public
     # returns 200 once the server is up; it's the only container in the
     # pod now, so pod-up == Jellyfin-up. #618's UserManager-init race is

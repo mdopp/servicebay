@@ -14,17 +14,28 @@ There are two backup systems in ServiceBay, and they answer different questions:
 
 ## Per-service manifest on the NAS
 
-**What it does.** Each service has a backup **manifest**
-(`SERVICE_BACKUP_MANIFESTS` in
-`packages/backup-manifest/src/index.ts` — the workspace package the backend and
-the sandboxed backup worker both import, one copy since #2733) that declares
-exactly:
+**What it does.** Each service has a backup **manifest**, and since #2858 the
+service's own **template** is where it is declared — the `servicebay.backup`
+annotation in `templates/<name>/template.yml` (see
+[TEMPLATE_AUTHORING.md](../TEMPLATE_AUTHORING.md#backup-declaration-servicebaybackup)).
+`packages/backend/src/lib/externalBackup/backupDeclaration.ts` turns each
+declaration into the runtime manifest, which declares exactly:
 
 - `include[]` — the config paths worth keeping (HA's `automations.yaml`,
   `.storage/`, zwave-js keys, …).
 - `exclude[]` — bulk data, logs, caches, recorder DBs — never backed up.
 - `strip[]` — YAML keys to remove before archiving (re-enterable secrets).
 - `data[]` — large on-RAID artifacts kept through a `wipe-config` reinstall.
+
+Before #2858 the declarations lived in one table inside ServiceBay
+(`SERVICE_BACKUP_MANIFESTS`, `packages/backup-manifest/src/index.ts`), which a
+template from another registry could not add a row to — so it could not be
+backed up at all (#2849). That table is now an empty deprecated shim; the
+package still holds the manifest *shape* and the pure staging helpers the
+backend and the sandboxed backup worker both import (one copy since #2733).
+Two limits stay ServiceBay's regardless of what a template declares (ADR 0002):
+an `include` that lands in a bulk volume is clamped out producer-side, and
+every path must resolve inside the service's own data dir.
 
 **Why it exists.** A blind `tar` of a service's data dir would be huge, would drag
 in caches and logs, and would ship secrets that get regenerated anyway. The
@@ -57,9 +68,10 @@ install log, so the operator can see *why* a restore did or didn't happen.
 on the NAS, so a leaked backup file doesn't leak live credentials.
 
 **How it works.** `applyStripRules` + `stripYamlKeys` (in `@servicebay/backup-manifest`)
-drop the manifest's `strip` keys from each file during tar creation. Example: the
-Hermes manifest strips `api_key` / `apiKey` / `llm_api_key` from `config.yaml`
-("LLM API keys are re-entered after a restore").
+drop the manifest's `strip` keys from each file during tar creation — e.g. a
+template declaring `strip: [{file: config.yaml, dropYamlKeys: [api_key]}]`
+because its LLM API key is re-entered after a restore. No built-in template
+declares a strip rule today; the machinery stays covered by tests.
 
 Not everything is stripped — the manifest is a deliberate policy per service:
 

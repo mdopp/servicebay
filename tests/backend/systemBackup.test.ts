@@ -89,9 +89,18 @@ vi.mock('node:child_process', () => {
       .catch(err => callback(err as NodeJS.ErrnoException, '', ''));
   };
 
+  // `exec` is stubbed, not implemented: systemBackup now resolves a service's
+  // backup manifest from its template (#2858), which pulls in `lib/registry`,
+  // and that module `promisify(exec)`s at import time. Nothing under test
+  // shells out through it.
+  const exec = (_cmd: string, callback?: (error: NodeJS.ErrnoException | null, stdout: string, stderr: string) => void) => {
+    callback?.(null, '', '');
+  };
+
   return {
+    exec,
     execFile,
-    default: { execFile }
+    default: { exec, execFile }
   };
 });
 

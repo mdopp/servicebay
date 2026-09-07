@@ -8,6 +8,14 @@ metadata:
     servicebay.label: "MQTT Broker (Mosquitto)"
     servicebay.schema-version: "1"
     servicebay.ports: "{{MQTT_PORT}}/tcp"
+    # Backup declaration (#2858).
+    servicebay.backup: |
+      backup: none
+      reason: >-
+        The broker carries no config on disk — mosquitto.conf and the
+        password file are re-rendered into the pod from the wizard variables
+        on every deploy. `data/` holds retained MQTT messages, which are the
+        devices' own last-published state and are republished by them.
     # No `servicebay.dependencies`: MQTT is not an HTTP service, so it needs
     # neither the nginx reverse proxy nor Authelia. Its own username/password
     # (below) is the whole auth story, which is why anonymous access is off.

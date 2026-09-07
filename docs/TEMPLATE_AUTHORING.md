@@ -44,7 +44,7 @@ the wizard substitutes at deploy time. Use these annotations under
 | `servicebay.dependencies` | optional (default `[]`) | Comma-separated list of template names that must install before this one. Drives three things in the wizard: (1) the red **`requires X`** badge under the template name; (2) auto-checking those templates when the operator checks this one; (3) the uncheck-guard that prompts before removing a template another selected template needs. The install loop then topo-sorts the deploy order so deps land first. Example: `servicebay.dependencies: "nginx,auth"`. |
 | `servicebay.requires-api.<name>` | optional | Per-API version the template's `post-deploy.py` calls. Declare one annotation per API name (`lldap`, `authelia`, `portal`), value is a positive integer. Core refuses to invoke `post-deploy.py` if any requested version exceeds what this ServiceBay ships (see `packages/backend/src/lib/template/apiVersions.ts`). Use this on any template whose post-deploy calls `/api/system/<name>/*` (#588). |
 | `servicebay.healthcheck` | optional | YAML block scalar declaring a continuous health probe ServiceBay polls on the configured interval (#626). Shape: `{kind?: http|tcp, url|host+port, interval: 30s, timeout: 5s, startup_timeout: 5m}`. The endpoint should return `{ready, degraded?, deps?, message?}`. Result lands on `twin.services[].health` and is the single source of truth for install gating (`settleWait`), diagnose readers, and the core-health banner. Phase 3C (#628) replaced the install-time `servicebay.readiness` annotation with this single signal. |
-| `servicebay.backup` | optional | YAML block scalar declaring what this service needs backed up (#2858), so a template from any registry can say it — not only the ones listed in ServiceBay's own manifest table. Fields: `include` (required, at least one path), `exclude`, `data`, `collector` (`file` default, `npm-sqlite`, `pg-dump`), `strip` / `transform` rules, and `dataSubdir` **or** `volume` when the state does not live under `DATA_DIR/<template>`. A template with nothing to preserve declares `backup: none` plus a `reason:` — silence is not an opt-out, it is indistinguishable from an oversight. Every path must resolve inside the service's own data dir (ADR 0002): absolute, `~`, `..` and `{{MUSTACHE}}` paths are rejected with the reason logged. |
+| `servicebay.backup` | optional | YAML block scalar declaring what this service needs backed up (#2858), so a template from any registry can say it. This is now the ONLY place it can be said — the central `SERVICE_BACKUP_MANIFESTS` table is an empty deprecated shim. Fields: `include`, `exclude`, `data`, `collector` (`file` default, `npm-sqlite`, or the `pg-dump` object form with `container`/`user`/`database`), `strip` / `transform` rules, `dataSubdir` **or** `volume` when the state does not live under `DATA_DIR/<template>`, and `stores` for extra stores installed under another name (a sibling dir, or one app of a multi-app template — the declaring template is the gate). A template with nothing to preserve declares `backup: none` plus a `reason:` — silence is not an opt-out, it is indistinguishable from an oversight, and `check:backup-coverage` fails the build on a shipped template that declares neither. Optional at parse time so a foreign template still installs; the gate is where it is required. Two limits are the platform's, not the template's (ADR 0002): every path must resolve inside the service's own data dir (absolute, `~`, `..` and `{{MUSTACHE}}` paths are rejected with the reason logged), and an include that lands in a bulk volume is clamped out producer-side whatever the template asked for. |
 
 <!-- AUTOGEN:TEMPLATE_FIELDS_END -->
 
@@ -673,7 +673,8 @@ A template says what it needs backed up; ServiceBay does the backing up
 (#2858). Before this annotation the only place that could be said was
 `SERVICE_BACKUP_MANIFESTS`, a table inside ServiceBay itself — so a
 template from another registry had no way to declare anything at all
-(#2849).
+(#2849). That table is now an empty deprecated shim: this annotation is
+the only place a backup is declared.
 
 ```yaml
 metadata:
@@ -681,7 +682,8 @@ metadata:
     servicebay.backup: |
       # dataSubdir: nginx-proxy-manager   # only when the on-disk dir differs
       # volume: file-share-syncthing-config  # or a named volume, never both
-      collector: npm-sqlite               # file (default) | npm-sqlite | pg-dump
+      collector: npm-sqlite               # file (default) | npm-sqlite
+                                          # (pg-dump takes the object form, below)
       include:
         - data/database.sqlite
         - config.json
@@ -695,6 +697,10 @@ metadata:
       transform:
         - file: .storage/core.config_entries
           kind: ha-config-entries-addon
+      stores:                             # extra stores installed under
+        home-assistant-zwave:             # ANOTHER name (see below)
+          dataSubdir: home-assistant/zwave-js
+          include: [settings.json]
 ```
 
 | Field | Meaning |
@@ -707,6 +713,75 @@ metadata:
 | `transform` | Per-file value rewrites (`{file, kind}`) from a closed set of transform kinds. |
 | `dataSubdir` | On-disk subdir under `DATA_DIR` when it is not the template name (NPM ships as `nginx` but stores under `nginx-proxy-manager/`). |
 | `volume` | The state lives in a podman-managed named volume (a kube PVC `claimName`) instead of a `DATA_DIR` subdir; include paths are then relative to the volume root. Mutually exclusive with `dataSubdir`. |
+| `stores` | Extra stores this template owns that are installed under a **different name** — see below. Keyed by the store's own service name; each value takes the same fields as the top level (minus `stores`). |
+
+### More than one store: `stores:`
+
+Some templates own state that has no `installedTemplates` key of its own:
+
+- a **sibling dir** of the template's own config — `home-assistant` keeps
+  the zwave-js key store at `home-assistant/zwave-js/`, beside HA's
+  `home-assistant/homeassistant/`;
+- one **app of a multi-app template** — `authelia` and `lldap` are both
+  apps of `auth`; `jellyfin` is an app of `media`.
+
+Those go under `stores:`, keyed by the store's service name (the tarball
+name, and what a restore asks for). The template that declares a store is
+its **gate**: the store is backed up exactly when that template is
+installed, and rides the same deploy's wipe/restore. A template with no
+state of its own (`auth`, `media`) declares only `stores:` and leaves the
+top-level `include` out.
+
+Getting this wrong used to be invisible: before #2595 the SSO server's
+secret store, the whole family identity store and the media server's
+config each waited on a template name no box has, so they silently dropped
+out of the nightly run — which then reported "8/8 services backed up"
+against a denominator that had quietly shrunk.
+
+### The `pg-dump` collector (Postgres)
+
+A running Postgres cluster directory is not a backup: copied while the
+server is up, `pgdata/` is a torn, version-locked tree no restore accepts.
+So the `pg-dump` collector takes a logical dump through the service's own
+Postgres container and stages that file instead (#2864). It takes the
+object form, because a dump needs to know what to dump — a bare
+`collector: pg-dump` is refused rather than accepted as a dump that could
+never run:
+
+```yaml
+      collector:
+        kind: pg-dump
+        container: paperless-db     # the service's own Postgres container
+        user: paperless
+        database: paperless
+        # pgdata: pgdata            # cluster dir, never staged (default)
+        # dumpPath: paperless.dump  # where the dump lands in the tarball
+```
+
+
+1. `pg_dump --format=custom` runs **inside the service's Postgres
+   container**, over its local socket as the container's own superuser — no
+   password reaches a command line or a log;
+2. the dump is copied out (`podman cp`) into the service data dir and
+   staged under its declared name (`<database>.dump` by default);
+3. **`pgdata/` is excluded by the collector itself**, whatever the template
+   declared — the platform never ships a raw cluster dir;
+4. a failed dump is **reported**, not papered over: the previous run's dump
+   is deleted first, and the worker marks that service's backup as an error
+   rather than shipping a tarball with no database in it.
+
+**Restoring** is two commands against the fresh container — the tools ship
+inside the Postgres image, so ServiceBay does not wrap them:
+
+```bash
+podman cp <DATA_DIR>/<service>/<database>.dump <service>-db:/tmp/restore.dump
+podman exec <service>-db pg_restore --username <user> --dbname <database> \
+  --clean --if-exists /tmp/restore.dump
+```
+
+Custom format (not plain `.sql`) is deliberate: it is compressed,
+`pg_restore --clean --if-exists` rebuilds objects that a reinstall
+recreated differently, and large objects round-trip.
 
 **Nothing to back up? Say so, with a reason.** Silence is not an opt-out —
 it is indistinguishable from an oversight, which is exactly how state goes
@@ -718,10 +793,25 @@ unprotected for a year:
       reason: Stateless — every file is re-rendered from the template on deploy.
 ```
 
-**The path boundary is enforced by the platform, not trusted to the
-template** (ADR 0002). Every `include` / `exclude` / `data` / `strip.file` /
-`transform.file` path must resolve inside the service's own data dir. These
-are rejected at parse time, with the reason naming the offending path:
+**Two limits are enforced by the platform, not trusted to the template**
+(ADR 0002) — a template is data, and a template from another registry is
+less trusted than ServiceBay's own code:
+
+1. **The path boundary.** Every `include` / `exclude` / `data` /
+   `strip.file` / `transform.file` path must resolve inside the service's
+   own data dir. Checked at parse time AND re-checked producer-side, so a
+   declaration that reached the runtime by another route (a hand-edited
+   local template, a registry clone updated underneath) still cannot walk
+   out.
+2. **The tier clamp.** A bulk volume never goes to the NAS, whatever a
+   template declares. An `include` that resolves inside one of
+   ServiceBay's bulk volumes (`EXCLUDED_BULK_VOLUMES` — the media library,
+   photo blobs, Postgres cluster dirs) is dropped from `include`, pushed
+   onto `exclude`, and logged. A store that loses its last include path
+   this way produces **no manifest at all**: an empty backup reports "ok"
+   and is indistinguishable from a healthy one.
+
+These are rejected at parse time, with the reason naming the offending path:
 
 - an absolute path (`/etc/shadow`) or a home-relative one (`~/.ssh`);
 - any `..` segment, which leaves the data dir;
@@ -730,6 +820,15 @@ are rejected at parse time, with the reason naming the offending path:
 - an unknown `collector`, an unknown field (typos fail loudly), a
   `dataSubdir` **and** a `volume` together, or `backup: none` without a
   `reason`.
+
+**The gate.** `npm run check:backup-coverage` fails the build when a
+template ServiceBay ships declares neither a backup nor an explicit
+`backup: none`, and when a persistent volume is covered by neither. A
+registry outside this repo runs the identical check over its own tree:
+
+```bash
+npx tsx scripts/check-backup-coverage.ts --templates <path-to-templates>
+```
 
 ## What stays in core
 
