@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.33.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.1...servicebay-v5.33.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* **backup:** reuse one NAS session per run and snapshot NPM's sqlite in-container ([007c879](https://github.com/mdopp/servicebay/commit/007c8798ce55c9d7bba65d1e1dd447a768264e19)), closes [#2876](https://github.com/mdopp/servicebay/issues/2876) [#2877](https://github.com/mdopp/servicebay/issues/2877)
+* **backup:** reuse one NAS session per run and snapshot NPM's sqlite in-container ([#2876](https://github.com/mdopp/servicebay/issues/2876), [#2877](https://github.com/mdopp/servicebay/issues/2877)) ([64e8801](https://github.com/mdopp/servicebay/commit/64e880171167fed93dc7660cae5b0f2c71f05181))
+* **backup:** skip the worker image pull when it is cached and time the cold pull ([1270a47](https://github.com/mdopp/servicebay/commit/1270a471afcb8c23bf5a23745f7931814b5b78f5)), closes [#2880](https://github.com/mdopp/servicebay/issues/2880)
+* **backup:** snapshot NPM's sqlite with podman cp and keep the worker pull off the 30 s budget ([#2877](https://github.com/mdopp/servicebay/issues/2877), [#2880](https://github.com/mdopp/servicebay/issues/2880)) ([ed64060](https://github.com/mdopp/servicebay/commit/ed64060e197544ed1dd0ac738a2c3206e399d791))
+* **backup:** snapshot NPM's sqlite with podman cp and skip unreadable files ([616497b](https://github.com/mdopp/servicebay/commit/616497bd4a565ac29071513f29ca5dcc21e3f2da)), closes [#2877](https://github.com/mdopp/servicebay/issues/2877)
+
 ## [5.33.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.0...servicebay-v5.33.1) (2026-09-07)
 
 
