@@ -88,7 +88,18 @@ export interface TemplateBackupStore {
    *  `dataSubdir`; include paths are then relative to the volume root. */
   volume?: string;
   collector: TemplateBackupCollectorSpec;
-  /** Paths worth preserving across a reinstall (ADR 0002 tier A). */
+  /**
+   * Paths worth preserving across a reinstall (ADR 0002 tier A).
+   *
+   * SMALL is half the definition, not a nice-to-have. A file is not tier A
+   * because it is a database: a DB that mixes the service's parameters with
+   * a re-scannable catalog is tier B wearing a `.db` extension — Jellyfin
+   * keeps its whole media catalog in the same SQLite file as its users and
+   * libraries, 192 MB of a 198 MB tar, so `media` leaves it out and accepts
+   * re-adding libraries on restore (#2885). Measure the file before you
+   * include it; when the parameters cannot be split from the bulk, leave it
+   * out and say so in the template's comment.
+   */
   include: string[];
   /** Paths that must never enter the tarball — bulk, logs, caches. */
   exclude: string[];
