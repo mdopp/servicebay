@@ -130,15 +130,19 @@ describe('backup round-trip (#2154) — content survives backup→wipe→restore
     expect(await read(restored, 'collections/collection-root/user/calendar.ics')).toBe('BEGIN:VCALENDAR');
   });
 
-  maybeIt('jellyfin: server config + db round-trip, caches/metadata excluded (#2153)', async () => {
+  maybeIt('jellyfin: server config + plugins round-trip, catalog DB/caches excluded (#2153, #2885)', async () => {
     const restored = await roundTrip('jellyfin', async src => {
       await write(src, 'config/system.xml', '<ServerConfiguration/>');
-      await write(src, 'data/jellyfin.db', 'JELLYFIN-USERS-DB');
+      await write(src, 'plugins/configurations/LDAP-Auth.xml', '<LdapConfiguration/>');
+      // #2885: the catalog DB is deliberately NOT config — it is the whole
+      // media catalog in the same SQLite file as the users/libraries rows.
+      await write(src, 'data/jellyfin.db', 'JELLYFIN-CATALOG-AND-USERS'); // excluded
       await write(src, 'metadata/artwork/poster.jpg', 'BULK-ARTWORK'); // excluded
       await write(src, 'cache/temp', 'REGENERABLE'); // excluded
     });
     expect(await read(restored, 'config/system.xml')).toContain('ServerConfiguration');
-    expect(await read(restored, 'data/jellyfin.db')).toBe('JELLYFIN-USERS-DB');
+    expect(await read(restored, 'plugins/configurations/LDAP-Auth.xml')).toContain('LdapConfiguration');
+    await expect(fs.access(path.join(restored, 'data/jellyfin.db'))).rejects.toThrow();
     await expect(fs.access(path.join(restored, 'metadata/artwork/poster.jpg'))).rejects.toThrow();
     await expect(fs.access(path.join(restored, 'cache/temp'))).rejects.toThrow();
   });

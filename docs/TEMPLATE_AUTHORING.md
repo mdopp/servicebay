@@ -705,7 +705,7 @@ metadata:
 
 | Field | Meaning |
 |---|---|
-| `include` | Required, ≥ 1 entry. The small, critical, hard-to-recreate state (ADR 0002 tier A) that a reinstall must restore. |
+| `include` | Required, ≥ 1 entry. The small, critical, hard-to-recreate state (ADR 0002 tier A) that a reinstall must restore. **Small is part of the definition** — a file is not tier A because it is a database. A DB that mixes the service's parameters with a re-scannable catalog is tier B wearing a `.db` extension: Jellyfin keeps its whole media catalog in the same SQLite file as its users and libraries (192 MB of a 198 MB tar), so `templates/media/` leaves `data/jellyfin.db` out and accepts re-adding libraries on restore (#2885). Measure the file before including it; if the parameters can't be split from the bulk, leave it out and record the accepted consequence in the comment next to the declaration. |
 | `exclude` | Paths that must never enter the tarball — bulk, logs, caches, sessions. Excludes win over includes. |
 | `data` | The large on-RAID artifacts (ADR 0002 tier B). Declarative: never backed up, and kept on disk through a `wipe-config` reinstall. |
 | `collector` | `file` (default, plain copy), `npm-sqlite` (in-container `sqlite3 .backup` first — a live WAL database that a plain `cp` would tear; when the image ships no `sqlite3` it falls back to a live container-side copy, recorded as `consistent: false` in the backup meta, never a host-side copy of the root-owned file), `pg-dump` (`pg_dump` in the service's own Postgres container). |

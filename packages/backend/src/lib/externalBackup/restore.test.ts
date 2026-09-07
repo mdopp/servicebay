@@ -376,7 +376,9 @@ describe('#2595 — the multi-app template stores round-trip through wipe + auto
   const APP_STORES = [
     { service: 'authelia', dir: ['auth', 'authelia-data'], config: 'db.sqlite3', payload: 'TOTP-WEBAUTHN-SECRETS' },
     { service: 'lldap', dir: ['auth', 'lldap'], config: 'users.db', payload: 'FAMILY-IDENTITY-BYTES' },
-    { service: 'jellyfin', dir: ['media', 'jellyfin-config'], config: 'data/jellyfin.db', payload: 'JELLYFIN-USERS-DB' },
+    // #2885: jellyfin's CONFIG class is `config` + `plugins` — the catalog DB
+    // is deliberately not in it, so the tar carries the server settings.
+    { service: 'jellyfin', dir: ['media', 'jellyfin-config'], config: 'config/system.xml', payload: '<ServerConfiguration/>' },
   ] as const;
 
   /** Serve `<service>.tar` off the NAS with the given file contents. */
@@ -427,7 +429,7 @@ describe('#2595 — the multi-app template stores round-trip through wipe + auto
     expect(await fs.readFile(path.join(target, 'lldap_config.toml'), 'utf8')).toBe('NOT-CONFIG-CLASS');
   });
 
-  it('jellyfin: wipe-config clears CONFIG, KEEPS the re-scannable metadata DATA', async () => {
+  it('jellyfin: wipe-config clears CONFIG, KEEPS the metadata DATA and the catalog DB (#2885)', async () => {
     const target = path.join(tmpRoot, 'media', 'jellyfin-config');
     await fs.mkdir(path.join(target, 'config'), { recursive: true });
     await fs.mkdir(path.join(target, 'data'), { recursive: true });
@@ -438,13 +440,17 @@ describe('#2595 — the multi-app template stores round-trip through wipe + auto
 
     await wipeServiceForReinstall('jellyfin', { wipeMode: 'wipe-config', node: 'Local', local: true }, async () => {});
     await expect(fs.access(path.join(target, 'config/system.xml'))).rejects.toThrow();
-    await expect(fs.access(path.join(target, 'data/jellyfin.db'))).rejects.toThrow();
     // metadata is DATA — heavy and re-scannable, kept on the RAID.
     expect(await fs.readFile(path.join(target, 'metadata/poster.jpg'), 'utf8')).toBe('BULK-ARTWORK');
+    // #2885 consequence, asserted so nobody "fixes" it by surprise: the catalog
+    // DB left the CONFIG class, and wipe-config only deletes CONFIG paths — so
+    // an IN-PLACE reinstall now keeps the local library instead of wiping it
+    // and re-seeding from a 192 MB tar. Only a disk-loss restore loses it.
+    expect(await fs.readFile(path.join(target, 'data/jellyfin.db'), 'utf8')).toBe('USERS-AND-LIBRARIES');
 
-    await serveServiceTar('jellyfin', { 'data/jellyfin.db': 'RESTORED-USERS' });
+    await serveServiceTar('jellyfin', { 'config/system.xml': '<RestoredServerConfiguration/>' });
     await autoRestoreServiceOnReinstall('jellyfin', { wipeMode: 'wipe-config', node: 'Local', local: true }, async () => {});
-    expect(await fs.readFile(path.join(target, 'data/jellyfin.db'), 'utf8')).toBe('RESTORED-USERS');
+    expect(await fs.readFile(path.join(target, 'config/system.xml'), 'utf8')).toBe('<RestoredServerConfiguration/>');
     expect(await fs.readFile(path.join(target, 'metadata/poster.jpg'), 'utf8')).toBe('BULK-ARTWORK');
   });
 

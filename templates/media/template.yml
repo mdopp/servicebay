@@ -38,25 +38,36 @@ metadata:
     # own — the library itself is multi-TB and lives on the RAID — but its
     # jellyfin APP has small, irreplaceable config-grade state and no
     # installedTemplates key of its own (#2595).
+    #
+    # #2885 — this store is PARAMETERS ONLY. `data/jellyfin.db` is
+    # deliberately NOT included: Jellyfin keeps the entire media catalog in
+    # the same SQLite file as its users, libraries and playback state, so it
+    # cannot be split — measured at 192 MB of a 198 MB tar on a real box,
+    # several runs a day. Operator decision; do NOT re-add it as a "fix".
+    # Accepted consequence: after a restore, libraries must be re-added and
+    # users re-created, and playback state is gone. What does come back is
+    # the configuration — server settings, network/encoding, the LDAP plugin
+    # config, and the installed plugins. The whole `data/` dir is excluded
+    # so no future include can pull the DB back in by accident.
+    # Side effect, and a welcome one: `wipe-config` deletes only the CONFIG
+    # paths, so an IN-PLACE reinstall now leaves the catalog DB on disk
+    # instead of wiping it and re-seeding it from the tar. Only a genuine
+    # disk-loss restore has to re-scan.
     servicebay.backup: |
       stores:
         jellyfin:
           dataSubdir: media/jellyfin-config
           include:
             # Server settings (system.xml, network.xml, encoding.xml, the
-            # LDAP plugin config), the users/libraries DB, and the plugins.
+            # LDAP plugin config) and the plugins. Parameters, not data.
             - config
-            - data/jellyfin.db
-            - data/jellyfin.db-wal
-            - data/jellyfin.db-shm
             - plugins
           exclude:
             - cache
             - log
             - transcodes
             - metadata
-            - data/subtitles
-            - data/transcodes
+            - data
           # Artwork/metadata caches are large and re-scannable — kept on the
           # RAID through a wipe-config rather than re-downloaded.
           data:

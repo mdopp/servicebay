@@ -16,7 +16,8 @@
  * This is a one-way ratchet, not a permanent spec: once a template legitimately
  * changes what it backs up, the entry here changes with it (and the diff is the
  * review). Its job is to make the MIGRATION provably lossless, and to leave the
- * old content on the record afterwards.
+ * old content on the record afterwards. One entry has moved that way since:
+ * `jellyfin` dropped `data/jellyfin.db*` (#2885) — see the comment on it.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -29,7 +30,8 @@ import {
   builtinTemplateNames,
 } from '../fixtures/builtinBackupManifests';
 
-/** `SERVICE_BACKUP_MANIFESTS` exactly as it stood before slice C deleted it. */
+/** `SERVICE_BACKUP_MANIFESTS` as it stood before slice C deleted it, plus the
+ *  deliberate post-migration edits marked inline (currently: jellyfin, #2885). */
 const TABLE_BEFORE_MIGRATION: ServiceBackupManifest[] =
   [
     {
@@ -194,15 +196,19 @@ const TABLE_BEFORE_MIGRATION: ServiceBackupManifest[] =
       ],
       "exclude": []
     },
+    // #2885 — the one entry that has DELIBERATELY moved off the 5.31.7 table
+    // (the ratchet allows it; the diff is the review). `data/jellyfin.db*`
+    // came out: Jellyfin keeps the media catalog in the same SQLite file as
+    // its users and libraries, so the "config" store was 192 MB of a 198 MB
+    // tar. Parameters only now, and the whole `data/` dir is excluded so no
+    // future include can pull it back. Accepted consequence: a restore
+    // re-adds libraries and re-creates users; playback state is gone.
     {
       "service": "jellyfin",
       "dataSubdir": "media/jellyfin-config",
       "gateOn": "media",
       "include": [
         "config",
-        "data/jellyfin.db",
-        "data/jellyfin.db-wal",
-        "data/jellyfin.db-shm",
         "plugins"
       ],
       "exclude": [
@@ -210,8 +216,7 @@ const TABLE_BEFORE_MIGRATION: ServiceBackupManifest[] =
         "log",
         "transcodes",
         "metadata",
-        "data/subtitles",
-        "data/transcodes"
+        "data"
       ],
       "data": [
         "metadata",
@@ -299,6 +304,20 @@ describe('the CONFIG/DATA classification survives the move (#1585)', () => {
     expect(config.has('home-assistant_v2.db')).toBe(false);
     for (const d of ha.data ?? []) expect(config.has(d)).toBe(false);
     expect(ha.exclude).toContain('home-assistant_v2.db');
+  });
+
+  it('jellyfin keeps its parameters and drops the catalog DB (#2885)', () => {
+    const jellyfin = builtinManifest('jellyfin');
+    // Parameters: server settings + the LDAP plugin config, and the plugins.
+    expect(jellyfin.include).toEqual(['config', 'plugins']);
+    // The catalog DB is not tier A just because it is a `.db` — it carries the
+    // whole media catalog alongside the users/libraries rows and cannot be
+    // split, so it stays out and `data/` is excluded wholesale.
+    expect(jellyfin.include).not.toContain('data/jellyfin.db');
+    expect(jellyfin.exclude).toContain('data');
+    for (const wal of ['data/jellyfin.db', 'data/jellyfin.db-wal', 'data/jellyfin.db-shm']) {
+      expect(jellyfin.include.some(p => wal === p || wal.startsWith(p + '/'))).toBe(false);
+    }
   });
 
   it('a store may declare no DATA class at all (authelia is config-only)', () => {
