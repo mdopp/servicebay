@@ -150,9 +150,16 @@ function npmSqliteRemap(manifest: ServiceBackupManifest): ServiceBackupManifest 
  * This is the primitive that does NOT depend on in-container permissions: podman
  * reads the file through its own storage layer as the podman user, so it works
  * even though `podman exec … cat /data/database.sqlite` in this pod answers
- * "Permission denied". The copy is then chmod'd — `podman cp` preserves the
- * source's 0600, and the backup worker runs as a different uid, so without this
- * we would only have moved the EACCES one file along.
+ * "Permission denied".
+ *
+ * No `chmod` afterwards (#2882). Rootless `podman cp` lands the copy owned by the
+ * podman user (`core`) — the very host identity the backup worker's
+ * container-root maps to (see `packages/backup-worker/Containerfile`) — so the
+ * 0600 copy is already worker-readable, box-proven by a 13/13 run whose worker
+ * remapped onto this sidecar and reported no unreadable file while the chmod
+ * never ran. And `chmod` is not on the agent's `SAFE_EXEC_ALLOWLIST`, so issuing
+ * it made `safe_exec` reject — turning a snapshot that was on disk and already
+ * staged into a logged "errored — as-is".
  *
  * The copy is LIVE (no checkpoint is possible without sqlite3), so the caller
  * records it `consistent: false`.
@@ -170,11 +177,6 @@ async function copyLiveDbOutOfContainer(
   );
   if (copy.code !== 0) {
     logger.warn('ExternalBackup', `podman cp of NPM's database.sqlite out of "${container}" failed (${copy.stderr.trim() || copy.stdout.trim() || 'unknown'}) — no snapshot staged`);
-    return false;
-  }
-  const chmod = await safeExec(agent, ['chmod', '0644', hostSnap], 30_000);
-  if (chmod.code !== 0) {
-    logger.warn('ExternalBackup', `Could not make the NPM sqlite snapshot readable (${chmod.stderr.trim() || 'unknown'}) — the backup worker runs as a different uid, so it would EACCES; no snapshot staged`);
     return false;
   }
   return true;
@@ -226,9 +228,12 @@ async function runNpmSqliteCollector(
     // No sqlite3, or the exec user cannot read the DB. Either way the snapshot
     // must not depend on in-container permissions — copy it out through podman.
     if (await copyLiveDbOutOfContainer(agent, container, hostSnap)) {
-      logger.warn(
+      // INFO, not WARN (#2882): on the jc21 image this is the EXPECTED grade of
+      // snapshot, and it succeeded — a healthy run must not cry wolf. The
+      // `consistent:false` in the meta is what records the live-copy caveat.
+      logger.info(
         'ExternalBackup',
-        'NPM: no in-container sqlite3 snapshot was possible — took a LIVE `podman cp` of database.sqlite instead ' +
+        'NPM: no in-container sqlite3 snapshot was possible — staged a LIVE `podman cp` snapshot of database.sqlite instead ' +
           '(marked consistent:false; writes still in the -wal sidecar are not in it). ' +
           'A host-side copy is not an option: the live file is root-owned 0600 and the backup worker cannot read it.',
       );
