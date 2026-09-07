@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.33.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.32.0...servicebay-v5.33.0) (2026-09-07)
+
+
+### Features
+
+* **backup:** pg-dump collector; backup rules come from the template declaration ([#2864](https://github.com/mdopp/servicebay/issues/2864), [#2865](https://github.com/mdopp/servicebay/issues/2865), [#2858](https://github.com/mdopp/servicebay/issues/2858)) ([1ad27d2](https://github.com/mdopp/servicebay/commit/1ad27d2c6291203a2830242ad0c5cf963db8eb5f))
+* **backup:** read the backup rules from the template, not a table ([b92a289](https://github.com/mdopp/servicebay/commit/b92a28985a3e9868ff36b54a4e74e5f8c72da4c5)), closes [#2865](https://github.com/mdopp/servicebay/issues/2865) [#2858](https://github.com/mdopp/servicebay/issues/2858)
+
+
+### Bug Fixes
+
+* **backup:** strip trailing slashes without a polynomial regex ([ecb5043](https://github.com/mdopp/servicebay/commit/ecb504317a567f8aaa3ada71f2572a8edef51cfc))
+
 ## [5.32.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.7...servicebay-v5.32.0) (2026-09-07)
 
 
