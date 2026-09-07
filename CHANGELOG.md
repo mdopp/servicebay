@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.32.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.7...servicebay-v5.32.0) (2026-09-07)
+
+
+### Features
+
+* **templates:** declare backups on the template with servicebay.backup ([7af55a5](https://github.com/mdopp/servicebay/commit/7af55a512ef189ed5b152020474fbb6497fe5d40)), closes [#2858](https://github.com/mdopp/servicebay/issues/2858)
+
+
+### Bug Fixes
+
+* **diagnose:** rate a proxy route dangling when its forward port has no listener ([8034874](https://github.com/mdopp/servicebay/commit/8034874e7accbc3b3726658f4334a70aaf42a4e5)), closes [#2860](https://github.com/mdopp/servicebay/issues/2860)
+* **install:** derive AutoUpdate from the pod images instead of always registry ([50e8ca4](https://github.com/mdopp/servicebay/commit/50e8ca407de73c2bf277564206fb9ed31ce3e9f5)), closes [#2861](https://github.com/mdopp/servicebay/issues/2861)
+* **services,install,diagnose:** trash bucket outside the quadlet scan path; AutoUpdate by image origin; dangling-route listener check; servicebay.backup contract ([#2859](https://github.com/mdopp/servicebay/issues/2859), [#2862](https://github.com/mdopp/servicebay/issues/2862), [#2863](https://github.com/mdopp/servicebay/issues/2863), [#2861](https://github.com/mdopp/servicebay/issues/2861), [#2860](https://github.com/mdopp/servicebay/issues/2860), [#2858](https://github.com/mdopp/servicebay/issues/2858)-A) ([3b08fb9](https://github.com/mdopp/servicebay/commit/3b08fb9cb3dcb4342e41843494b6721bbf71b80a))
+* **services:** move the trash bucket out of the Quadlet scan path and stop quoting the tilde ([7cbc210](https://github.com/mdopp/servicebay/commit/7cbc210ca86cbdf1c887de3b461e515c648a90bd)), closes [#2859](https://github.com/mdopp/servicebay/issues/2859) [#2862](https://github.com/mdopp/servicebay/issues/2862) [#2863](https://github.com/mdopp/servicebay/issues/2863)
+
 ## [5.31.7](https://github.com/mdopp/servicebay/compare/servicebay-v5.31.6...servicebay-v5.31.7) (2026-09-06)
 
 
