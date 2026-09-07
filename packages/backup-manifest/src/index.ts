@@ -152,6 +152,17 @@ const PG_DUMP_DEFAULT_PGDATA = 'pgdata';
  * runs `pg_dump` and copies the file out of the container) and the worker
  * (which stages it), so the two sides cannot drift.
  */
+/**
+ * Drop trailing `/` characters without a `\/+$` regex — CodeQL rates that
+ * pattern polynomial on library input (js/polynomial-redos), and a loop over
+ * the tail is linear and just as clear.
+ */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  return value.slice(0, end);
+}
+
 export function pgDumpPaths(collector: PgDumpCollector): {
   /** Raw cluster dir, relative to the service data dir — never staged. */
   pgdataRel: string;
@@ -164,7 +175,7 @@ export function pgDumpPaths(collector: PgDumpCollector): {
 } {
   const dumpRel = (collector.dumpPath ?? `${collector.database}.dump`).trim();
   return {
-    pgdataRel: (collector.pgdata ?? PG_DUMP_DEFAULT_PGDATA).trim().replace(/\/+$/, ''),
+    pgdataRel: stripTrailingSlashes((collector.pgdata ?? PG_DUMP_DEFAULT_PGDATA).trim()),
     dumpRel,
     stagedRel: `${dumpRel}${PG_DUMP_STAGED_SUFFIX}`,
     // The container's own /tmp, not the mounted cluster dir: the dump leaves
