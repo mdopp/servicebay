@@ -256,8 +256,39 @@ describe('stageServiceBackup', () => {
   });
 });
 
-describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
+describe('runBackupCollector (NPM sqlite snapshot, #1528)', () => {
   const npm = builtinManifest('nginx');
+
+  type ExecArgs = { command?: string; argv?: string[] };
+  /**
+   * Route the collector's agent calls by WHAT they are rather than by call index
+   * — the collector now makes up to six (find, rm, snapshot, mkdir, podman cp,
+   * chmod) and an index-keyed queue breaks on every ordering change.
+   */
+  function npmAgent(opts: {
+    container?: string;
+    snapshot?: { stdout?: string; stderr?: string; code?: number };
+    cp?: { stdout?: string; stderr?: string; code?: number };
+    chmod?: { stderr?: string; code?: number };
+  } = {}): void {
+    mockSendCommand.mockImplementation(async (op: string, args: ExecArgs) => {
+      if (op === 'exec' && (args.command ?? '').includes('podman ps')) {
+        return { stdout: opts.container ?? 'npm_proxy-manager docker.io/jc21/nginx-proxy-manager', stderr: '', code: 0 };
+      }
+      if (op === 'exec') return { stdout: 'ok', stderr: '', code: 0, ...opts.snapshot };
+      const argv = args.argv ?? [];
+      if (argv[0] === 'podman' && argv[1] === 'cp') return { stdout: '', stderr: '', code: 0, ...opts.cp };
+      if (argv[0] === 'chmod') return { stdout: '', stderr: '', code: 0, ...opts.chmod };
+      return { stdout: '', stderr: '', code: 0 };
+    });
+  }
+
+  /** Every `safe_exec` argv the collector issued, in order. */
+  function argvCalls(): string[][] {
+    return mockSendCommand.mock.calls
+      .filter(([op]) => op === 'safe_exec')
+      .map(([, args]) => (args as ExecArgs).argv ?? []);
+  }
 
   it('returns the manifest unchanged for a service with no collector', async () => {
     const ha = builtinManifest('home-assistant');
@@ -266,9 +297,7 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
   });
 
   it('snapshots in-container and remaps the db include to the snapshot path', async () => {
-    mockSendCommand
-      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager docker.io/jc21/nginx-proxy-manager', code: 0 })
-      .mockResolvedValueOnce({ stdout: 'ok', code: 0 });
+    npmAgent({ snapshot: { stdout: 'ok' } });
 
     const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out.include).toContain('data/database.sqlite.sb-backup');
@@ -278,34 +307,39 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
     expect(out.include).toContain('letsencrypt');
     // `sqlite3 .backup` is torn-free, so the meta must NOT be flagged.
     expect(consistent).toBe(true);
+    // No podman cp needed when the in-container snapshot worked.
+    expect(argvCalls().some(a => a[1] === 'cp')).toBe(false);
+  });
+
+  it('removes a STALE snapshot before it can be shipped as today\'s (#2877)', async () => {
+    // The worker remaps on the mere PRESENCE of the sidecar, so a snapshot that
+    // fails must not leave yesterday's database behind to be shipped as fresh.
+    npmAgent({ snapshot: { stdout: 'nosqlite3' } });
+    await runBackupCollector(npm, 'Local');
+    const rm = argvCalls().find(a => a[0] === 'rm');
+    expect(rm).toEqual(['rm', '-f', '/mnt/data/stacks/nginx-proxy-manager/data/database.sqlite.sb-backup']);
+    // …and it happens BEFORE the snapshot attempt.
+    const ops = mockSendCommand.mock.calls.map(([op, args]) => {
+      const a = args as ExecArgs;
+      return op === 'safe_exec' ? (a.argv ?? [])[0] : (a.command ?? '').includes('podman ps') ? 'find' : 'snapshot';
+    });
+    expect(ops.indexOf('rm')).toBeLessThan(ops.indexOf('snapshot'));
   });
 
   it('falls back to the original manifest (live file) when the container is missing', async () => {
-    mockSendCommand.mockResolvedValueOnce({ stdout: '', code: 0 });
+    npmAgent({ container: '' });
     const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out).toBe(npm);
     expect(out.include).toContain('data/database.sqlite');
     expect(consistent).toBe(false);
   });
 
-  it('falls back when the in-container snapshot command fails', async () => {
-    mockSendCommand
-      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
-      .mockResolvedValueOnce({ stdout: 'sqlite3: not found', code: 1 });
-    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
-    expect(out).toBe(npm);
-    expect(consistent).toBe(false);
-  });
-
-  it('with no sqlite3 in the image, takes a LIVE copy INSIDE the container and marks it inconsistent (#2877)', async () => {
+  it('with no sqlite3 in the image, copies the DB OUT with podman cp and marks it inconsistent (#2877)', async () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    // No sqlite3 → the script `cat`s the DB container-side into the .sb-backup
-    // sidecar and prints `live`. The old behaviour left the manifest pointing at
-    // the live HOST file, which is root-owned 0600 → EACCES in the worker every
-    // single run, so NPM's proxy-host/cert DB was never on the NAS.
-    mockSendCommand
-      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
-      .mockResolvedValueOnce({ stdout: 'live', stderr: '', code: 0 });
+    // The jc21 image ships no sqlite3, and `podman exec … cat /data/database.sqlite`
+    // in this pod answers "Permission denied" — so the snapshot must be taken with
+    // a primitive that does not depend on in-container permissions at all.
+    npmAgent({ snapshot: { stdout: 'nosqlite3' } });
     const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out).not.toBe(npm);
     expect(out.include).toContain('data/database.sqlite.sb-backup');
@@ -313,39 +347,71 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
     expect(out.renames).toEqual({ 'data/database.sqlite.sb-backup': 'data/database.sqlite' });
     // A live copy is not torn-free — the meta must say so.
     expect(consistent).toBe(false);
+    expect(argvCalls()).toContainEqual([
+      'podman', 'cp',
+      'npm_proxy-manager:/data/database.sqlite',
+      '/mnt/data/stacks/nginx-proxy-manager/data/database.sqlite.sb-backup',
+    ]);
+    // podman cp preserves the source's 0600 — without the chmod the worker (a
+    // different uid) would EACCES on the copy exactly as it did on the original.
+    expect(argvCalls()).toContainEqual(['chmod', '0644', '/mnt/data/stacks/nginx-proxy-manager/data/database.sqlite.sb-backup']);
     const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
-    expect(msg).toMatch(/no sqlite3/i);
     expect(msg).toMatch(/LIVE/);
     warn.mockRestore();
   });
 
-  it('the snapshot script never falls back to a HOST-side copy of the root-owned live DB (#2877)', async () => {
-    // The whole point: no sqlite3 must NOT mean "let the host copy the file".
-    // Both branches of the script write the .sb-backup sidecar from inside the
-    // container and chmod it so the (differently-uid'd) worker can read it back.
-    mockSendCommand
-      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
-      .mockResolvedValueOnce({ stdout: 'live', stderr: '', code: 0 });
-    await runBackupCollector(npm, 'Local');
-    const command = (mockSendCommand.mock.calls[1][1] as { command: string }).command;
-    const script = Buffer.from(/echo ([A-Za-z0-9+/=]+) \|/.exec(command)![1], 'base64').toString();
-    expect(script).toContain('cat "$DB" > "$DB.sb-snap"');
-    expect(script).toContain('chmod 0644 "$DB.sb-backup"');
-    // The sentinel the old code emitted (and gave up on) is gone.
-    expect(script).not.toContain('no-sqlite3');
+  it('uses podman cp when the in-container copy is DENIED, not a host copy of the live file (#2877)', async () => {
+    // The box case that #2878 did not fix: the container has sqlite3 or not, but
+    // the exec user cannot read /data/database.sqlite, so the script exits
+    // non-zero. That must route to podman cp, never back to the root-owned host
+    // file the worker cannot read.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    npmAgent({ snapshot: { stdout: '', stderr: 'cat: /data/database.sqlite: Permission denied', code: 1 } });
+    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
+    expect(out.include).toContain('data/database.sqlite.sb-backup');
+    expect(consistent).toBe(false);
+    expect(argvCalls().some(a => a[1] === 'cp')).toBe(true);
+    const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
+    expect(msg).toContain('Permission denied'); // the REAL stderr is logged (#1894)
+    expect(msg).not.toMatch(/\(unknown\)/);
+    warn.mockRestore();
   });
 
-  it('surfaces the container stderr (not "(unknown)") when the snapshot errors (#1894)', async () => {
+  it('the snapshot script never reads the DB with cat — that is what podman cp is for', async () => {
+    npmAgent({ snapshot: { stdout: 'nosqlite3' } });
+    await runBackupCollector(npm, 'Local');
+    const snapshotCall = mockSendCommand.mock.calls.find(
+      ([op, args]) => op === 'exec' && !((args as ExecArgs).command ?? '').includes('podman ps'),
+    )!;
+    const command = (snapshotCall[1] as ExecArgs).command!;
+    const script = Buffer.from(/echo ([A-Za-z0-9+/=]+) \|/.exec(command)![1], 'base64').toString();
+    expect(script).toContain('echo "nosqlite3"');
+    expect(script).not.toContain('cat "$DB"');
+  });
+
+  it('names the structural cause when NO snapshot could be taken at all (#2877)', async () => {
+    // podman cp itself failed. The manifest stays un-remapped, so the worker meets
+    // the root-owned live file, skips it, and nginx ships without its database —
+    // the log has to say why, because nothing else can.
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    mockSendCommand
-      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
-      .mockResolvedValueOnce({ stdout: '', stderr: 'sh: 1: sqlite3: Permission denied', code: 1 });
+    npmAgent({ snapshot: { stdout: 'nosqlite3' }, cp: { code: 1, stderr: 'no such container' } });
     const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out).toBe(npm);
-    const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
-    expect(msg).toContain('Permission denied'); // the REAL stderr is logged
-    expect(msg).not.toMatch(/\(unknown\)/);
     expect(consistent).toBe(false);
+    const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
+    expect(msg).toContain('no such container');
+    expect(msg).toMatch(/root-owned 0600/);
+    warn.mockRestore();
+  });
+
+  it('treats an unreadable copy as no snapshot when the chmod fails', async () => {
+    // A 0600 copy the worker cannot read is not a snapshot — remapping onto it
+    // would just move the EACCES one file along.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    npmAgent({ snapshot: { stdout: 'nosqlite3' }, chmod: { code: 1, stderr: 'operation not permitted' } });
+    const { manifest: out } = await runBackupCollector(npm, 'Local');
+    expect(out).toBe(npm);
+    expect(warn.mock.calls.map(c => String(c[1])).join('\n')).toMatch(/different uid/);
     warn.mockRestore();
   });
 
@@ -354,46 +420,40 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
     // `nodb` is NOT a failure — it must fall through to the remap, not the
     // live-file fallback. The (never-created) .sb-backup is then a no-op at
     // staging (stageServiceBackup skips a missing include), so the remap is safe.
-    mockSendCommand
-      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
-      .mockResolvedValueOnce({ stdout: 'nodb', stderr: '', code: 0 });
+    npmAgent({ snapshot: { stdout: 'nodb' } });
     const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     // Regression guard: `nodb` must not be swallowed into the live-file fallback.
     expect(out).not.toBe(npm);
     expect(out.include).toContain('data/database.sqlite.sb-backup');
     expect(out.include).not.toContain('data/database.sqlite');
     expect(out.renames).toEqual({ 'data/database.sqlite.sb-backup': 'data/database.sqlite' });
-    // Nothing to snapshot is not an inconsistent snapshot.
+    // Nothing to snapshot is not an inconsistent snapshot, and nothing to copy out.
     expect(consistent).toBe(true);
+    expect(argvCalls().some(a => a[1] === 'cp')).toBe(false);
   });
 
   it('drives the snapshot exec against the container name discovered by the ps/awk probe', async () => {
     // The awk probe returns "<name> <image>"; the collector must parse the FIRST
     // token as the container and target THAT name in the podman-exec snapshot.
-    mockSendCommand
-      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager  docker.io/jc21/nginx-proxy-manager', code: 0 })
-      .mockResolvedValueOnce({ stdout: 'ok', code: 0 });
+    npmAgent({ container: 'npm_proxy-manager  docker.io/jc21/nginx-proxy-manager', snapshot: { stdout: 'ok' } });
     await runBackupCollector(npm, 'Local');
-    expect(mockSendCommand).toHaveBeenCalledTimes(2);
-    const [op, args] = mockSendCommand.mock.calls[1];
-    expect(op).toBe('exec');
+    const snapshotCall = mockSendCommand.mock.calls.find(
+      ([op, args]) => op === 'exec' && !((args as ExecArgs).command ?? '').includes('podman ps'),
+    )!;
     // The snapshot script is base64-piped into `podman exec -i <container> sh -`.
-    expect((args as { command: string }).command).toContain('podman exec -i npm_proxy-manager sh -');
+    expect((snapshotCall[1] as ExecArgs).command).toContain('podman exec -i npm_proxy-manager sh -');
     // …and it must NOT leak the image token into the container name.
-    expect((args as { command: string }).command).not.toContain('docker.io/jc21');
+    expect((snapshotCall[1] as ExecArgs).command).not.toContain('docker.io/jc21');
   });
 
-  it('falls back to the live file on an unrecognized snapshot output even at exit 0', async () => {
-    // A zero exit code with neither ok/nodb/no-sqlite3 is still a failure — the
-    // snapshot did not complete, so we must degrade to the live file, never
-    // remap to a snapshot that isn't there.
+  it('falls back on an unrecognized snapshot output even at exit 0', async () => {
+    // A zero exit code with neither ok/nodb/nosqlite3 is still a failure — the
+    // snapshot did not complete, so take the podman cp instead of remapping to a
+    // snapshot that isn't there.
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    mockSendCommand
-      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
-      .mockResolvedValueOnce({ stdout: 'partial garbage', stderr: '', code: 0 });
+    npmAgent({ snapshot: { stdout: 'partial garbage', stderr: '', code: 0 } });
     const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
-    expect(out).toBe(npm);
-    expect(out.include).toContain('data/database.sqlite');
+    expect(out.include).toContain('data/database.sqlite.sb-backup');
     const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
     expect(msg).toMatch(/snapshot failed/i);
     expect(consistent).toBe(false);
@@ -408,7 +468,7 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     mockSendCommand
       .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
-      .mockRejectedValueOnce(new Error('agent exec EACCES'));
+      .mockRejectedValue(new Error('agent exec EACCES'));
     const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
     expect(out).toBe(npm); // live file, not a phantom snapshot remap
     expect(out.include).toContain('data/database.sqlite');

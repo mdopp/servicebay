@@ -363,6 +363,15 @@ export interface AppConfig {
      *  is emphatically not the same as a successful run. */
     servicesOk?: number;
     servicesTotal?: number;
+    /**
+     * Services whose tar LANDED but is missing declared config files, because
+     * the worker could not read them (#2877 — NPM's `database.sqlite` is owned
+     * by the container's uid-mapped root at 0600). Empty/absent means every
+     * written backup is complete. Recorded separately from `servicesOk` because
+     * an incomplete backup counts in the numerator and is still the thing the
+     * operator has to know about.
+     */
+    servicesIncomplete?: string[];
   };
   /**
    * LLDAP admin credentials, persisted by the install wizard so the user can

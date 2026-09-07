@@ -202,6 +202,7 @@ type ConfigBackupState =
   | 'last_run_failed'
   | 'partial'
   | 'connection_dropped'
+  | 'incomplete'
   | 'overdue'
   | 'ok';
 
@@ -243,6 +244,22 @@ const PARTIAL_HINT =
 const CONNECTION_DROPPED_HINT =
   'This is one fact about the destination, not several broken services: the NAS closed the control connection part-way through the run, so every service after that point had nowhere to write. The run now shares one FTP session and backs off before retrying, so a re-run usually gets through. If it keeps happening, the share itself is the thing to look at — a FritzBox USB share that needs re-plugging, or an FTP server with a low concurrent-session limit.';
 
+/**
+ * A service's tar LANDED but is missing declared files (#2877). The run's own
+ * tally reads "13/13", so without its own state this is invisible — and the file
+ * it is usually missing is NPM's proxy-host/cert database, the one whose loss
+ * means re-creating every route by hand. Name the structural cause, because the
+ * operator cannot guess it: the live DB is owned by the container's uid-mapped
+ * root at mode 0600, and the backup worker runs as a different uid, so the only
+ * way to capture it is the collector's snapshot — and that is what failed.
+ */
+const INCOMPLETE_HINT =
+  'The tar is on the NAS but does not hold every file the service declared. This is a permissions fact, not a ' +
+  'flaky run: the file (typically NPM\'s data/database.sqlite) is owned by the container\'s uid-mapped root at ' +
+  'mode 0600, so the backup worker cannot read it directly — it can only be captured by the collector snapshot ' +
+  'ServiceBay takes before the worker starts. Search the ServiceBay log for "NPM sqlite snapshot" / "podman cp" ' +
+  'to see why that snapshot did not happen, and re-run the backup once it does.';
+
 /** Classify a recorded nightly run: denominator first, always. */
 function classifyConfigRun(record: ExternalBackupRecord, now: Date): ConfigBackupProbeResult {
   const lastRun = record.lastRun ? Date.parse(record.lastRun) : NaN;
@@ -279,6 +296,43 @@ function partialRunHint(cause: ReturnType<typeof diagnoseRunCause>, fallback: st
   return fallback;
 }
 
+/** A run whose tars LANDED but are missing declared files (#2877), or null when
+ *  every written backup is complete. */
+function classifyIncompleteRun(
+  record: ExternalBackupRecord,
+  age: string,
+  tally: string,
+): ConfigBackupProbeResult | null {
+  const incomplete = record.servicesIncomplete ?? [];
+  if (incomplete.length === 0) return null;
+  return withCaveat({
+    status: 'warn',
+    state: 'incomplete',
+    detail:
+      `The last config backup (${age} ago) wrote ${tally}, but ${incomplete.join(', ')} shipped WITHOUT some of ` +
+      `the files ${incomplete.length === 1 ? 'it declares' : 'they declare'}. ${record.lastMessage ?? ''}`.trim(),
+    hint: INCOMPLETE_HINT,
+  });
+}
+
+/** The run aborted before it finished — its cause decides the next step. */
+function failedRunResult(
+  record: ExternalBackupRecord,
+  age: string,
+  tally: string,
+  cause: ReturnType<typeof diagnoseRunCause>,
+): ConfigBackupProbeResult {
+  return withCaveat({
+    status: 'warn',
+    state: 'last_run_failed',
+    detail: `The last config backup (${age} ago) FAILED before it finished: ${record.lastMessage ?? 'no message recorded'}. ${tally} were written.`,
+    hint: partialRunHint(
+      cause,
+      'Check the "Config backup (FritzBox NAS)" row above — an unreachable or read-only target is the usual cause.',
+    ),
+  });
+}
+
 function classifyRecordedConfigRun(
   record: ExternalBackupRecord,
   lastRun: number,
@@ -289,17 +343,7 @@ function classifyRecordedConfigRun(
   const total = record.servicesTotal ?? 0;
   const tally = `${ok}/${total} services`;
   const cause = diagnoseRunCause(record);
-  if (record.lastStatus === 'error') {
-    return withCaveat({
-      status: 'warn',
-      state: 'last_run_failed',
-      detail: `The last config backup (${age} ago) FAILED before it finished: ${record.lastMessage ?? 'no message recorded'}. ${tally} were written.`,
-      hint: partialRunHint(
-        cause,
-        'Check the "Config backup (FritzBox NAS)" row above — an unreachable or read-only target is the usual cause.',
-      ),
-    });
-  }
+  if (record.lastStatus === 'error') return failedRunResult(record, age, tally, cause);
   if (total === 0) {
     return withCaveat({
       status: 'info',
@@ -315,6 +359,8 @@ function classifyRecordedConfigRun(
       hint: partialRunHint(cause, PARTIAL_HINT),
     });
   }
+  const incompleteRun = classifyIncompleteRun(record, age, tally);
+  if (incompleteRun) return incompleteRun;
   if (now.getTime() - lastRun > CONFIG_BACKUP_INTERVAL_MS * OVERDUE_FACTOR) {
     return withCaveat({
       status: 'warn',

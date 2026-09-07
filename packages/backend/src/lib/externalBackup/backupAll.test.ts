@@ -35,7 +35,7 @@ import { backupInstalledServicesToNas, NAS_BACKUP_DIR } from './producer';
 const RUN = { runId: 'r', outDir: '/out/r', container: 'backup-worker-r' };
 
 function completed(
-  results: Array<{ service: string; ok: boolean; outcome?: string; detail?: string | null }>,
+  results: Array<{ service: string; ok: boolean; outcome?: string; detail?: string | null; skipped?: string[] }>,
   inconsistent?: Set<string>,
 ) {
   return {
@@ -46,6 +46,7 @@ function completed(
       results: results.map(r => ({
         service: r.service, ok: r.ok, tarName: r.ok ? `${r.service}.tar` : null,
         bytes: 0, files: 0, outcome: r.outcome ?? (r.ok ? 'ok' : 'error'), detail: r.detail ?? null,
+        ...(r.skipped ? { skipped: r.skipped } : {}),
       })),
       error: null, updatedAt: 0, startedAt: 0,
     },
@@ -198,5 +199,32 @@ describe('backupInstalledServicesToNas — one destination session, honest meta'
     mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'nginx', ok: true }]));
     await backupInstalledServicesToNas();
     expect(uploadedMeta()).not.toHaveProperty('consistent');
+  });
+
+  it('records the files a landed tar shipped WITHOUT, in the meta and the run (#2877)', async () => {
+    // nginx's tar reaches the NAS but has no database.sqlite: the file is
+    // root-owned 0600 and no collector snapshot was taken. The run must not read
+    // as a clean success — the restore, and the operator, have to be told.
+    mockWorker.runBackupForInstalled.mockResolvedValue(
+      completed([{ service: 'nginx', ok: true, skipped: ['data/database.sqlite'] }]),
+    );
+    const results = await backupInstalledServicesToNas();
+
+    expect(results[0]).toMatchObject({ service: 'nginx', ok: true, skipped: ['data/database.sqlite'] });
+    expect(uploadedMeta()).toMatchObject({ service: 'nginx', skippedFiles: ['data/database.sqlite'] });
+    expect(recorded()).toMatchObject({
+      lastStatus: 'partial',
+      servicesOk: 1,
+      servicesTotal: 1,
+      servicesIncomplete: ['nginx'],
+    });
+    expect(recorded().lastMessage).toMatch(/WITHOUT some declared files: nginx \(data\/database\.sqlite\)/);
+  });
+
+  it('leaves `skippedFiles` absent and the run a success when every file made it', async () => {
+    mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'nginx', ok: true }]));
+    await backupInstalledServicesToNas();
+    expect(uploadedMeta()).not.toHaveProperty('skippedFiles');
+    expect(recorded()).toMatchObject({ lastStatus: 'success', servicesIncomplete: [] });
   });
 });

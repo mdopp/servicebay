@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -74,7 +74,7 @@ describe('stageServiceBackup', () => {
     await write(src, 'data/querylog.json', '[]'); // excluded
     const staging = await mkTmp();
 
-    const staged = await stageServiceBackup(src, ADGUARD_MANIFEST, staging);
+    const { staged } = await stageServiceBackup(src, ADGUARD_MANIFEST, staging);
 
     expect(staged).toEqual(['conf/AdGuardHome.yaml']);
     await expect(fs.readFile(path.join(staging, 'conf/AdGuardHome.yaml'), 'utf8')).resolves.toBe('bind_host: 0.0.0.0');
@@ -88,7 +88,7 @@ describe('stageServiceBackup', () => {
     await write(src, 'configuration.yaml', 'default_config:');
     const staging = await mkTmp();
 
-    const staged = await stageServiceBackup(src, HA_MANIFEST, staging);
+    const { staged } = await stageServiceBackup(src, HA_MANIFEST, staging);
 
     expect(staged).toContain('.storage/lovelace.lovelace');
     expect(staged).toContain('.storage/lovelace_dashboards');
@@ -118,7 +118,7 @@ describe('stageServiceBackup', () => {
       renames: { 'data/database.sqlite.sb-backup': 'data/database.sqlite' },
     };
 
-    const staged = await stageServiceBackup(src, manifest, staging);
+    const { staged } = await stageServiceBackup(src, manifest, staging);
 
     expect(staged).toEqual(['data/database.sqlite']);
     await expect(fs.readFile(path.join(staging, 'data/database.sqlite'), 'utf8')).resolves.toBe('SNAPSHOT');
@@ -140,7 +140,7 @@ describe('stageServiceBackup', () => {
       collector: { kind: 'pg-dump', container: 'paperless-db', user: 'paperless', database: 'paperless' },
     });
 
-    const staged = await stageServiceBackup(src, manifest, staging);
+    const { staged } = await stageServiceBackup(src, manifest, staging);
 
     expect(staged).toEqual(['media/doc.pdf', 'paperless.dump']);
     await expect(fs.readFile(path.join(staging, 'paperless.dump'), 'utf8')).resolves.toBe('PGDUMP-CUSTOM');
@@ -164,7 +164,7 @@ describe('stageServiceBackup', () => {
         include: ['configuration.yaml', '.storage'],
         exclude: [],
       };
-      const staged = await stageServiceBackup(src, manifest, staging);
+      const { staged } = await stageServiceBackup(src, manifest, staging);
 
       expect(staged).toEqual(['configuration.yaml']);
       expect(staged.some(p => p.startsWith('.storage'))).toBe(false);
@@ -179,7 +179,7 @@ describe('stageServiceBackup', () => {
       await fs.symlink(path.join(victim, 'config.yaml'), path.join(src, 'config.yaml'));
       const staging = await mkTmp();
 
-      const staged = await stageServiceBackup(src, MANIFEST_WITH_STRIP_RULE, staging);
+      const { staged } = await stageServiceBackup(src, MANIFEST_WITH_STRIP_RULE, staging);
 
       expect(staged).toEqual([]);
       await expect(fs.access(path.join(staging, 'config.yaml'))).rejects.toThrow();
@@ -193,7 +193,7 @@ describe('stageServiceBackup', () => {
       await fs.symlink(victim, path.join(src, '.storage'));
       const staging = await mkTmp();
 
-      const staged = await stageServiceBackup(src, HA_MANIFEST, staging);
+      const { staged } = await stageServiceBackup(src, HA_MANIFEST, staging);
 
       expect(staged).not.toContain('.storage/lovelace.lovelace');
       expect(staged).toContain('configuration.yaml');
@@ -208,7 +208,7 @@ describe('stageServiceBackup', () => {
       await fs.symlink(victim, path.join(src, 'conf/leakdir'));
       const staging = await mkTmp();
 
-      const staged = await stageServiceBackup(src, ADGUARD_MANIFEST, staging);
+      const { staged } = await stageServiceBackup(src, ADGUARD_MANIFEST, staging);
 
       expect(staged).toEqual(['conf/AdGuardHome.yaml']);
     });
@@ -220,7 +220,7 @@ describe('stageServiceBackup', () => {
       await fs.symlink(path.join(src, 'real-storage'), path.join(src, '.storage'));
       const staging = await mkTmp();
 
-      const staged = await stageServiceBackup(src, HA_MANIFEST, staging);
+      const { staged } = await stageServiceBackup(src, HA_MANIFEST, staging);
 
       expect(staged).toContain('.storage/lovelace.lovelace');
       expect(staged).toContain('configuration.yaml');
@@ -242,14 +242,92 @@ describe('stageServiceBackup', () => {
         exclude: [],
       };
 
-      expect(await stageServiceBackup(src, manifest, staging)).toEqual([]);
+      expect((await stageServiceBackup(src, manifest, staging)).staged).toEqual([]);
+    });
+  });
+
+  // #2877 — one unreadable file must not cost the service its whole backup.
+  // NPM's `data/database.sqlite` is owned by the container's uid-mapped root at
+  // mode 0600 and the worker runs as a different uid, so the copy throws EACCES
+  // and, before this, took nginx (proxy hosts + certs) down with it every run.
+  describe('unreadable config files (#2877)', () => {
+    /** The errno the real box raises. Injected rather than chmod'd so the test
+     *  does not depend on the uid the suite runs as — root ignores mode bits. */
+    const eacces = (): NodeJS.ErrnoException =>
+      Object.assign(new Error('EACCES: permission denied, copyfile'), { code: 'EACCES' });
+
+    const NGINX_MANIFEST: ServiceBackupManifest = {
+      service: 'nginx',
+      include: ['data/database.sqlite', 'data/custom_ssl'],
+      exclude: [],
+    };
+
+    it('skips the unreadable file, stages the rest, and reports the miss', async () => {
+      const src = await mkTmp();
+      await write(src, 'data/database.sqlite', 'ROOT-OWNED-0600');
+      await write(src, 'data/custom_ssl/cert.pem', 'CERT');
+      const staging = await mkTmp();
+      const realCopy = fs.copyFile;
+      const copy = vi.spyOn(fs, 'copyFile').mockImplementation(async (from, to) => {
+        if (String(from).endsWith('database.sqlite')) throw eacces();
+        return realCopy(from as string, to as string);
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const { staged, skipped } = await stageServiceBackup(src, NGINX_MANIFEST, staging);
+
+        expect(staged).toEqual(['data/custom_ssl/cert.pem']);
+        expect(skipped).toEqual([{ file: 'data/database.sqlite', reason: 'EACCES' }]);
+        // No half-made stub left in the tar under the missing file's name.
+        await expect(fs.access(path.join(staging, 'data/database.sqlite'))).rejects.toThrow();
+        expect(warn.mock.calls.map(c => String(c[0])).join('\n')).toContain('data/database.sqlite');
+      } finally {
+        copy.mockRestore();
+        warn.mockRestore();
+      }
+    });
+
+    it('still throws for a failure that is NOT a permission problem', async () => {
+      const src = await mkTmp();
+      await write(src, 'data/custom_ssl/cert.pem', 'CERT');
+      const staging = await mkTmp();
+      const copy = vi.spyOn(fs, 'copyFile').mockRejectedValue(
+        Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }),
+      );
+      try {
+        await expect(stageServiceBackup(src, NGINX_MANIFEST, staging)).rejects.toThrow('ENOSPC');
+      } finally {
+        copy.mockRestore();
+      }
+    });
+
+    it('does not copy the live file a collector snapshot already replaced', async () => {
+      // A whole-directory include sees BOTH the live DB and the snapshot, and both
+      // want the same tar path. The snapshot wins — the live original is the file
+      // the worker cannot read anyway.
+      const src = await mkTmp();
+      await write(src, 'data/database.sqlite', 'LIVE-TORN');
+      await write(src, 'data/database.sqlite.sb-backup', 'SNAPSHOT');
+      const staging = await mkTmp();
+      const manifest: ServiceBackupManifest = {
+        service: 'nginx',
+        include: ['data'],
+        exclude: [],
+        renames: { 'data/database.sqlite.sb-backup': 'data/database.sqlite' },
+      };
+
+      const { staged, skipped } = await stageServiceBackup(src, manifest, staging);
+
+      expect(staged).toEqual(['data/database.sqlite']);
+      expect(skipped).toEqual([]);
+      await expect(fs.readFile(path.join(staging, 'data/database.sqlite'), 'utf8')).resolves.toBe('SNAPSHOT');
     });
   });
 
   it('returns [] when nothing matches', async () => {
     const src = await mkTmp();
     const staging = await mkTmp();
-    expect(await stageServiceBackup(src, ADGUARD_MANIFEST, staging)).toEqual([]);
+    expect((await stageServiceBackup(src, ADGUARD_MANIFEST, staging)).staged).toEqual([]);
   });
 });
 
@@ -275,5 +353,53 @@ describe('buildServiceBackupTar', () => {
     await expect(
       buildServiceBackupTar(src, ADGUARD_MANIFEST, path.join(out, 'x.tar')),
     ).rejects.toThrow(/No config files/);
+  });
+
+  it('reports the unreadable files it shipped without (#2877)', async () => {
+    const src = await mkTmp();
+    await write(src, 'data/database.sqlite', 'ROOT-OWNED-0600');
+    await write(src, 'data/custom_ssl/cert.pem', 'CERT');
+    const out = await mkTmp();
+    const manifest: ServiceBackupManifest = {
+      service: 'nginx', include: ['data/database.sqlite', 'data/custom_ssl'], exclude: [],
+    };
+    const realCopy = fs.copyFile;
+    const copy = vi.spyOn(fs, 'copyFile').mockImplementation(async (from, to) => {
+      if (String(from).endsWith('database.sqlite')) {
+        throw Object.assign(new Error('EACCES: permission denied, copyfile'), { code: 'EACCES' });
+      }
+      return realCopy(from as string, to as string);
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const built = await buildServiceBackupTar(src, manifest, path.join(out, 'nginx.tar'));
+      // The tar LANDS — one unreadable file no longer costs nginx its certs.
+      expect(built.files).toBe(1);
+      expect(built.skipped).toEqual(['data/database.sqlite']);
+    } finally {
+      copy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it('calls EVERY file being unreadable an error, not "nothing to back up"', async () => {
+    // An empty service and a service the worker is locked out of are different
+    // facts; only the first one is a skip.
+    const src = await mkTmp();
+    await write(src, 'conf/AdGuardHome.yaml', 'bind_host: 0.0.0.0');
+    const out = await mkTmp();
+    const copy = vi.spyOn(fs, 'copyFile').mockRejectedValue(
+      Object.assign(new Error('EACCES: permission denied, copyfile'), { code: 'EACCES' }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const failure = await buildServiceBackupTar(src, ADGUARD_MANIFEST, path.join(out, 'x.tar'))
+        .then(() => null, (e: Error) => e);
+      expect(failure?.message).toMatch(/was unreadable/);
+      expect(failure?.message).not.toMatch(/No config files to back up/);
+    } finally {
+      copy.mockRestore();
+      warn.mockRestore();
+    }
   });
 });

@@ -234,6 +234,37 @@ describe('checkConfigBackup — criterion 3: last nightly result is visible', ()
     expect(r.hint).toMatch(/per-service errors/i);
   });
 
+  // #2877 — a tar can land and still be missing the one file that matters. The
+  // tally reads 13/13, so without its own state this is invisible.
+  it('names a landed-but-incomplete backup and its structural cause', async () => {
+    state.config = {
+      externalBackup: {
+        enabled: true, lastRun: ago(6 * HOUR), lastStatus: 'partial',
+        servicesOk: 13, servicesTotal: 13,
+        servicesIncomplete: ['nginx'],
+        lastMessage: '13/13 services backed up. Backed up WITHOUT some declared files: nginx (data/database.sqlite)',
+      },
+    };
+    const r = await checkConfigBackup(NOW);
+    expect(r.state).toBe('incomplete');
+    expect(r.status).toBe('warn');
+    expect(r.detail).toMatch(/nginx shipped WITHOUT/);
+    // The cause is a permission fact the operator cannot guess — name it.
+    expect(r.hint).toMatch(/uid-mapped root at mode 0600/);
+    expect(r.hint).toMatch(/NPM sqlite snapshot/);
+  });
+
+  it('stays "ok" when every landed backup was complete', async () => {
+    state.config = {
+      externalBackup: {
+        enabled: true, lastRun: ago(6 * HOUR), lastStatus: 'success',
+        servicesOk: 13, servicesTotal: 13, servicesIncomplete: [],
+        lastMessage: '13/13 services backed up',
+      },
+    };
+    expect((await checkConfigBackup(NOW)).state).toBe('ok');
+  });
+
   it('a run that failed outright on a dropped connection gets the same grouping hint', async () => {
     state.config = {
       externalBackup: {

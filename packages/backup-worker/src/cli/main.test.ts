@@ -229,6 +229,24 @@ describe('runWorker', () => {
     expect(final.results[1]).toMatchObject({ service: 'adguard', ok: true });
   });
 
+  it('carries an ok service\'s UNREADABLE files through to the status (#2877)', async () => {
+    // The tar landed, so the row is `ok` — but it is missing a declared file, and
+    // an ok row that hides that is how a backup without its database looks green.
+    const { io } = fakeIO({
+      buildTar: vi.fn(async (_d: string, m: ServiceBackupManifest) =>
+        m.service === 'adguard'
+          ? { files: 1, bytes: 50, skipped: ['data/database.sqlite'] }
+          : { files: 2, bytes: 100 }),
+    });
+    const final = await runWorker(opts, io);
+    const adguard = final.results.find(r => r.service === 'adguard')!;
+    expect(adguard).toMatchObject({ ok: true, outcome: 'ok', skipped: ['data/database.sqlite'] });
+    expect(adguard.detail).toMatch(/unreadable and not in the tar: data\/database\.sqlite/);
+    // A complete service carries no `skipped` field at all.
+    expect(final.results.find(r => r.service === 'authelia')).toMatchObject({ ok: true, detail: null });
+    expect(final.results.find(r => r.service === 'authelia')?.skipped).toBeUndefined();
+  });
+
   it('marks an unknown service as an error', async () => {
     const { io } = fakeIO();
     const final = await runWorker({ ...opts, services: ['nope'] }, io);
