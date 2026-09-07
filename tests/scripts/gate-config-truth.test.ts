@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
@@ -24,6 +25,14 @@ import {
   getBackupGate,
 } from '@servicebay/backup-manifest';
 import { SERVICE_BACKUP_MANIFESTS as WORKER_MANIFESTS } from '../../packages/backup-worker/src/index';
+import { builtinBackupManifests } from '../fixtures/builtinBackupManifests';
+
+/**
+ * The manifests the shipped templates DECLARE (#2858 slice C). The coverage
+ * rules take the list as an argument now — there is no global table to read —
+ * so the gate and the runtime judge the same resolved set.
+ */
+const DECLARED = builtinBackupManifests();
 
 /**
  * #2428 / #2429 / #2427 — the two ways a quality gate lies, and the doc that
@@ -302,12 +311,12 @@ describe('#2465 — backup-coverage fails closed on volume variables of any name
     // The device is not a volume at all; the other two are candidates.
     expect(volumes.map(v => v.raw)).toEqual(['{{MEDIA_ROOT}}', '{{DATA_DIR}}/adguard/conf']);
     // `adguard/conf` is manifest-covered; the off-pattern variable is not.
-    expect(uncoveredVolumes(volumes).map(v => v.raw)).toEqual(['{{MEDIA_ROOT}}']);
+    expect(uncoveredVolumes(volumes, DECLARED).map(v => v.raw)).toEqual(['{{MEDIA_ROOT}}']);
   });
 
   it('leaves the volumes the real templates ship covered (no false positives)', () => {
     expect(realTemplateScan.volumes.length).toBeGreaterThan(10);
-    expect(uncoveredVolumes(realTemplateScan.volumes)).toEqual([]);
+    expect(uncoveredVolumes(realTemplateScan.volumes, DECLARED)).toEqual([]);
   });
 });
 
@@ -359,7 +368,7 @@ describe('#2596 — the coverage gate can SEE a podman named volume, and fails o
     const { volumes } = extractTemplateVolumes('probe', PVC_YAML);
     // The covered one is the real manifest's claim; the other is a template
     // reaching for a PVC without deciding anything — exactly what used to pass.
-    expect(uncoveredVolumes(volumes).map(v => v.key)).toEqual(['some-template-unbacked-config']);
+    expect(uncoveredVolumes(volumes, DECLARED).map(v => v.key)).toEqual(['some-template-unbacked-config']);
   });
 
   it('named-volume coverage is EXACT, not prefix-based (a volume is atomic)', () => {
@@ -374,15 +383,15 @@ describe('#2596 — the coverage gate can SEE a podman named volume, and fails o
       '        claimName: file-share-syncthing-config-extra',
     ].join('\n');
     const { volumes } = extractTemplateVolumes('probe', yaml);
-    expect(uncoveredVolumes(volumes)).toHaveLength(1);
+    expect(uncoveredVolumes(volumes, DECLARED)).toHaveLength(1);
   });
 
   it("file-share's syncthing PVC is covered at HEAD — and by a manifest, not by a skip", () => {
     const pvcs = realTemplateScan.volumes.filter(v => v.kind === 'persistentVolumeClaim');
     // The gate actually looked at it (the pre-fix scan found zero PVCs).
     expect(pvcs.map(v => v.key)).toContain('file-share-syncthing-config');
-    expect(uncoveredVolumes(pvcs)).toEqual([]);
-    const syncthing = SERVICE_BACKUP_MANIFESTS.find(m => m.service === 'syncthing');
+    expect(uncoveredVolumes(pvcs, DECLARED)).toEqual([]);
+    const syncthing = DECLARED.find(m => m.service === 'syncthing');
     expect(syncthing?.volume).toBe('file-share-syncthing-config');
     expect(syncthing?.include).toContain('config.xml');
     // The device ID is derived from the certificate — config.xml alone would
@@ -398,7 +407,7 @@ describe('#2596 — the coverage gate can SEE a podman named volume, and fails o
       'probe',
       PVC_YAML.replace('file-share-syncthing-config', 'file-share-syncthing-config-UNMANIFESTED'),
     );
-    expect(uncoveredVolumes(volumes)).toHaveLength(2);
+    expect(uncoveredVolumes(volumes, DECLARED)).toHaveLength(2);
   });
 
   it('a manifest volume that no template declares is a defect, like a dead gate', () => {
@@ -419,7 +428,7 @@ describe('#2596 — the coverage gate can SEE a podman named volume, and fails o
     const claims = realTemplateScan.volumes
       .filter(v => v.kind === 'persistentVolumeClaim')
       .map(v => v.key);
-    expect(unknownVolumeManifests(SERVICE_BACKUP_MANIFESTS, claims)).toEqual([]);
+    expect(unknownVolumeManifests(DECLARED, claims)).toEqual([]);
   });
 
   it('a volume kind the gate does not know is an ERROR, never a silent skip', () => {
@@ -498,21 +507,16 @@ describe('#2595 — a backup manifest gating on a name no template has is build-
   });
 
   it('every manifest entry at HEAD gates on a template this repo ships', () => {
-    expect(unknownGateManifests(SERVICE_BACKUP_MANIFESTS, templateNames)).toEqual([]);
+    expect(unknownGateManifests(DECLARED, templateNames)).toEqual([]);
   });
 
-  it('the worker reads the SAME manifest array, not a mirror of it (#2733)', () => {
-    // The worker's manifests are what actually SELECT services for the nightly
-    // run, so a gate that is right on the backend side and wrong on the worker
-    // side still loses the backup. Storage location too (#2596): a `volume` set
-    // on one side only would make the worker read a stacks path while the gate
-    // believes the named volume is covered — the same lie, one level down.
-    //
-    // Until #2733 the worker carried a hand-synced FORK of the manifest file and
-    // this case compared their shapes. Both sides now import
-    // `@servicebay/backup-manifest`, so the assertion is stronger and cheaper:
-    // it is one array object, and drift is not representable.
+  it('the worker still re-exports the shared shim, so no fork can reappear (#2733/#2858)', () => {
+    // Until #2733 the worker carried a hand-synced FORK of the manifest file.
+    // #2858 removed the list entirely — servicebay hands the resolved manifests
+    // to the worker at launch — but the shared export must stay ONE object, so
+    // a "self-contained worker table" can't grow back under the same name.
     expect(WORKER_MANIFESTS).toBe(SERVICE_BACKUP_MANIFESTS);
+    expect(SERVICE_BACKUP_MANIFESTS).toEqual([]);
   });
 
   it('no second copy of the manifest survives anywhere in the tree (#2733)', () => {
@@ -533,8 +537,7 @@ describe('#2595 — a backup manifest gating on a name no template has is build-
   });
 
   it('the three #2595 entries resolve to the templates that own their data dirs', () => {
-    const gateOf = (service: string) =>
-      getBackupGate(SERVICE_BACKUP_MANIFESTS.find(m => m.service === service)!);
+    const gateOf = (service: string) => getBackupGate(DECLARED.find(m => m.service === service)!);
     // Multi-app templates: `auth` ships authelia + lldap, `media` ships jellyfin.
     expect(gateOf('authelia')).toBe('auth');
     expect(gateOf('lldap')).toBe('auth');
@@ -562,7 +565,7 @@ describe('#2595 — a backup manifest gating on a name no template has is build-
   });
 
   it('would have failed on the pre-fix manifests (the bug is actually caught)', () => {
-    const preFix = SERVICE_BACKUP_MANIFESTS.map(m =>
+    const preFix = DECLARED.map(m =>
       ['authelia', 'lldap', 'jellyfin'].includes(m.service) ? { ...m, gateOn: undefined } : m,
     );
     expect(unknownGateManifests(preFix, templateNames).map(g => g.service))
@@ -575,13 +578,84 @@ describe('#2595 — a backup manifest gating on a name no template has is build-
     // #2596 — but only because it now gates on the template that actually ships
     // it and reads the podman volume its config really lives in. Re-adding
     // either under its own name would fail the gate above.
-    const names = SERVICE_BACKUP_MANIFESTS.map(m => m.service);
+    const names = DECLARED.map(m => m.service);
     expect(names).not.toContain('hermes');
     expect(existsSync(path.join(REPO_ROOT, 'templates', 'hermes'))).toBe(false);
     expect(existsSync(path.join(REPO_ROOT, 'templates', 'syncthing'))).toBe(false);
-    const syncthing = SERVICE_BACKUP_MANIFESTS.find(m => m.service === 'syncthing');
+    const syncthing = DECLARED.find(m => m.service === 'syncthing');
     expect(getBackupGate(syncthing!)).toBe('file-share');
     expect(syncthing?.dataSubdir).toBeUndefined(); // it has no DATA_DIR path at all
+  });
+});
+
+describe('#2858 — the coverage gate asks whether every template DECLARES a backup', () => {
+  /**
+   * The gate has to be red for a template that ships no `servicebay.backup`,
+   * because that is the shape the whole epic exists to catch: a template that
+   * quietly backs nothing up looks identical, at runtime, to one that has
+   * nothing to back up. Run the real CLI over a COPY of `templates/` so the
+   * mutation is proved end to end rather than against a helper.
+   */
+  function runGate(templatesDir: string): { code: number; out: string } {
+    try {
+      const out = execFileSync(
+        'npx',
+        ['tsx', 'scripts/check-backup-coverage.ts', '--templates', templatesDir],
+        { cwd: REPO_ROOT, encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      return { code: 0, out };
+    } catch (e) {
+      const err = e as { status?: number; stdout?: string; stderr?: string };
+      return { code: err.status ?? 1, out: `${err.stdout ?? ''}${err.stderr ?? ''}` };
+    }
+  }
+
+  const copyTemplates = (): string => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'sb-gate-templates-'));
+    cpSync(path.join(REPO_ROOT, 'templates'), dir, { recursive: true });
+    return dir;
+  };
+
+  it('is GREEN over the migrated templates as they ship', () => {
+    const dir = copyTemplates();
+    try {
+      const { code, out } = runGate(dir);
+      expect(out).toContain('backup-declarations');
+      expect(code).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('goes RED when a built-in template loses its declaration (mutation-verified)', () => {
+    const dir = copyTemplates();
+    try {
+      const file = path.join(dir, 'adguard', 'template.yml');
+      const text = readFileSync(file, 'utf-8');
+      // Drop the whole `servicebay.backup: |` block, annotation and body.
+      writeFileSync(file, text.replace(/^ {4}servicebay\.backup: \|\n(?: {6}.*\n|\n)*/m, ''));
+      const { code, out } = runGate(dir);
+      expect(code).toBe(1);
+      expect(out).toMatch(/adguard: no `servicebay\.backup` annotation/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('goes RED on a declaration that parses but breaks the ADR 0002 boundary', () => {
+    const dir = copyTemplates();
+    try {
+      const file = path.join(dir, 'adguard', 'template.yml');
+      writeFileSync(
+        file,
+        readFileSync(file, 'utf-8').replace('      - conf/AdGuardHome.yaml', '      - ../../etc/shadow'),
+      );
+      const { code, out } = runGate(dir);
+      expect(code).toBe(1);
+      expect(out).toMatch(/ADR 0002/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

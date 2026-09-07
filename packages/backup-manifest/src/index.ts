@@ -1,10 +1,19 @@
 /**
- * The single source of truth for "what counts as per-service config" in the
- * FritzBox-NAS config-survival feature (#1190). The backup producer, the
- * `sb-config-upload` CLI, the restore/install/wipe paths AND the sandboxed
- * `@servicebay/backup-worker` (which does the heavy staging in its own capped
- * container) all consume this, so the include/exclude/strip rules live in
- * exactly one place.
+ * The SHAPE of "what counts as per-service config" — the runtime manifest type,
+ * the collectors, and the pure helpers that operate on a manifest list. The
+ * backup producer, the `sb-config-upload` CLI, the restore/install/wipe paths
+ * AND the sandboxed `@servicebay/backup-worker` (which does the heavy staging
+ * in its own capped container) all consume this, so the staging semantics live
+ * in exactly one place.
+ *
+ * Not the LIST, since #2858 slice C. The list used to be
+ * `SERVICE_BACKUP_MANIFESTS` right here — a table only ServiceBay's own
+ * templates could appear in, which is why a template from another registry
+ * could not be backed up at all (#2849). Now each template DECLARES its own
+ * backup (`servicebay.backup`), the backend resolves those declarations into
+ * this shape (`lib/externalBackup/templateManifests.ts`), and the worker gets
+ * the resolved list handed to it on its command line. The table survives only
+ * as an empty deprecated shim, below.
  *
  * Why a workspace package (#2733): the worker used to carry a hand-maintained
  * fork of this file with a "keep the two in sync" header, because the sandbox
@@ -329,304 +338,26 @@ export interface ServiceBackupManifest {
 }
 
 /**
- * Per-service config scope, transcribed from the table in #1190 and extended in
- * #2153 to close the coverage gap (lldap / vaultwarden / radicale / jellyfin /
- * file-share / authelia db.sqlite3). Every template that declares a
- * persistent `{{DATA_DIR}}/…` volume must either appear here (a manifest entry)
- * or be listed in `EXCLUDED_BULK_VOLUMES` below — enforced by
- * `scripts/check-backup-coverage.ts` so a new template can't silently opt out.
+ * DEPRECATED, EMPTY SHIM (#2858 slice C). This table used to be the single
+ * source of truth for "what counts as per-service config". It is now empty on
+ * purpose: every backup declaration lives on the TEMPLATE that owns the data,
+ * as its `servicebay.backup` annotation, and the runtime manifests are built
+ * from there by `lib/externalBackup/templateManifests.ts`.
  *
- * The same gate also enforces the REVERSE direction (#2595): every entry's
- * `gateOn ?? service` must name a template this repo ships. Two entries were
- * removed when that gate went in, because neither could ever activate:
- *   - `syncthing` — RESTORED in #2596, correctly this time. It is an app of the
- *     `file-share` template (so it gates on `file-share`, not on its own name),
- *     and its config lives in the podman-managed named volume
- *     `file-share-syncthing-config` rather than under `{{DATA_DIR}}` (a bind
- *     mount there fails Syncthing's startup `chmod` under rootless podman — see
- *     templates/file-share/template.yml). #2595 removed the entry because the
- *     file-copy path could only read DATA_DIR-relative paths; #2596 gave it the
- *     `volume` field instead of leaving the device identity unprotected.
- *   - `hermes` — the retired Solaris name (CLAUDE.md: legacy `hermes` path
- *     references are deprecated; the stack now ships from `mdopp/solaris` as
- *     `solaris-*`). No `templates/hermes` exists and none will; the leftover
- *     `/mnt/data/stacks/hermes` dir on an old box is not a ServiceBay template.
+ * Why the move: a table inside ServiceBay can only describe templates that
+ * ship inside ServiceBay. A template from another registry could not add a row
+ * to it, so it could not be backed up at all (#2849) — and that does not scale
+ * with more registries. The template says what it needs; ServiceBay keeps the
+ * two limits a template is not trusted to set for itself (the ADR 0002 tier
+ * clamp and the path boundary), enforced in the bridge.
+ *
+ * It stays as an EMPTY export rather than disappearing so the migration is
+ * legible for one release and so `scripts/check-backup-coverage.ts` can assert
+ * it is still empty — a new row here would be a silent regression to the shape
+ * a foreign registry cannot use. Do not add one; add the annotation to the
+ * template instead (docs/TEMPLATE_AUTHORING.md).
  */
-export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
-  {
-    service: 'home-assistant',
-    // The dockerized HA stores its config one level down, under
-    // `home-assistant/homeassistant/` (the container's /config) — not directly
-    // in the stack dir (#1597). The manifest's include paths are relative to
-    // THIS config root, matching the HA-OS Supervisor backup layout (its
-    // `homeassistant.tar.gz` nests the same files under `data/`, stripped to
-    // bare paths on import) and what restoreServiceBackup extracts into.
-    dataSubdir: 'home-assistant/homeassistant',
-    include: [
-      'automations.yaml', 'scripts.yaml', 'scenes.yaml', 'configuration.yaml',
-      '.storage/core.config_entries', '.storage/core.device_registry',
-      '.storage/core.entity_registry', '.storage/core.area_registry',
-      // HA names each dashboard `.storage/lovelace.<url_path>` (`lovelace.lovelace`,
-      // `lovelace.map`, …); the bare `.storage/lovelace` exact-match dropped every
-      // dashboard's contents (#1595). The trailing-`*` glob catches them all
-      // (and still matches `.storage/lovelace_dashboards`, the sidebar list).
-      '.storage/lovelace*',
-      // zwave_js network keys ARE needed to recover the mesh after a reinstall.
-      '.storage/zwave_js',
-      // HACS itself + every integration it installed. Without the code, a restore
-      // re-seeds config entries for integrations that no longer exist (#1596).
-      // Byte-for-byte: a few MB of operator-trusted third-party components.
-      'custom_components',
-      // HACS's own data store (repo list, installed-version pins) so HACS comes
-      // back knowing what it manages: `.storage/hacs.repositories`, `hacs.data`, …
-      '.storage/hacs*',
-    ],
-    exclude: [
-      'home-assistant_v2.db', 'home-assistant_v2.db-wal', 'home-assistant_v2.db-shm',
-      'history', 'logs', 'home-assistant.log', 'tts', 'image', 'www', 'deps',
-      // HACS ships a re-downloadable frontend asset cache (`hacs_frontend` ≈ 2,200
-      // tiny locale/static files that HACS re-fetches on demand). It has no config
-      // or restore value, and per-file staging it OOM'd the box mid-backup (#1894).
-      // The HACS *data store* (`.storage/hacs*`) — what HACS actually manages — is
-      // still backed up; only the disposable static cache is dropped.
-      'custom_components/hacs/hacs_frontend',
-      'custom_components/hacs_frontend',
-    ],
-    // Large on-RAID artifacts kept through a wipe-config: the recorder history
-    // DB (can be many GB) and the Z-Wave mesh DB. The zwave_js *keys* are CONFIG
-    // (in `include`) so the mesh re-pairs; the mesh db itself is heavy DATA.
-    data: [
-      'home-assistant_v2.db', 'home-assistant_v2.db-wal', 'home-assistant_v2.db-shm',
-      'zwave_js_network.db',
-    ],
-    // A HA-OS backup's config entries assume the Supervisor add-on model and
-    // fail setup on the dockerized HA. Translate the zwave_js / matter entries
-    // to talk to the in-pod containers over localhost (#1595).
-    transform: [{ file: '.storage/core.config_entries', kind: 'ha-config-entries-addon' }],
-  },
-  {
-    // The zwave-js-ui store (#1594) — a SIBLING of HA's config dir, at
-    // `home-assistant/zwave-js/` (NOT under `home-assistant/homeassistant/`).
-    // It has no template/installedTemplates key of its own, so it `gateOn`
-    // home-assistant: HA's presence activates this backup, and HA's deploy
-    // carries it through wipe/restore. `dataSubdir` is a plain path under
-    // DATA_DIR (no `../`), so the traversal guards are untouched.
-    service: 'home-assistant-zwave',
-    dataSubdir: 'home-assistant/zwave-js',
-    gateOn: 'home-assistant',
-    include: [
-      // settings.json holds the network securityKeys (S0_Legacy + the three S2
-      // classes), securityKeysLongRange, the serial port, and enableSoftReset.
-      // Without these, every reinstall destroys the entire Z-Wave security
-      // context and the secure mesh is unrecoverable. These keys ARE the config
-      // worth preserving — like HA's `.storage/zwave_js` and NPM's certs, they
-      // are kept verbatim (no strip): a home NAS is the same trust class as the
-      // system backup, and the keys cannot be regenerated.
-      'settings.json',
-      // ServiceBay's own pinned HA-WebSocket-server settings (serverPort 3001).
-      'sb-external-settings.json',
-    ],
-    exclude: [
-      // The node DB / store cache re-pairs from the mesh + lives on the RAID;
-      // logs are noise.
-      'logs', 'store.jsonl',
-    ],
-    // The mesh node DB is heavy DATA kept through a wipe-config (re-pairing the
-    // whole mesh is expensive); the keys above are CONFIG that re-secures it.
-    data: ['store.jsonl'],
-  },
-  {
-    // Authelia (#2153). Its real per-service secret store is the SQLite DB at
-    // `auth/authelia-data/db.sqlite3` — TOTP secrets, WebAuthn credentials, and
-    // OIDC consent grants. The legacy `users_database.yml` file-backend is dead
-    // on a live box (LLDAP is the auth source since #1737), so backing that up
-    // preserved nothing useful while the actual secrets were lost on reinstall.
-    // `configuration.yml` is NOT backed up: ServiceBay re-renders it from
-    // `configuration.yml.mustache` on every deploy (it's regenerable, not state).
-    // Authelia is an APP of the `auth` template (which also ships LLDAP), so
-    // there is no `authelia` key in installedTemplates to gate on (#2595 — the
-    // missing `gateOn` here silently kept the SSO server's secret store out of
-    // every nightly backup since #2153 shipped).
-    service: 'authelia',
-    dataSubdir: 'auth/authelia-data',
-    gateOn: 'auth',
-    // db.sqlite3 is WAL-mode (post-deploy.py flips journal_mode=WAL, #1679). We
-    // stage the main DB plus its `-wal`/`-shm` sidecars byte-for-byte so a live
-    // copy stays whole on restore (the same reason NPM ships a snapshot). The DB
-    // is encrypted with AUTHELIA_STORAGE_ENCRYPTION_KEY and kept verbatim — no
-    // strip; the trusted-NAS decision (see NPM below) covers it.
-    include: ['db.sqlite3', 'db.sqlite3-wal', 'db.sqlite3-shm'],
-    exclude: [],
-  },
-  {
-    service: 'adguard',
-    // clients (device→tag map), blocklists, DNS rewrites, retention setting.
-    include: ['conf/AdGuardHome.yaml'],
-    exclude: ['data/querylog.json', 'data/stats.db', 'data/sessions.db', 'data/filters'],
-  },
-  {
-    // Syncthing (#2596) — the ONLY volume-held manifest. Its state is not under
-    // `{{DATA_DIR}}` at all: it lives in the podman named volume
-    // `file-share-syncthing-config` (templates/file-share/template.yml explains
-    // why a hostPath is impossible there). Syncthing is an app of the
-    // `file-share` template, so it gates on `file-share` — the mistake #2595
-    // caught was an entry gating on the non-existent template `syncthing`.
-    //
-    // What is worth preserving is small and irreplaceable:
-    //   - `config.xml` — the folder-share definitions AND the device ID.
-    //   - `cert.pem` / `key.pem` — the device certificate the ID is DERIVED
-    //     from. Lose these and the box comes back as a brand-new device that
-    //     every paired phone and laptop has to re-trust by hand, even if
-    //     config.xml survived. Kept verbatim (trusted-NAS class, the same call
-    //     already made for NPM's Let's Encrypt keys and HA's zwave_js keys).
-    //   - `https-cert.pem` / `https-key.pem` — the GUI's TLS pair; cheap to
-    //     carry and avoids a fresh self-signed warning after a reinstall.
-    // The sync INDEX (`index-*`, a LevelDB sized by the shared tree) is
-    // regenerable by rescanning and can be large — excluded, and declared as
-    // DATA so a wipe-config keeps it on the volume rather than forcing a full
-    // re-hash of the household files.
-    service: 'syncthing',
-    gateOn: 'file-share',
-    volume: 'file-share-syncthing-config',
-    include: ['config.xml', 'cert.pem', 'key.pem', 'https-cert.pem', 'https-key.pem'],
-    exclude: ['index-v0.14.0.db', 'index-v2', 'csrftokens.txt', 'syncthing.log'],
-    data: ['index-v0.14.0.db', 'index-v2'],
-  },
-  // (`hermes` used to sit here too — removed in #2595, see the block comment
-  // above this array; unlike syncthing it is never coming back.)
-  {
-    // Nginx Proxy Manager (#1528). Template name is `nginx`; data lives under
-    // `nginx-proxy-manager/` (`data/` ← /data, `letsencrypt/` ← /etc/letsencrypt).
-    service: 'nginx',
-    dataSubdir: 'nginx-proxy-manager',
-    include: [
-      // proxy hosts, redirects, streams, access lists, the admin user/hash.
-      'data/database.sqlite',
-      // ACME account + every issued cert + private key.
-      'letsencrypt',
-      // operator-uploaded custom certs/keys.
-      'data/custom_ssl',
-    ],
-    exclude: [
-      // ACME renewal logs are noise; the regenerated nginx server blocks are
-      // rebuilt from database.sqlite, so the conf.d copy has no restore value.
-      'letsencrypt/logs', 'data/nginx', 'data/logs',
-    ],
-    // NO strip rules: certs + the admin hash are kept verbatim. The home NAS is
-    // the same trust class as the existing system backup, and these secrets are
-    // expensive/impossible to regenerate (Let's Encrypt rate limits, access
-    // lists) — consistent with HA keeping its zwave_js keys.
-
-    // database.sqlite is WAL-mode (since #1679 the nginx post-deploy flips
-    // `journal_mode=WAL`) and live; a plain file-copy can tear it AND would miss
-    // committed writes still sitting in the `-wal` sidecar. The producer's
-    // collector handles both: it `wal_checkpoint(TRUNCATE)`s the WAL into the
-    // main DB, then takes a consistent in-container `sqlite3 .backup` snapshot
-    // (over the same exec path npmAdminRekey uses) and stages that single
-    // self-contained file under the canonical name. The `-wal`/`-shm` sidecars
-    // are never staged (they're not in `include`), so the restored DB is whole.
-    collector: { kind: 'npm-sqlite' },
-  },
-  {
-    // LLDAP (#2153). `users.db` is the family identity store — every user,
-    // group, and membership (the documented reinstall foot-gun in
-    // docs/CREDENTIAL_SELF_HEAL.md). LLDAP 0.6.x stores it as SQLite under the
-    // container's /data → `auth/lldap/`. Kept verbatim (identities can't be
-    // regenerated; trusted-NAS class). The `-wal`/`-shm` sidecars ride along so
-    // a live copy restores whole.
-    // LLDAP is the other app of the `auth` template — same gate as authelia
-    // (#2595). Without it the family identity store was never backed up, so a
-    // reinstall would have left nobody able to sign in to anything.
-    service: 'lldap',
-    dataSubdir: 'auth/lldap',
-    gateOn: 'auth',
-    include: ['users.db', 'users.db-wal', 'users.db-shm'],
-    exclude: [],
-  },
-  {
-    // Vaultwarden (#2153) — the household password vault. Small config-grade
-    // state, maximal value. `db.sqlite3` is the vault ciphertext (encrypted with
-    // each user's master password — useless to an attacker with the NAS, so kept
-    // verbatim); `rsa_key.*` are the JWT signing keys that MUST persist or every
-    // session/invite token breaks after a reinstall; `config.json` holds the
-    // admin/runtime config. Attachments/sends/icon_cache are bulk user data.
-    service: 'vaultwarden',
-    include: [
-      'db.sqlite3', 'db.sqlite3-wal', 'db.sqlite3-shm',
-      'rsa_key.pem', 'rsa_key.pub.pem', 'config.json',
-    ],
-    exclude: ['icon_cache', 'tmp', 'attachments', 'sends'],
-    // The vault DB is encrypted at rest; attachments are the heavy on-RAID data.
-    data: ['attachments', 'sends'],
-  },
-  {
-    // Radicale (#2153) — CalDAV/CardDAV. The `collections` tree under /data holds
-    // every calendar event and contact card; without it a reinstall loses all
-    // family calendars/contacts. Kept verbatim (plain files, no secrets).
-    service: 'radicale',
-    dataSubdir: 'radicale/data',
-    include: ['collections'],
-    exclude: [],
-  },
-  {
-    // Jellyfin (#2153) — the media SERVER's config, NOT the media library. Data
-    // lives under `media/jellyfin-config/` (the container's /config). We back up
-    // the small config-grade bits — server settings (`config/`: system.xml,
-    // network.xml, encoding.xml, the LDAP-plugin config), the users/libraries DB
-    // (`data/jellyfin.db`), and installed plugins + their config — and EXCLUDE
-    // the regenerable bulk: transcode/artwork caches, logs, and re-scannable
-    // metadata. The media files themselves live on a separate volume
-    // (`JELLYFIN_MEDIA_PATH`) that is never backed up (EXCLUDED_BULK_VOLUMES).
-    // Jellyfin is an app of the `media` template, so it gates on `media`, not on
-    // its own name (#2595).
-    service: 'jellyfin',
-    dataSubdir: 'media/jellyfin-config',
-    gateOn: 'media',
-    include: [
-      'config',
-      'data/jellyfin.db', 'data/jellyfin.db-wal', 'data/jellyfin.db-shm',
-      'plugins',
-    ],
-    exclude: [
-      'cache', 'log', 'transcodes', 'metadata',
-      'data/subtitles', 'data/transcodes',
-    ],
-    // Artwork/metadata caches are large and re-scannable — kept on the RAID
-    // through a wipe-config rather than re-downloaded.
-    data: ['metadata', 'cache'],
-  },
-  {
-    // File-share (#2153) — the config that defines the shares, NOT the shared
-    // files. Data lives under `file-share/`: `samba-private/` holds the Samba
-    // passdb (user accounts + password hashes — kept verbatim, they can't be
-    // regenerated), `filebrowser-db/` is FileBrowser's user/settings SQLite, and
-    // `filebrowser-config/` its settings. The `data/` volume is the shared
-    // household files — bulk, never backed up (EXCLUDED_BULK_VOLUMES).
-    service: 'file-share',
-    include: [
-      'samba-private',
-      'filebrowser-db/filebrowser.db',
-      'filebrowser-config',
-    ],
-    exclude: [],
-  },
-  {
-    // Beets (#2581) — the tagger's own state, NOT the music it tags. Two small
-    // files under `beets/config/`: `config.yaml` is hand-tuned (plugin list, an
-    // AcoustID key, and the import safety settings that decide whether an
-    // import relocates files), and `musiclibrary.db` is what beets knows about
-    // the collection — crucially which directories it has already imported, so
-    // a restored box doesn't re-walk and re-tag the whole library. Everything
-    // else in that dir is disposable: `.cache`, the resume `state.pickle`, and
-    // the `<db>-before-<schema-change>.bak` copies beets writes on every
-    // database migration. The music and audiobooks are on the file-share
-    // volumes and are never backed up (EXCLUDED_BULK_VOLUMES).
-    service: 'beets',
-    dataSubdir: 'beets/config',
-    include: ['config.yaml', 'musiclibrary.db'],
-    exclude: [],
-  },
-];
+export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [];
 
 /**
  * Template volumes that are DELIBERATELY not in a backup manifest —
@@ -666,38 +397,76 @@ export const EXCLUDED_BULK_VOLUMES: Readonly<Record<string, string>> = {
   'immich/pgdata': 'Immich Postgres data dir — RAID-resident, rekey-reconciled, not NAS-restored.',
 };
 
-export function getServiceManifest(service: string): ServiceBackupManifest | undefined {
-  return SERVICE_BACKUP_MANIFESTS.find(m => m.service === service);
+/**
+ * Find one service's manifest in a RESOLVED list (#2858 slice C). The list is
+ * the caller's: the backend resolves it from the installed templates'
+ * declarations, the worker gets it handed over on its command line. There is
+ * deliberately no lookup-by-name over a global table any more — that global
+ * table is what a foreign registry could not contribute to.
+ */
+export function findServiceManifest(
+  manifests: readonly ServiceBackupManifest[],
+  service: string,
+): ServiceBackupManifest | undefined {
+  return manifests.find(m => m.service === service);
 }
 
 /**
  * The installedTemplates key whose presence activates this manifest's backup —
- * its own `service` name for a normal entry, or `gateOn` for a sibling-store
- * entry (#1594, e.g. `home-assistant-zwave` gates on `home-assistant`).
+ * its own `service` name for a template's own store, or `gateOn` for a store
+ * the template declares on another name's behalf (#1594, e.g.
+ * `home-assistant-zwave` gates on `home-assistant`).
  */
 export function getBackupGate(manifest: ServiceBackupManifest): string {
   return manifest.gateOn ?? manifest.service;
 }
 
 /**
- * The sibling-store manifest services that ride a given template's deploy
- * (#1594): every manifest whose `gateOn` is `template`. The install runner
- * carries these through the same per-service wipe + restore as the template
- * itself, since they have no `item.name` of their own to trigger on. Returns
- * `[]` for a template with no sibling stores (the common case).
+ * The sibling-store services that ride a given template's deploy (#1594):
+ * every manifest whose `gateOn` is `template`. The install runner carries
+ * these through the same per-service wipe + restore as the template itself,
+ * since they have no `item.name` of their own to trigger on. Returns `[]` for
+ * a template with no sibling stores (the common case).
  */
-export function getSiblingBackupServices(template: string): string[] {
-  return SERVICE_BACKUP_MANIFESTS.filter(m => m.gateOn === template).map(m => m.service);
+export function siblingBackupServices(
+  manifests: readonly ServiceBackupManifest[],
+  template: string,
+): string[] {
+  return manifests.filter(m => m.gateOn === template).map(m => m.service);
 }
 
 /**
- * The CONFIG class for a service (#1585): the relative paths a `wipe-config`
- * reinstall deletes and then restores from the NAS. This is exactly the
- * manifest's `include` set — the small, backed-up, restorable config. Returns
- * `[]` for a service with no manifest (nothing classified as config).
+ * The manifest list as the worker receives it (#2858 slice C): servicebay
+ * resolves the declarations from the installed templates and hands the result
+ * to the one-shot container, which never reads a template itself and never
+ * imports the backend. This is the schema half of that handover — the worker
+ * keeps importing this package for the shape, never for the list.
+ *
+ * Fail closed: anything that is not an array of objects with a string
+ * `service` and a `string[]` `include` THROWS. A worker that silently backed
+ * up a subset of what it was asked for would report a green run against a
+ * denominator that quietly shrank, which is the #2595 failure mode.
  */
-export function getConfigPaths(service: string): string[] {
-  return [...(getServiceManifest(service)?.include ?? [])];
+export function parseBackupManifestsJson(raw: string): ServiceBackupManifest[] {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`backup manifests are not valid JSON: ${(e as Error).message}`);
+  }
+  if (!Array.isArray(doc)) throw new Error('backup manifests must be a JSON array');
+  return doc.map((entry, i) => {
+    const m = entry as Partial<ServiceBackupManifest> | null;
+    if (!m || typeof m !== 'object') throw new Error(`backup manifest [${i}] is not an object`);
+    if (typeof m.service !== 'string' || m.service === '') {
+      throw new Error(`backup manifest [${i}] has no \`service\` name`);
+    }
+    if (!Array.isArray(m.include) || m.include.length === 0) {
+      throw new Error(`backup manifest "${m.service}" has no \`include\` paths`);
+    }
+    if (!Array.isArray(m.exclude)) throw new Error(`backup manifest "${m.service}" has no \`exclude\` list`);
+    return m as ServiceBackupManifest;
+  });
 }
 
 /**

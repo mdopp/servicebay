@@ -69,7 +69,8 @@ metadata:
     #   startup_timeout: 5m
     # servicebay.backup: |                  # what to back up (#2858) — or
     #   include: [config.json]              #   `backup: none` + a `reason:`
-    #   exclude: [logs]
+    #   exclude: [logs]                     #   REQUIRED: the coverage gate
+    #                                       #   fails a template with neither
 ```
 
 ## Healthcheck (#626 + #628)
@@ -121,7 +122,7 @@ up. Full field table: [../docs/TEMPLATE_AUTHORING.md](../docs/TEMPLATE_AUTHORING
 
 ```yaml
     servicebay.backup: |
-      collector: npm-sqlite        # file (default) | npm-sqlite | pg-dump
+      collector: npm-sqlite        # file (default) | npm-sqlite
       include: [data/database.sqlite, config.json]
       exclude: [data/logs]
       data: [media]                # big + on-RAID: never backed up
@@ -129,7 +130,17 @@ up. Full field table: [../docs/TEMPLATE_AUTHORING.md](../docs/TEMPLATE_AUTHORING
       # volume: file-share-syncthing-config  # or a named volume, never both
       # strip:     [{file: config.yml, dropYamlKeys: [password]}]
       # transform: [{file: .storage/core.config_entries, kind: ha-config-entries-addon}]
+      # collector: {kind: pg-dump, container: x-db, user: x, database: x}
+      # stores:                    # extra stores installed under ANOTHER name
+      #   my-app-sidecar:          #   (a sibling dir, or one app of a
+      #     dataSubdir: my-app/sidecar   #    multi-app template) — this
+      #     include: [settings.json]     #    template is their gate
 ```
+
+Since #2858 this annotation is the ONLY place a backup can be declared: the
+old central `SERVICE_BACKUP_MANIFESTS` table is an empty shim, and
+`npm run check:backup-coverage` fails the build on a template that declares
+neither a backup nor `backup: none`.
 
 Nothing worth preserving? Say so — silence reads as an oversight, not as an
 opt-out:
@@ -140,11 +151,18 @@ opt-out:
       reason: Stateless — every file is re-rendered from the template on deploy.
 ```
 
-Paths are relative to the service's own data dir and the platform enforces
-that boundary (ADR 0002): absolute paths, `~`, any `..` segment and
-`{{MUSTACHE}}` placeholders are **rejected** at parse time with the reason
-logged, as is an unknown `collector`, an unknown field, `dataSubdir` together
-with `volume`, or a `backup: none` with no `reason`.
+Two limits are the PLATFORM's, not yours (ADR 0002) — declaring otherwise
+does not change them:
+
+- **The path boundary.** Paths are relative to the service's own data dir.
+  Absolute paths, `~`, any `..` segment and `{{MUSTACHE}}` placeholders are
+  **rejected** at parse time with the reason logged, as is an unknown
+  `collector`, an unknown field, `dataSubdir` together with `volume`, or a
+  `backup: none` with no `reason`. The producer re-checks the same boundary.
+- **The tier clamp.** An `include` that resolves inside one of ServiceBay's
+  bulk volumes (the media library, photo blobs, a Postgres cluster dir) is
+  dropped and logged, whatever you declared. A store left with no include
+  path produces no backup at all — an empty tarball reports "ok".
 
 ## Versioning workflow
 

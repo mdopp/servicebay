@@ -25,13 +25,19 @@
  *     backup: none
  *     reason: Stateless proxy — every file is re-rendered on deploy.
  *
+ * A template that owns MORE than one store — a multi-app template (`auth`
+ * ships authelia + lldap), or one with a sibling dir installed under another
+ * name (`home-assistant` carries the zwave-js key store) — declares the extras
+ * under `stores:`, keyed by the store's own service name. Those are the old
+ * table's `gateOn` rows: the declaring template is the gate.
+ *
  * WHAT THIS MODULE IS NOT. It parses and validates the *declaration*; it does
- * not read it at backup time. The producer/worker read path, the `pg-dump`
- * collector and the migration of the built-in templates are the epic's later
- * slices. The parse result is deliberately its own type rather than
- * `ServiceBackupManifest`: the manifest is the runtime shape (it carries
- * `gateOn` sibling-store wiring and collector-set `renames`, neither of which
- * a template may declare about itself), and slice C owns the bridge.
+ * not read it at backup time. The parse result is deliberately its own type
+ * rather than `ServiceBackupManifest`: the manifest is the runtime shape (it
+ * carries the `gateOn` wiring this parser derives and the collector-set
+ * `renames`, neither of which a template may declare about itself). The bridge
+ * — declaration → manifest, plus the platform-enforced ADR 0002 clamp — is
+ * `lib/externalBackup/templateManifests.ts` (slice C).
  *
  * PLATFORM-ENFORCED LIMIT (ADR 0002). A foreign template is less trusted than
  * our own code, so the path boundary is enforced here, at parse time, and not
@@ -55,12 +61,25 @@ import { z } from 'zod';
  * - `pg-dump`: `pg_dump` inside the service's own Postgres container, staged
  *   as a normal include (the collector itself is slice B).
  */
-const TEMPLATE_BACKUP_COLLECTORS = ['file', 'npm-sqlite', 'pg-dump'] as const;
-type TemplateBackupCollector = (typeof TEMPLATE_BACKUP_COLLECTORS)[number];
+type TemplateBackupCollectorSpec =
+  | { kind: 'file' }
+  | { kind: 'npm-sqlite' }
+  | {
+      kind: 'pg-dump';
+      container: string;
+      user: string;
+      database: string;
+      pgdata?: string;
+      dumpPath?: string;
+    };
 
-/** A template that declares what to back up. */
-interface TemplateBackupDeclaration {
-  kind: 'declared';
+/**
+ * One backing store a template declares. Usually the template's own
+ * (`servicebay.backup` top level); a multi-app template or one with a sibling
+ * store declares the extras under `stores:` (see
+ * {@link TemplateBackupDeclaration.stores}).
+ */
+export interface TemplateBackupStore {
   /** On-disk data subdir under DATA_DIR when it differs from the template
    *  name. Mutually exclusive with `volume`. */
   dataSubdir?: string;
@@ -68,7 +87,7 @@ interface TemplateBackupDeclaration {
    *  subdir (the `claimName` of a kube PVC). Mutually exclusive with
    *  `dataSubdir`; include paths are then relative to the volume root. */
   volume?: string;
-  collector: TemplateBackupCollector;
+  collector: TemplateBackupCollectorSpec;
   /** Paths worth preserving across a reinstall (ADR 0002 tier A). */
   include: string[];
   /** Paths that must never enter the tarball — bulk, logs, caches. */
@@ -80,6 +99,24 @@ interface TemplateBackupDeclaration {
   strip: { file: string; dropYamlKeys: string[] }[];
   /** Per-file value rewrites applied as a file enters the tarball. */
   transform: { file: string; kind: 'ha-config-entries-addon' }[];
+}
+
+/** A template that declares what to back up. */
+interface TemplateBackupDeclaration extends TemplateBackupStore {
+  kind: 'declared';
+  /**
+   * EXTRA stores this template owns that are installed under a DIFFERENT name
+   * (#1594/#2595, the old table's `gateOn` entries). Two shapes, one mechanism:
+   * a sibling dir of the template's own config (`home-assistant/zwave-js/`
+   * beside `home-assistant/homeassistant/`), or one app of a multi-app template
+   * (`authelia` and `lldap` are both apps of `auth`). The key is the store's
+   * service name — what the tarball is called and what a restore asks for; the
+   * template that declares it is the gate that activates it.
+   *
+   * A template with nothing of its own (`auth`, `media`) declares ONLY stores:
+   * the top-level `include` is then empty and no own-store manifest is built.
+   */
+  stores: Record<string, TemplateBackupStore>;
 }
 
 /** A template that declares it has nothing to back up, and why. */
@@ -99,11 +136,33 @@ const noneSchema = z.strictObject({
   reason: z.string().trim().min(1),
 });
 
-const declaredSchema = z.strictObject({
+/**
+ * `collector:` accepts the bare name for the two collectors that need no
+ * configuration, and the object form for `pg-dump`, which cannot run without
+ * knowing the container/role/database to dump. A bare `collector: pg-dump` is
+ * therefore refused: it names a collector that could never execute, and a
+ * collector that silently does not run is the exact failure mode #2858 exists
+ * to close.
+ */
+const collectorSchema = z.union([
+  z.literal('file').transform(() => ({ kind: 'file' as const })),
+  z.literal('npm-sqlite').transform(() => ({ kind: 'npm-sqlite' as const })),
+  z.strictObject({ kind: z.literal('npm-sqlite') }),
+  z.strictObject({
+    kind: z.literal('pg-dump'),
+    container: z.string().trim().min(1),
+    user: z.string().trim().min(1),
+    database: z.string().trim().min(1),
+    pgdata: z.string().trim().min(1).optional(),
+    dumpPath: z.string().trim().min(1).optional(),
+  }),
+]);
+
+const storeSchema = z.strictObject({
   dataSubdir: z.string().trim().min(1).optional(),
   volume: z.string().trim().min(1).optional(),
-  collector: z.enum(TEMPLATE_BACKUP_COLLECTORS).default('file'),
-  include: z.array(z.string()).min(1),
+  collector: collectorSchema.default({ kind: 'file' }),
+  include: z.array(z.string()).default([]),
   exclude: z.array(z.string()).default([]),
   data: z.array(z.string()).default([]),
   strip: z
@@ -112,6 +171,17 @@ const declaredSchema = z.strictObject({
   transform: z
     .array(z.strictObject({ file: z.string(), kind: z.literal('ha-config-entries-addon') }))
     .default([]),
+});
+
+/** Store names are tarball names and `installedTemplates`-adjacent service
+ *  ids — a plain single segment, never a path. */
+const storeNameSchema = z.string().regex(
+  /^[a-z0-9][a-z0-9-]*$/,
+  'must be a plain lowercase service name (letters, digits, hyphens)',
+);
+
+const declaredSchema = storeSchema.extend({
+  stores: z.record(storeNameSchema, storeSchema).default({}),
 });
 
 /**
@@ -179,47 +249,56 @@ function parseNoneOptOut(doc: unknown): ParseTemplateBackupResult {
   return { ok: true, backup: { kind: 'none', reason: parsed.data.reason.trim() } };
 }
 
+/** Shape-check one store's paths + storage choice. `at` prefixes the field
+ *  names so an error on a `stores:` entry names which entry it came from. */
+function checkStore(store: TemplateBackupStore, at: string, errors: string[]): void {
+  if (store.dataSubdir !== undefined && store.volume !== undefined) {
+    errors.push(
+      `${at}\`dataSubdir\` and \`volume\` are mutually exclusive — the state lives either `
+      + 'in a DATA_DIR subdir or in a podman-managed named volume, not both.',
+    );
+  }
+  if (store.dataSubdir !== undefined) {
+    const reason = dataDirEscapeReason(store.dataSubdir);
+    if (reason) errors.push(`${at}dataSubdir "${store.dataSubdir}" ${reason}.`);
+  }
+  checkPaths(store.include, `${at}include`, errors);
+  checkPaths(store.exclude, `${at}exclude`, errors);
+  checkPaths(store.data, `${at}data`, errors);
+  checkPaths(store.strip.map(r => r.file), `${at}strip.file`, errors);
+  checkPaths(store.transform.map(r => r.file), `${at}transform.file`, errors);
+}
+
 /** The declared branch: shape via zod, then the ADR 0002 path boundary. */
 function parseDeclared(doc: unknown): ParseTemplateBackupResult {
   const parsed = declaredSchema.safeParse(doc);
   if (!parsed.success) {
     return { ok: false, errors: zodIssueMessages(parsed.error) };
   }
-  const d = parsed.data;
+  const { stores, ...own } = parsed.data;
 
   const errors: string[] = [];
-  if (d.dataSubdir !== undefined && d.volume !== undefined) {
+  // A declaration that names nothing at all is the silence the contract
+  // exists to forbid: it is indistinguishable from an oversight, so say
+  // `backup: none` (with a reason) instead of declaring an empty shell.
+  if (own.include.length === 0 && Object.keys(stores).length === 0) {
     errors.push(
-      '`dataSubdir` and `volume` are mutually exclusive — the state lives either '
-      + 'in a DATA_DIR subdir or in a podman-managed named volume, not both.',
+      'declares no `include` paths and no `stores:` — an empty declaration is '
+      + 'indistinguishable from a forgotten one. Declare what to keep, or say '
+      + '`backup: none` with a `reason:`.',
     );
   }
-  if (d.dataSubdir !== undefined) {
-    const reason = dataDirEscapeReason(d.dataSubdir);
-    if (reason) errors.push(`dataSubdir "${d.dataSubdir}" ${reason}.`);
+  checkStore(own, '', errors);
+  for (const [name, store] of Object.entries(stores)) {
+    if (store.include.length === 0) {
+      errors.push(`stores.${name}: declares no \`include\` paths — drop the entry or give it one.`);
+    }
+    checkStore(store, `stores.${name}.`, errors);
   }
-  checkPaths(d.include, 'include', errors);
-  checkPaths(d.exclude, 'exclude', errors);
-  checkPaths(d.data, 'data', errors);
-  checkPaths(d.strip.map(r => r.file), 'strip.file', errors);
-  checkPaths(d.transform.map(r => r.file), 'transform.file', errors);
 
   if (errors.length > 0) return { ok: false, errors };
 
-  return {
-    ok: true,
-    backup: {
-      kind: 'declared',
-      dataSubdir: d.dataSubdir,
-      volume: d.volume,
-      collector: d.collector,
-      include: d.include,
-      exclude: d.exclude,
-      data: d.data,
-      strip: d.strip,
-      transform: d.transform,
-    },
-  };
+  return { ok: true, backup: { kind: 'declared', ...own, stores } };
 }
 
 /**

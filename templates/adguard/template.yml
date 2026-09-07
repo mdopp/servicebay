@@ -37,6 +37,17 @@ metadata:
     # wildcard DNS rewrites). post-deploy.py reconciles those two in place —
     # see `reconcile_managed_config()` — instead of rewriting the file.
     servicebay.seed-only-configs: "AdGuardHome.yaml"
+    # Backup declaration (#2858): clients (device→tag map), blocklists, DNS
+    # rewrites and the retention setting. The query log, stats and the
+    # downloaded filter lists are regenerable.
+    servicebay.backup: |
+      include:
+        - conf/AdGuardHome.yaml
+      exclude:
+        - data/querylog.json
+        - data/stats.db
+        - data/sessions.db
+        - data/filters
     # Continuous health probe (#626). AdGuard's `/control/*` API requires
     # authentication once the admin password is set — and the post-deploy
     # sets it — so `/control/status` returns 401 to the unauthenticated

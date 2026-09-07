@@ -24,11 +24,11 @@ import { getConfig, updateConfig } from '../config';
 import { logger } from '../logger';
 import { nasUpload, nasDownload, nasList, nasRemove } from './nasClient';
 import {
-  getServiceManifest,
   applyStripRules,
   applyTransformRules,
   type ServiceBackupManifest,
 } from '@servicebay/backup-manifest';
+import { resolveServiceBackupManifest } from './templateManifests';
 // Re-exported for back-compat: the collector moved to its own module to break the
 // producer ↔ backupWorker/service import cycle (#1955).
 export { runBackupCollector } from './collector';
@@ -37,6 +37,13 @@ const execFileAsync = promisify(execFile);
 
 /** Directory on the NAS (relative to its root) holding all service backups. */
 export const NAS_BACKUP_DIR = 'sb-backup';
+
+/** Why a service has no manifest, since #2858: the declaration lives on the
+ *  template, so "no manifest" now means the template did not declare one (or
+ *  it was refused) — name that, so the operator knows where to look. */
+const NO_MANIFEST = (service: string): string =>
+  `No backup manifest for service "${service}" — its template declares no \`servicebay.backup\` ` +
+  `(or the declaration was refused; see the ExternalBackup log).`;
 
 /** Default on-disk location of the per-service stack dirs. */
 const DEFAULT_STACKS_DIR = '/mnt/data/stacks';
@@ -380,7 +387,7 @@ export async function buildServiceBackupTar(
  *  reads the volume through the worker (backupWorker/launcher.ts); the restore
  *  side has no equivalent yet and says so. */
 export async function resolveServiceDataDir(service: string): Promise<string> {
-  const manifest = getServiceManifest(service);
+  const manifest = await resolveServiceBackupManifest(service);
   if (manifest?.volume) {
     throw new Error(
       `"${service}" keeps its config in the podman volume "${manifest.volume}", not under DATA_DIR — ` +
@@ -402,9 +409,9 @@ export async function backupServiceToNas(
   service: string,
   opts: { serviceDataDir?: string; node?: string } = {},
 ): Promise<ServiceBackupResult> {
-  const manifest = getServiceManifest(service);
+  const manifest = await resolveServiceBackupManifest(service);
   if (!manifest) {
-    throw new Error(`No backup manifest for service "${service}"`);
+    throw new Error(NO_MANIFEST(service));
   }
   // A box backup (no serviceDataDir) reads the stacks dir host-side — the HEAVY
   // walk/copy/tar that OOM'd the control plane in-process (#1894). It now runs in
@@ -759,8 +766,8 @@ export async function deleteServiceBackup(tarName: string): Promise<{ tarName: s
  * archives are shaped by their own producer — e.g. the HA-OS extractor #1353).
  */
 export async function stageUploadedServiceTar(service: string, tar: Buffer): Promise<ServiceBackupResult> {
-  if (!getServiceManifest(service)) {
-    throw new Error(`No backup manifest for service "${service}"`);
+  if (!(await resolveServiceBackupManifest(service))) {
+    throw new Error(NO_MANIFEST(service));
   }
   // A valid (GNU/ustar) tar is at least one 512-byte record; reject obviously
   // non-tar uploads early rather than writing garbage to the NAS.

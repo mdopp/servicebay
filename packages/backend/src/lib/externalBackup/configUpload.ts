@@ -11,7 +11,8 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { backupServiceToNas, type ServiceBackupResult } from './producer';
-import { getServiceManifest, SERVICE_BACKUP_MANIFESTS, type ServiceBackupManifest } from '@servicebay/backup-manifest';
+import { type ServiceBackupManifest } from '@servicebay/backup-manifest';
+import { resolveInstalledBackupManifests, resolveServiceBackupManifest } from './templateManifests';
 
 /** Thrown for user-facing failures (bad args, abort) so the CLI can print a
  *  clean `error: <message>` instead of a stack trace. */
@@ -31,7 +32,8 @@ Seed the config-backup NAS with a service's config from an arbitrary directory,
 using the same whitelist, stripping rules, and tar format as the built-in backup.
 
 Options:
-  --service <svc>   Service to upload (${SERVICE_BACKUP_MANIFESTS.map(m => m.service).join(', ')})
+  --service <svc>   Service to upload (any service whose template declares a
+                    \`servicebay.backup\` — see docs/TEMPLATE_AUTHORING.md)
   --from <path>     Directory holding the service's config files
   --target <name>   Backup target (default: fritzbox)
   --yes, -y         Don't prompt to confirm an unrecognized source layout
@@ -95,10 +97,12 @@ export interface UploadIO {
 /** Validate options, confirm an unrecognized layout, then build + upload the
  *  service tar via the shared producer. */
 export async function runConfigUpload(opts: UploadOptions, io: UploadIO): Promise<ServiceBackupResult> {
-  const manifest = getServiceManifest(opts.service);
+  const manifest = await resolveServiceBackupManifest(opts.service);
   if (!manifest) {
+    const known = (await resolveInstalledBackupManifests()).map(m => m.service);
     throw new ConfigUploadError(
-      `Unknown service "${opts.service}". Known services: ${SERVICE_BACKUP_MANIFESTS.map(m => m.service).join(', ')}`,
+      `Unknown service "${opts.service}" — no installed template declares a backup for it. ` +
+      `Known services: ${known.join(', ') || '(none)'}`,
     );
   }
   if (opts.target !== 'fritzbox') {

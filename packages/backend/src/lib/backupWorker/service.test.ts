@@ -16,7 +16,7 @@ const { mockLauncher, mockCfg, mockCollector, mockExecutor } = vi.hoisted(() => 
 
 vi.mock('./launcher', () => mockLauncher);
 vi.mock('@/lib/config', () => ({ getConfig: () => mockCfg.getConfig() }));
-vi.mock('@/lib/dirs', () => ({ HOST_DATA_DIR: '/mnt/data/servicebay' }));
+vi.mock('@/lib/dirs', () => ({ HOST_DATA_DIR: '/mnt/data/servicebay', DATA_DIR: '/tmp/servicebay-test' }));
 vi.mock('@/lib/agent/executor', () => ({
   AgentExecutor: class { execSafe = (argv: string[], opts?: unknown) => mockExecutor(argv, opts); },
 }));
@@ -43,8 +43,11 @@ function doneStatus(results: Array<{ service: string; ok: boolean; outcome?: str
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `nginx` rides along so the npm-sqlite collector case has a template to
+  // resolve from: since #2858 the collector is read off the DECLARATION, so a
+  // service whose template isn't installed contributes no manifest at all.
   mockCfg.getConfig.mockResolvedValue({
-    installedTemplates: { adguard: {}, 'home-assistant': {} },
+    installedTemplates: { adguard: {}, 'home-assistant': {}, nginx: {} },
     templateSettings: { DATA_DIR: '/mnt/data/stacks' },
   });
   mockLauncher.launchBackupWorker.mockResolvedValue(RUN);

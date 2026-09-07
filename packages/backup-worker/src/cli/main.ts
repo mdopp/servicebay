@@ -12,8 +12,11 @@
  *     backup-worker --stacks /mnt/stacks --out /out --services home-assistant,authelia,nginx
  *
  * For each requested service it resolves the config dir under the RO-mounted
- * stacks root, applies the include/exclude/strip/transform manifest, copies the
- * config into a temp staging dir, and tars it to `<out>/<service>.tar` — all in
+ * stacks root, applies the include/exclude/strip/transform manifest SERVICEBAY
+ * HANDED IT (`BACKUP_MANIFESTS`, resolved from each installed template's
+ * `servicebay.backup` declaration — #2858 slice C; the worker reads no template
+ * and no table of its own), copies the config into a temp staging dir, and tars
+ * it to `<out>/<service>.tar` — all in
  * ITS OWN `--memory`-bounded process. It writes a COMPACT `status.json`
  * (phase/counts + a per-service rollup) frequently; servicebay reads only that +
  * streams each tar to the NAS one at a time. An OOM/kill of THIS container never
@@ -34,7 +37,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  getServiceManifest,
+  findServiceManifest,
+  parseBackupManifestsJson,
   pgDumpPaths,
   pgDumpRemap,
   type PgDumpCollector,
@@ -65,6 +69,15 @@ export interface WorkerOptions {
   out: string;
   /** Services to back up (manifest names). */
   services: string[];
+  /**
+   * The manifests servicebay RESOLVED for this run, from each installed
+   * template's `servicebay.backup` declaration (#2858 slice C). The worker
+   * reads no template and no table of its own — it stages exactly what it was
+   * handed. Passed as JSON via `--manifests` or the `BACKUP_MANIFESTS` env var
+   * (the launcher uses the env var: a manifest set is a few KB, and an env var
+   * keeps it off the process listing an argv would put it on).
+   */
+  manifests: ServiceBackupManifest[];
   /** Opaque run id (mirrors the servicebay launch handle). */
   runId: string;
 }
@@ -72,9 +85,9 @@ export interface WorkerOptions {
 export const USAGE = `Usage: backup-worker --stacks <path> --out <dir> --services a,b,c [--volumes <dir>] [--run-id <id>]
 
 One-shot config-backup worker. For each service, walks its config dir under the
-RO-mounted stacks root, applies the backup manifest, and writes <service>.tar plus
-a compact status.json to the out-volume. Default is a read-only copy — it never
-writes back into a stack.
+RO-mounted stacks root, applies the backup manifest servicebay handed it, and
+writes <service>.tar plus a compact status.json to the out-volume. Default is a
+read-only copy — it never writes back into a stack.
 
 Options:
   --stacks <path>     Host stacks root mounted read-only (e.g. /mnt/stacks)
@@ -82,10 +95,11 @@ Options:
                       required when a requested service's manifest has a \`volume\`
   --out <dir>         Shared out-volume for <service>.tar + status.json
   --services <list>   Comma-separated service names to back up
+  --manifests <json>  The resolved backup manifests as JSON (default: env BACKUP_MANIFESTS)
   --run-id <id>       Run id (default: env BACKUP_RUN_ID or a random id)
   --help, -h          Show this help`;
 
-const VALUE_ARGS = new Set(['--stacks', '--volumes', '--out', '--services', '--run-id']);
+const VALUE_ARGS = new Set(['--stacks', '--volumes', '--out', '--services', '--manifests', '--run-id']);
 
 function defaultRunId(): string {
   return process.env.BACKUP_RUN_ID ?? Math.random().toString(36).slice(2, 14);
@@ -93,6 +107,7 @@ function defaultRunId(): string {
 
 export function parseWorkerArgs(argv: string[]): WorkerOptions | { help: true } {
   const draft: Partial<WorkerOptions> & { services?: string[] } = {};
+  let manifestsJson: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') return { help: true };
@@ -102,6 +117,7 @@ export function parseWorkerArgs(argv: string[]): WorkerOptions | { help: true } 
       if (arg === '--stacks') draft.stacks = value;
       else if (arg === '--volumes') draft.volumes = value;
       else if (arg === '--out') draft.out = value;
+      else if (arg === '--manifests') manifestsJson = value;
       else if (arg === '--run-id') draft.runId = value;
       else draft.services = value.split(',').map(s => s.trim()).filter(Boolean);
     } else {
@@ -111,11 +127,27 @@ export function parseWorkerArgs(argv: string[]): WorkerOptions | { help: true } 
   if (!draft.stacks) throw new WorkerArgError('--stacks is required');
   if (!draft.out) throw new WorkerArgError('--out is required');
   if (!draft.services || draft.services.length === 0) throw new WorkerArgError('--services is required');
+  // Fail closed on the manifests: a run with none would report every service as
+  // "no manifest" and still exit 0, which reads as a healthy backup of nothing.
+  const raw = manifestsJson ?? process.env.BACKUP_MANIFESTS;
+  if (!raw) {
+    throw new WorkerArgError(
+      '--manifests (or the BACKUP_MANIFESTS env var) is required — servicebay resolves the backup '
+      + 'declarations from the installed templates and hands them to this worker (#2858)',
+    );
+  }
+  let manifests: ServiceBackupManifest[];
+  try {
+    manifests = parseBackupManifestsJson(raw);
+  } catch (e) {
+    throw new WorkerArgError((e as Error).message);
+  }
   return {
     stacks: draft.stacks,
     volumes: draft.volumes,
     out: draft.out,
     services: draft.services,
+    manifests,
     runId: draft.runId ?? defaultRunId(),
   };
 }
@@ -236,7 +268,7 @@ export async function runWorker(opts: WorkerOptions, io: WorkerIO): Promise<Work
 
   const results: ServiceBackupResult[] = [];
   for (const service of opts.services) {
-    const manifest = getServiceManifest(service);
+    const manifest = findServiceManifest(opts.manifests, service);
     if (!manifest) {
       results.push({ service, ok: false, tarName: null, bytes: 0, files: 0, outcome: 'error', detail: `No backup manifest for service "${service}"` });
       tick({ processed: results.length, results: [...results], step: `Skipped ${service} (no manifest)` });

@@ -17,6 +17,39 @@ metadata:
     # must be running before this template's post-deploy can wire SSO.
     servicebay.dependencies: "nginx,auth"
     servicebay.ports: "8384/tcp,22000/tcp,139/tcp,445/tcp,{{FILEBROWSER_PORT}}/tcp"
+    # Backup declaration (#2858): the config that DEFINES the shares, never
+    # the shared files (`file-share/data` is bulk household data on the RAID).
+    # `stores.syncthing` is the one volume-held store (#2596): Syncthing's
+    # config cannot live on a hostPath at all (its startup `chmod` returns
+    # EPERM against a bind mount under rootless podman), so its device
+    # identity lives in the podman named volume declared below.
+    servicebay.backup: |
+      include:
+        # The Samba passdb — user accounts + password hashes, kept verbatim.
+        - samba-private
+        - filebrowser-db/filebrowser.db
+        - filebrowser-config
+      exclude: []
+      stores:
+        syncthing:
+          volume: file-share-syncthing-config
+          include:
+            # config.xml is the folder shares AND the device ID; cert/key are
+            # what the ID is DERIVED from — lose them and every paired phone
+            # has to re-trust the box by hand.
+            - config.xml
+            - cert.pem
+            - key.pem
+            - https-cert.pem
+            - https-key.pem
+          exclude:
+            - index-v0.14.0.db
+            - index-v2
+            - csrftokens.txt
+            - syncthing.log
+          data:
+            - index-v0.14.0.db
+            - index-v2
     # Continuous health probe (#628). FileBrowser's `/health` returns a
     # plain 200 once the binary loaded its SQLite DB — the most useful
     # signal for this pod's readiness. Syncthing + Samba health is

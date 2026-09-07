@@ -6,7 +6,25 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { stageServiceBackup, buildServiceBackupTar } from './staging';
-import { getServiceManifest, pgDumpRemap, type ServiceBackupManifest } from '@servicebay/backup-manifest';
+import { pgDumpRemap, type ServiceBackupManifest } from '@servicebay/backup-manifest';
+
+/**
+ * Literal manifests, not a table lookup: since #2858 slice C the worker owns
+ * no list — servicebay resolves each template's `servicebay.backup` and hands
+ * the result over. These two mirror what the `adguard` and `home-assistant`
+ * declarations resolve to, which is what the staging engine actually sees.
+ */
+const ADGUARD_MANIFEST: ServiceBackupManifest = {
+  service: 'adguard',
+  include: ['conf/AdGuardHome.yaml'],
+  exclude: ['data/querylog.json', 'data/stats.db', 'data/sessions.db', 'data/filters'],
+};
+const HA_MANIFEST: ServiceBackupManifest = {
+  service: 'home-assistant',
+  dataSubdir: 'home-assistant/homeassistant',
+  include: ['configuration.yaml', '.storage/lovelace*'],
+  exclude: ['logs', 'home-assistant.log'],
+};
 
 const execFileAsync = promisify(execFile);
 
@@ -56,7 +74,7 @@ describe('stageServiceBackup', () => {
     await write(src, 'data/querylog.json', '[]'); // excluded
     const staging = await mkTmp();
 
-    const staged = await stageServiceBackup(src, getServiceManifest('adguard')!, staging);
+    const staged = await stageServiceBackup(src, ADGUARD_MANIFEST, staging);
 
     expect(staged).toEqual(['conf/AdGuardHome.yaml']);
     await expect(fs.readFile(path.join(staging, 'conf/AdGuardHome.yaml'), 'utf8')).resolves.toBe('bind_host: 0.0.0.0');
@@ -70,7 +88,7 @@ describe('stageServiceBackup', () => {
     await write(src, 'configuration.yaml', 'default_config:');
     const staging = await mkTmp();
 
-    const staged = await stageServiceBackup(src, getServiceManifest('home-assistant')!, staging);
+    const staged = await stageServiceBackup(src, HA_MANIFEST, staging);
 
     expect(staged).toContain('.storage/lovelace.lovelace');
     expect(staged).toContain('.storage/lovelace_dashboards');
@@ -175,7 +193,7 @@ describe('stageServiceBackup', () => {
       await fs.symlink(victim, path.join(src, '.storage'));
       const staging = await mkTmp();
 
-      const staged = await stageServiceBackup(src, getServiceManifest('home-assistant')!, staging);
+      const staged = await stageServiceBackup(src, HA_MANIFEST, staging);
 
       expect(staged).not.toContain('.storage/lovelace.lovelace');
       expect(staged).toContain('configuration.yaml');
@@ -190,7 +208,7 @@ describe('stageServiceBackup', () => {
       await fs.symlink(victim, path.join(src, 'conf/leakdir'));
       const staging = await mkTmp();
 
-      const staged = await stageServiceBackup(src, getServiceManifest('adguard')!, staging);
+      const staged = await stageServiceBackup(src, ADGUARD_MANIFEST, staging);
 
       expect(staged).toEqual(['conf/AdGuardHome.yaml']);
     });
@@ -202,7 +220,7 @@ describe('stageServiceBackup', () => {
       await fs.symlink(path.join(src, 'real-storage'), path.join(src, '.storage'));
       const staging = await mkTmp();
 
-      const staged = await stageServiceBackup(src, getServiceManifest('home-assistant')!, staging);
+      const staged = await stageServiceBackup(src, HA_MANIFEST, staging);
 
       expect(staged).toContain('.storage/lovelace.lovelace');
       expect(staged).toContain('configuration.yaml');
@@ -231,7 +249,7 @@ describe('stageServiceBackup', () => {
   it('returns [] when nothing matches', async () => {
     const src = await mkTmp();
     const staging = await mkTmp();
-    expect(await stageServiceBackup(src, getServiceManifest('adguard')!, staging)).toEqual([]);
+    expect(await stageServiceBackup(src, ADGUARD_MANIFEST, staging)).toEqual([]);
   });
 });
 
@@ -242,7 +260,7 @@ describe('buildServiceBackupTar', () => {
     const out = await mkTmp();
     const tarPath = path.join(out, 'adguard.tar');
 
-    const { files, bytes } = await buildServiceBackupTar(src, getServiceManifest('adguard')!, tarPath);
+    const { files, bytes } = await buildServiceBackupTar(src, ADGUARD_MANIFEST, tarPath);
 
     expect(files).toBe(1);
     expect(bytes).toBeGreaterThan(0);
@@ -255,7 +273,7 @@ describe('buildServiceBackupTar', () => {
     const src = await mkTmp();
     const out = await mkTmp();
     await expect(
-      buildServiceBackupTar(src, getServiceManifest('adguard')!, path.join(out, 'x.tar')),
+      buildServiceBackupTar(src, ADGUARD_MANIFEST, path.join(out, 'x.tar')),
     ).rejects.toThrow(/No config files/);
   });
 });

@@ -1380,7 +1380,7 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                 serviceConfigDir = path.join(stagingDir, 'service-data');
             }
             const { resolveServiceDataDir } = await import('./externalBackup/producer');
-            const { getServiceManifest } = await import('@servicebay/backup-manifest');
+            const { resolveServiceBackupManifest } = await import('./externalBackup/templateManifests');
             const { getExecutor } = await import('./executor');
 
             // Normalize selection: support both string[] (all files) and ServiceDataSelection[]
@@ -1412,7 +1412,7 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                 // podman named volume, but there is no supported way to write it
                 // back into one. Skip it loudly instead of extracting into a
                 // DATA_DIR path the service never reads and logging "Restored".
-                const volume = getServiceManifest(serviceName)?.volume;
+                const volume = (await resolveServiceBackupManifest(serviceName))?.volume;
                 if (volume) {
                     logger.warn(
                         'SystemBackup',

@@ -37,9 +37,13 @@ vi.mock('./assetTransport', () => ({
 const migrationsMock = vi.fn();
 vi.mock('./migrations', () => ({ runMigrationsPhase: (...args: unknown[]) => migrationsMock(...args) }));
 
+// The sibling stores now come from the DECLARING template's `servicebay.backup`
+// (#2858 slice C): kubePlay resolves that template's manifests and filters by
+// `gateOn`. Mock the resolver, keep the pure helper real.
 const siblingsMock = vi.fn<(name: string) => string[]>();
-vi.mock('@servicebay/backup-manifest', () => ({
-  getSiblingBackupServices: (name: string) => siblingsMock(name),
+vi.mock('@/lib/externalBackup/templateManifests', () => ({
+  resolveTemplateManifests: async (name: string) =>
+    siblingsMock(name).map(service => ({ service, gateOn: name, include: ['x'], exclude: [] })),
 }));
 
 const wipeMock = vi.fn();

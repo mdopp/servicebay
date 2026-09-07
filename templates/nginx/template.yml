@@ -16,6 +16,24 @@ metadata:
     servicebay.min-upgradable-schema-version: "3"
     servicebay.tier: "infrastructure"
     servicebay.ports: "{{NGINX_PORT}}/tcp,{{NGINX_SSL_PORT}}/tcp,{{NGINX_ADMIN_PORT}}/tcp"
+    # Backup declaration (#2858). Data lives under `nginx-proxy-manager/`
+    # though the template is called `nginx`. The ACME account, every issued
+    # cert and its private key are kept VERBATIM: a home NAS is the same
+    # trust class as the system backup, and Let's Encrypt rate limits make
+    # these expensive to regenerate. database.sqlite is WAL-mode and live, so
+    # the npm-sqlite collector takes a consistent in-container snapshot first
+    # — a plain copy would tear it and miss committed writes in the `-wal`.
+    servicebay.backup: |
+      dataSubdir: nginx-proxy-manager
+      collector: npm-sqlite
+      include:
+        - data/database.sqlite
+        - letsencrypt
+        - data/custom_ssl
+      exclude:
+        - letsencrypt/logs
+        - data/nginx
+        - data/logs
     # Continuous health probe (#626 / #628). NPM's unauthenticated
     # `/api/` root responds with the API metadata JSON — a cheap 200
     # that proves the admin listener is alive without needing creds.

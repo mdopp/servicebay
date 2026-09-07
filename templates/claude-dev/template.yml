@@ -31,6 +31,13 @@ metadata:
     # through the reverse proxy, so the proxy host has to exist before this
     # service claims its subdomain.
     servicebay.dependencies: "nginx,auth"
+    # Backup declaration (#2858).
+    servicebay.backup: |
+      backup: none
+      reason: >-
+        `workspace/` is an ephemeral dev scratch checkout, not household
+        config — it is re-cloned on demand and nothing in it is state the
+        box owes the operator across a reinstall.
     # Continuous health probe (#628). A raw TCP connect to the SSH port
     # proves sshd accepted the listener — a dev box has no
     # unauthenticated HTTP surface to probe. The poller runs in the HOST

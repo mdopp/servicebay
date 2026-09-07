@@ -25,7 +25,7 @@ import {
   resolveServiceDataDir,
   type ServiceBackupMeta,
 } from './producer';
-import { getServiceManifest, getConfigPaths } from '@servicebay/backup-manifest';
+import { resolveServiceBackupManifest } from './templateManifests';
 import { safeTarExtract, extractServiceConfigToNode } from '../systemBackup';
 import { getExecutor, type Executor } from '../executor';
 import { logger } from '../logger';
@@ -223,7 +223,7 @@ export async function restoreServiceBackup(
   service: string,
   opts: { force?: boolean; node?: string | null; local?: boolean; tarName?: string } = {},
 ): Promise<RestoreResult> {
-  if (!getServiceManifest(service)) {
+  if (!(await resolveServiceBackupManifest(service))) {
     throw new Error(`No backup manifest for service "${service}"`);
   }
   // The stacks dir isn't mounted into the container, so a box restore runs every
@@ -300,7 +300,7 @@ export async function wipeServiceForReinstall(
   const mode = opts.wipeMode ?? 'install';
   if (mode === 'install') return;
   if (opts.node && opts.node !== 'Local') return;
-  const manifest = getServiceManifest(service);
+  const manifest = await resolveServiceBackupManifest(service);
   if (!manifest) {
     // No manifest → no declared config/data classes → nothing safe to wipe.
     await log(`(note) ${service}: no backup manifest, skipping ${mode} wipe (no config/data classification).`);
@@ -327,7 +327,7 @@ export async function wipeServiceForReinstall(
       return;
     }
     // wipe-config: delete only the manifest's CONFIG paths, keep everything else.
-    const configPaths = getConfigPaths(service);
+    const configPaths = manifest.include;
     let removed = 0;
     for (const rel of configPaths) {
       const abs = path.join(dataDir, rel);
@@ -353,8 +353,8 @@ export async function wipeServiceForReinstall(
  * throwing out of `resolveServiceDataDir` and reporting a known limitation as a
  * restore FAILURE on every deploy of the owning template.
  */
-function volumeHeldRestoreNote(service: string): string | null {
-  const volume = getServiceManifest(service)?.volume;
+async function volumeHeldRestoreNote(service: string): Promise<string | null> {
+  const volume = (await resolveServiceBackupManifest(service))?.volume;
   if (!volume) return null;
   return (
     `(note) ${service}: config lives in the podman volume "${volume}" — it is backed up to the NAS, but ` +
@@ -398,7 +398,7 @@ export async function autoRestoreServiceOnReinstall(
   // that once, calmly. Falling through would throw in resolveServiceDataDir and
   // dress a known limitation up as a restore FAILURE (plus a standing diagnose
   // finding) on every single file-share deploy.
-  const volumeNote = volumeHeldRestoreNote(service);
+  const volumeNote = await volumeHeldRestoreNote(service);
   if (volumeNote) {
     await log(volumeNote);
     return;

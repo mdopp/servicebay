@@ -13,7 +13,7 @@ import {
   ConfigUploadError,
   type UploadIO,
 } from './configUpload';
-import { getServiceManifest } from '@servicebay/backup-manifest';
+import { builtinManifest } from '../../../../../tests/fixtures/builtinBackupManifests';
 
 let tmpDirs: string[] = [];
 async function mkTmp(): Promise<string> {
@@ -89,13 +89,13 @@ describe('looksLikeServiceLayout', () => {
   it('is true when at least one include path is present', async () => {
     const dir = await mkTmp();
     await writeFile(dir, 'conf/AdGuardHome.yaml', 'x');
-    expect(await looksLikeServiceLayout(dir, getServiceManifest('adguard')!)).toBe(true);
+    expect(await looksLikeServiceLayout(dir, builtinManifest('adguard'))).toBe(true);
   });
 
   it('is false for an empty/unrelated directory', async () => {
     const dir = await mkTmp();
     await writeFile(dir, 'random.txt', 'x');
-    expect(await looksLikeServiceLayout(dir, getServiceManifest('adguard')!)).toBe(false);
+    expect(await looksLikeServiceLayout(dir, builtinManifest('adguard'))).toBe(false);
   });
 });
 

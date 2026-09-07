@@ -19,6 +19,19 @@ import {
   BACKUP_WORKER_MEMORY,
   type SafeExec,
 } from './launcher';
+import type { ServiceBackupManifest } from '@servicebay/backup-worker';
+
+/**
+ * The manifests a run carries. Since #2858 slice C the launcher looks nothing
+ * up: servicebay resolves the templates' declarations and passes the result
+ * both to `requiredVolumeClaims` and, as `BACKUP_MANIFESTS`, to the container.
+ */
+const MANIFESTS: ServiceBackupManifest[] = [
+  { service: 'adguard', include: ['conf/AdGuardHome.yaml'], exclude: [] },
+  { service: 'nginx', dataSubdir: 'nginx-proxy-manager', include: ['data/database.sqlite'], exclude: [] },
+  { service: 'file-share', include: ['samba-private'], exclude: [] },
+  { service: 'syncthing', gateOn: 'file-share', volume: 'file-share-syncthing-config', include: ['config.xml'], exclude: [] },
+];
 
 /** A SafeExec recording its calls, with per-argv canned stdout. */
 function recExec(responses: Record<string, { stdout?: string; code?: number }> = {}) {
@@ -36,7 +49,7 @@ describe('launchBackupWorker', () => {
   it('creates the out dir then runs the worker container, memory-capped, stacks RO', async () => {
     const { exec, calls } = recExec();
     const run = await launchBackupWorker({
-      exec, services: ['adguard', 'nginx'], runId: 'abc', dataDir: '/data', stacksDir: '/mnt/data/stacks',
+      exec, services: ['adguard', 'nginx'], manifests: MANIFESTS, runId: 'abc', dataDir: '/data', stacksDir: '/mnt/data/stacks',
     });
 
     expect(run.container).toBe('backup-worker-abc');
@@ -58,25 +71,31 @@ describe('launchBackupWorker', () => {
     // services passed through
     const sIdx = podmanRun.indexOf('--services');
     expect(podmanRun[sIdx + 1]).toBe('adguard,nginx');
+    // …and so are the RESOLVED manifests (#2858): the worker owns no table, so
+    // a run that forgot to pass them would stage nothing and still exit 0.
+    expect(podmanRun).toContain(`BACKUP_MANIFESTS=${JSON.stringify(MANIFESTS)}`);
   });
 
   it('fails fast with a resolveHostDataDir hint when the out mkdir errors (EROFS)', async () => {
     const { exec } = recExec({ 'mkdir -p': { code: 1, stdout: 'Read-only file system' } });
     await expect(
-      launchBackupWorker({ exec, services: ['adguard'], runId: 'x', dataDir: '/app/data', stacksDir: '/s' }),
+      launchBackupWorker({
+      exec, services: ['adguard'], manifests: MANIFESTS, runId: 'x', dataDir: '/app/data', stacksDir: '/s' }),
     ).rejects.toThrow(/resolveHostDataDir/);
   });
 
   it('refuses an empty service list', async () => {
     const { exec } = recExec();
     await expect(
-      launchBackupWorker({ exec, services: [], runId: 'x', dataDir: '/d', stacksDir: '/s' }),
+      launchBackupWorker({
+      exec, services: [], manifests: MANIFESTS, runId: 'x', dataDir: '/d', stacksDir: '/s' }),
     ).rejects.toThrow(/no services/);
   });
 
   it('binds no named volume for a run that needs none', async () => {
     const { exec, calls } = recExec();
-    await launchBackupWorker({ exec, services: ['adguard'], runId: 'x', dataDir: '/d', stacksDir: '/s' });
+    await launchBackupWorker({
+      exec, services: ['adguard'], manifests: MANIFESTS, runId: 'x', dataDir: '/d', stacksDir: '/s' });
     expect(calls.some(c => c[1] === 'volume')).toBe(false);
     const podmanRun = calls.find(c => c[0] === 'podman' && c[1] === 'run')!;
     expect(podmanRun).not.toContain('--volumes');
@@ -85,8 +104,8 @@ describe('launchBackupWorker', () => {
 
 describe('podman named volumes (#2596)', () => {
   it('lists the claims a run needs, de-duped, and nothing for hostPath services', () => {
-    expect(requiredVolumeClaims(['adguard', 'nginx'])).toEqual([]);
-    expect(requiredVolumeClaims(['adguard', 'syncthing', 'syncthing']))
+    expect(requiredVolumeClaims(['adguard', 'nginx'], MANIFESTS)).toEqual([]);
+    expect(requiredVolumeClaims(['adguard', 'syncthing', 'syncthing'], MANIFESTS))
       .toEqual(['file-share-syncthing-config']);
   });
 
@@ -96,7 +115,7 @@ describe('podman named volumes (#2596)', () => {
     // the worker has nothing to read and the backup silently protects nothing.
     const { exec, calls } = recExec({ 'podman volume exists': { code: 0 } });
     await launchBackupWorker({
-      exec, services: ['file-share', 'syncthing'], runId: 'v1', dataDir: '/d', stacksDir: '/s',
+      exec, services: ['file-share', 'syncthing'], manifests: MANIFESTS, runId: 'v1', dataDir: '/d', stacksDir: '/s',
     });
 
     const podmanRun = calls.find(c => c[0] === 'podman' && c[1] === 'run')!;
@@ -111,7 +130,7 @@ describe('podman named volumes (#2596)', () => {
   it('does not bind a claim that does not exist yet — `podman run -v` would CREATE it empty', async () => {
     const { exec, calls } = recExec({ 'podman volume exists': { code: 1 } });
     await launchBackupWorker({
-      exec, services: ['syncthing'], runId: 'v2', dataDir: '/d', stacksDir: '/s',
+      exec, services: ['syncthing'], manifests: MANIFESTS, runId: 'v2', dataDir: '/d', stacksDir: '/s',
     });
     const podmanRun = calls.find(c => c[0] === 'podman' && c[1] === 'run')!;
     expect(podmanRun.some(a => a.includes('/mnt/volumes/file-share-syncthing-config'))).toBe(false);

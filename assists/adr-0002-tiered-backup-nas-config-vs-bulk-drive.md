@@ -79,6 +79,53 @@ NAS backup:
   the NAS backup, and (b) critical Tier-A state (HA full, Vaultwarden) **not**
   present in the NAS backup.
 
+## History
+
+### 2026-09-07 — the classification moved onto the templates; the two limits did not (#2858)
+
+**What changed.** Until now, *which* paths of a service were Tier A lived in
+one table inside ServiceBay (`SERVICE_BACKUP_MANIFESTS`, `packages/backup-manifest`).
+That was workable while every template shipped in this repo, but a template
+from another registry cannot add a row to a table it does not ship — so it
+could not be backed up at all (#2849), and that does not scale as registries
+multiply. The classification now lives on the **template**, as its
+`servicebay.backup` annotation: `include` is its Tier A, `data` is its Tier B,
+and a template with nothing worth preserving says `backup: none` with a reason.
+The table is an empty deprecated shim. A template that owns a store installed
+under another name (a sibling dir, one app of a multi-app template) declares it
+under `stores:`; the declaring template is that store's gate.
+
+**What did NOT change: the two limits stay ServiceBay's.** A template is data,
+and a template from a foreign registry is less trusted than our own code, so
+neither Rule 2 nor the boundary is delegated to it:
+
+1. **The Tier-B clamp is enforced producer-side.** An `include` that resolves
+   inside a volume ServiceBay lists as bulk (`EXCLUDED_BULK_VOLUMES` — the
+   media library, the photo blobs, a Postgres cluster dir) is dropped from the
+   include set, pushed onto `exclude`, and logged — whatever the template
+   declared. A store left with no include path produces **no manifest at all**,
+   because an empty backup reports "0 files, ok" and is indistinguishable from
+   a healthy one. Rule 2 above is now mechanical, not a convention.
+2. **The path boundary is enforced twice.** Every declared path must resolve
+   inside the service's own data dir; the parser refuses a declaration that
+   breaks it, and the producer re-checks each path, so a declaration that
+   reached the runtime by another route (a hand-edited local template, a
+   registry clone updated underneath) still cannot walk out.
+
+**Where the check lives.** `scripts/check-backup-coverage.ts` now asks two
+questions: every template ServiceBay ships declares a backup or an explicit
+`backup: none`; and every persistent volume is covered by a declaration or
+listed in `EXCLUDED_BULK_VOLUMES` with a reason. It runs the same pure bridge
+the box runs (`lib/externalBackup/backupDeclaration.ts`), so the gate cannot be
+right about a question the runtime answers differently. A registry outside this
+repo runs the identical check over its own tree:
+`npx tsx scripts/check-backup-coverage.ts --templates <dir>`.
+
+**Consequence for the operator:** none visible. The migration is byte-identical
+per service — `tests/backend/backup_template_declarations.test.ts` freezes the
+old table and asserts the resolved declarations equal it — so the same files
+land in the same tarballs.
+
 ## Notes
 
 Second ADR; follows the `assists/adr-NNNN-title.md` convention from

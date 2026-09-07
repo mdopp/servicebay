@@ -50,7 +50,8 @@ import {
   DEFAULT_BACKUP_RETENTION,
   latestServiceBackupName,
 } from './producer';
-import { getServiceManifest, type ServiceBackupManifest } from '@servicebay/backup-manifest';
+import { type ServiceBackupManifest } from '@servicebay/backup-manifest';
+import { builtinManifest } from '../../../../../tests/fixtures/builtinBackupManifests';
 import { logger } from '../logger';
 
 /** Match a dated slot tar `<service>-YYYYMMDD-HHMM.tar` (#1865). */
@@ -247,10 +248,10 @@ describe('stageServiceBackup', () => {
 });
 
 describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
-  const npm = getServiceManifest('nginx')!;
+  const npm = builtinManifest('nginx');
 
   it('returns the manifest unchanged for a service with no collector', async () => {
-    const ha = getServiceManifest('home-assistant')!;
+    const ha = builtinManifest('home-assistant');
     expect(await runBackupCollector(ha, 'Local')).toBe(ha);
     expect(mockSendCommand).not.toHaveBeenCalled();
   });
@@ -613,7 +614,12 @@ describe('resolveServiceDataDir', () => {
     // syncthing's config is in the podman volume `file-share-syncthing-config`.
     // Returning `<DATA_DIR>/syncthing` would let the restore/wipe callers write
     // into a directory the service never reads — and report success.
-    mockGetConfig.mockResolvedValue({ templateSettings: { DATA_DIR: '/srv/stacks' } });
+    // The syncthing store is DECLARED by file-share (#2858), so it resolves
+    // only when that template is installed — same gate `gateOn` expressed.
+    mockGetConfig.mockResolvedValue({
+      templateSettings: { DATA_DIR: '/srv/stacks' },
+      installedTemplates: { 'file-share': { schemaVersion: 1, installedAt: '2026-01-01T00:00:00.000Z' } },
+    });
     await expect(resolveServiceDataDir('syncthing')).rejects.toThrow(/podman volume "file-share-syncthing-config"/);
   });
 });
@@ -830,7 +836,7 @@ describe('manifest integration', () => {
     const staging = await mkTmp();
     await writeFile(src, 'conf/AdGuardHome.yaml', 'bind_host: 0.0.0.0');
     await writeFile(src, 'data/querylog.json', '[]');
-    const staged = await stageServiceBackup(src, getServiceManifest('adguard')!, staging);
+    const staged = await stageServiceBackup(src, builtinManifest('adguard'), staging);
     expect(staged).toEqual(['conf/AdGuardHome.yaml']);
   });
 
@@ -845,7 +851,7 @@ describe('manifest integration', () => {
     await writeFile(src, 'custom_components/hacs/hacs_frontend/main.js', 'JUNK');
     await writeFile(src, 'custom_components/hacs_frontend/entrypoint.js', 'JUNK');
 
-    const staged = await stageServiceBackup(src, getServiceManifest('home-assistant')!, staging);
+    const staged = await stageServiceBackup(src, builtinManifest('home-assistant'), staging);
 
     // The HACS code + other integrations are staged …
     expect(staged).toContain('custom_components/hacs/__init__.py');

@@ -26,10 +26,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { buildServiceBackupTar } from '../../packages/backup-worker/src/engine/staging';
-import {
-  getServiceManifest,
-  type ServiceBackupManifest,
-} from '@servicebay/backup-manifest';
+import { type ServiceBackupManifest } from '@servicebay/backup-manifest';
+import { builtinManifest } from '../fixtures/builtinBackupManifests';
 import { safeTarExtract } from '@/lib/systemBackup';
 
 function tarPresent(): boolean {
@@ -74,7 +72,7 @@ async function roundTrip(
   /** Explicit manifest, for a shape no shipped service declares (strip rules). */
   manifestOverride?: ServiceBackupManifest,
 ): Promise<string> {
-  const manifest = manifestOverride ?? getServiceManifest(service)!;
+  const manifest = manifestOverride ?? builtinManifest(service);
   expect(manifest, `manifest for ${service} must exist`).toBeDefined();
   const src = await mkTmp(`${service}-src`);
   await seed(src);

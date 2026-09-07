@@ -68,7 +68,15 @@ have bitten this repo. The first two are enforced by
   zero volumes; and the kinds that hold no state are listed with reasons in
   `EPHEMERAL_VOLUME_KINDS`. Same ratchet direction as #2465 (a bare `{{VAR}}`
   hostPath now fails closed instead of being dropped for being off-pattern):
-  when the gate cannot tell, it fails.
+  when the gate cannot tell, it fails. #2858 added the question one level up —
+  **every template ServiceBay ships must DECLARE its backup** (`servicebay.backup`,
+  or an explicit `backup: none` with a reason); a template with no annotation
+  fails the gate rather than contributing an invisible zero. It judges the
+  manifests the box actually builds, through the same pure bridge
+  (`lib/externalBackup/backupDeclaration.ts`), so the gate cannot be right about
+  a question the runtime answers differently — and the old central
+  `SERVICE_BACKUP_MANIFESTS` table must stay an empty shim, because a row there
+  describes a backup only ServiceBay's own templates can have.
 
 ---
 

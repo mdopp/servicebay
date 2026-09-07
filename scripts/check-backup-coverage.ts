@@ -1,30 +1,36 @@
 /**
- * Backup-coverage contract (#2153).
+ * Backup-coverage contract (#2153, rewritten for #2858 slice C).
  *
- * Every template that declares a PERSISTENT volume must either:
- *   (a) be covered by a `SERVICE_BACKUP_MANIFESTS` entry (its config lands in
- *       the NAS tarball on reinstall), OR
- *   (b) be listed in `EXCLUDED_BULK_VOLUMES` with a reason (deliberately not
- *       backed up — bulk / regenerable / credential-coupled data).
+ * TWO questions, both of which used to be answerable only from inside
+ * ServiceBay's own manifest table:
  *
- * This closes the silent-opt-out gap: before #2153 a new template could ship a
- * `{{DATA_DIR}}/…` hostPath and lose all its state on a disk-loss reinstall with
- * nothing to catch it. This check fails CI when a persistent volume is neither
- * covered nor explicitly excluded.
+ *   1. **Does every template ServiceBay ships DECLARE its backup?** Since
+ *      #2858 the declaration lives on the template as `servicebay.backup` —
+ *      either what to keep, or `backup: none` with a reason. A template with
+ *      no annotation is a FAILURE, not a silent skip: silence is
+ *      indistinguishable from an oversight, which is exactly how authelia,
+ *      lldap and jellyfin sat un-backed-up while the nightly run reported
+ *      "8/8 services backed up" (#2595). A foreign registry runs this same
+ *      question over its own templates — see {@link checkBackupCoverage} and
+ *      the `--templates <dir>` flag.
+ *   2. **Is every persistent volume a template declares accounted for?** Each
+ *      volume must be covered by a declared backup (its `{{DATA_DIR}}`-relative
+ *      path equal to or nested under a declared store's data dir, or its
+ *      `claimName` named by a `volume:` store) OR listed in
+ *      `EXCLUDED_BULK_VOLUMES` with a reason.
  *
- * A hostPath volume is COVERED by a manifest when its `{{DATA_DIR}}`-relative
- * path equals or is nested under a manifest's data dir (`dataSubdir ?? service`)
- * — e.g. the `adguard/work` + `adguard/conf` volumes are both under the
- * `adguard` manifest, and `file-share/samba-private` is under `file-share`.
- * A PODMAN NAMED VOLUME (a `PersistentVolumeClaim`) is covered when a manifest
- * names its `claimName` in `volume` — volumes are atomic, so that match is
- * exact, not prefix-based.
+ * The manifests this gate judges are built by the SAME pure bridge the box
+ * runs at backup time (`lib/externalBackup/backupDeclaration.ts`), so the gate
+ * cannot be right about a question the runtime answers differently — including
+ * the ADR 0002 tier clamp and path boundary, which are re-applied there.
  *
- * The REVERSE direction is checked too: every manifest entry must gate on a
+ * The REVERSE direction is checked too: every resolved manifest must gate on a
  * template this repo ships ({@link unknownGateManifests}, #2595), and every
- * manifest `volume` must name a PVC some template actually declares
- * ({@link unknownVolumeManifests}, #2596) — a manifest pointing at a volume that
- * exists nowhere promises a backup that can never run.
+ * `volume` must name a PVC some template actually declares
+ * ({@link unknownVolumeManifests}, #2596) — a manifest pointing at a volume
+ * that exists nowhere promises a backup that can never run. Both are now
+ * structurally hard to get wrong (a store's gate IS its declaring template),
+ * so the checks stand as ratchets rather than as live defect-finders.
  *
  * ── Why this scans the parsed YAML, not `hostPath:` lines (#2596) ────────────
  * The original scan grepped for `hostPath:` blocks. A template that kept its
@@ -34,15 +40,18 @@
  * question it did not ask. `file-share`'s `syncthing-config` PVC (Syncthing's
  * device identity + folder shares) sat outside the contract that way.
  *
- * So the scan now ENUMERATES every entry of every Pod's `spec.volumes` and
+ * So the scan ENUMERATES every entry of every Pod's `spec.volumes` and
  * classifies it by kind. A kind the gate does not know is an ERROR, not a skip;
  * a template.yml that fails to parse is an ERROR, not zero volumes. The set of
  * kinds that hold no persistent state is written down, with reasons, in
  * {@link EPHEMERAL_VOLUME_KINDS}. There is no path through this file where a
  * volume is dropped silently.
  *
- * Exits 0 (all covered) or 1 (an uncovered volume, an unclassifiable one, a
- * template that would not parse, or a manifest gate/volume that names nothing).
+ * Exits 0 (all covered + all declared) or 1 (an undeclared or unparseable
+ * declaration, an uncovered volume, an unclassifiable one, a template that
+ * would not parse, or a manifest gate/volume that names nothing).
+ *
+ * Usage: `tsx scripts/check-backup-coverage.ts [--templates <dir>]`
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -53,9 +62,23 @@ import {
   getBackupGate,
   type ServiceBackupManifest,
 } from '../packages/backup-manifest/src/index.js';
+import {
+  resolveTemplateBackupDeclaration,
+  type TemplateBackupResolution,
+} from '../packages/backend/src/lib/externalBackup/backupDeclaration.js';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
-const TEMPLATES_DIR = path.join(REPO_ROOT, 'templates');
+const DEFAULT_TEMPLATES_DIR = path.join(REPO_ROOT, 'templates');
+
+/** The `--templates <dir>` override, so a FOREIGN registry (solarisbay) runs
+ *  the identical declaration check over its own templates. */
+function templatesDirFromArgv(argv: readonly string[]): string {
+  const i = argv.indexOf('--templates');
+  if (i === -1) return DEFAULT_TEMPLATES_DIR;
+  const dir = argv[i + 1];
+  if (!dir) throw new Error('--templates needs a directory');
+  return path.resolve(dir);
+}
 
 /** How a template asks for storage. Both kinds can hold persistent state. */
 type VolumeKind = 'hostPath' | 'persistentVolumeClaim';
@@ -278,15 +301,15 @@ function extractTemplateVolumes(template: string, yamlText: string): ScanResult 
 
 /** The `{{DATA_DIR}}`-relative data dir a manifest owns (dataSubdir ?? service).
  *  A volume-held manifest owns no DATA_DIR path at all, so it contributes none. */
-function manifestDataDirs(): string[] {
-  return SERVICE_BACKUP_MANIFESTS
+function manifestDataDirs(manifests: readonly ServiceBackupManifest[]): string[] {
+  return manifests
     .filter(m => !m.volume)
     .map(m => (m.dataSubdir ?? m.service).replace(/\/+$/, ''));
 }
 
 /** The podman named volumes the manifests claim to back up (#2596). */
-function manifestVolumeClaims(): string[] {
-  return SERVICE_BACKUP_MANIFESTS.map(m => m.volume).filter((v): v is string => !!v);
+function manifestVolumeClaims(manifests: readonly ServiceBackupManifest[]): string[] {
+  return manifests.map(m => m.volume).filter((v): v is string => !!v);
 }
 
 /** Is `key` equal to, or nested under, any covered root in `roots`? */
@@ -303,10 +326,13 @@ function isUnder(key: string, roots: string[]): boolean {
  * it); named-volume coverage is EXACT — a volume is an atomic unit, and a
  * manifest for `foo-config` says nothing about `foo-data`.
  */
-function uncoveredVolumes(vols: readonly TemplateVolume[]): TemplateVolume[] {
-  const manifestRoots = manifestDataDirs();
+function uncoveredVolumes(
+  vols: readonly TemplateVolume[],
+  manifests: readonly ServiceBackupManifest[],
+): TemplateVolume[] {
+  const manifestRoots = manifestDataDirs(manifests);
   const excludedRoots = Object.keys(EXCLUDED_BULK_VOLUMES).map(k => k.replace(/\/+$/, ''));
-  const claims = new Set(manifestVolumeClaims());
+  const claims = new Set(manifestVolumeClaims(manifests));
   return vols.filter(v =>
     v.kind === 'persistentVolumeClaim'
       ? !claims.has(v.key) && !excludedRoots.includes(v.key)
@@ -378,12 +404,12 @@ function unknownVolumeManifests(
     .map(m => ({ service: m.service, volume: m.volume as string }));
 }
 
-/** The names of the templates this repo ships (a dir with a `template.yml`). */
-function shippedTemplateNames(): string[] {
-  return readdirSync(TEMPLATES_DIR, { withFileTypes: true })
+/** The names of the templates a registry ships (a dir with a `template.yml`). */
+function shippedTemplateNames(templatesDir: string = DEFAULT_TEMPLATES_DIR): string[] {
+  return readdirSync(templatesDir, { withFileTypes: true })
     .filter(e => e.isDirectory())
     .map(e => e.name)
-    .filter(name => existsSync(path.join(TEMPLATES_DIR, name, 'template.yml')));
+    .filter(name => existsSync(path.join(templatesDir, name, 'template.yml')));
 }
 
 /** Report one gate failure — header, the offending rows, then the how-to-fix
@@ -398,25 +424,45 @@ function fail(header: string, rows: string[], hints: string[]): never {
 
 /** Scan every shipped template, keeping the ones that would not parse — an
  *  unreadable template must FAIL the gate, not quietly contribute no volumes. */
-function scanAllTemplates(templates: readonly string[]): ScanResult & {
+function scanAllTemplates(templates: readonly string[], templatesDir: string): ScanResult & {
   unreadable: { template: string; message: string }[];
+  /** Each template's resolved `servicebay.backup`, keyed by template name. */
+  declarations: Map<string, TemplateBackupResolution>;
 } {
   const volumes: TemplateVolume[] = [];
   const unclassified: UnclassifiedVolume[] = [];
   const unreadable: { template: string; message: string }[] = [];
+  const declarations = new Map<string, TemplateBackupResolution>();
   for (const template of templates) {
     try {
-      const scan = extractTemplateVolumes(
-        template,
-        readFileSync(path.join(TEMPLATES_DIR, template, 'template.yml'), 'utf8'),
-      );
+      const text = readFileSync(path.join(templatesDir, template, 'template.yml'), 'utf8');
+      const scan = extractTemplateVolumes(template, text);
       volumes.push(...scan.volumes);
       unclassified.push(...scan.unclassified);
+      declarations.set(template, resolveTemplateBackupDeclaration(template, backupAnnotation(text)));
     } catch (e) {
       unreadable.push({ template, message: e instanceof Error ? e.message : String(e) });
     }
   }
-  return { volumes, unclassified, unreadable };
+  return { volumes, unclassified, unreadable, declarations };
+}
+
+/**
+ * The raw `servicebay.backup` body from a template.yml, or `undefined`. Read
+ * straight off the parsed YAML rather than through the backend's manifest
+ * parser: this gate must stay importable from a pure-script context (and from
+ * a foreign registry's CI), and the annotation is a plain block scalar.
+ */
+function backupAnnotation(yamlText: string): string | undefined {
+  const docs = yaml.loadAll(toScannableYaml(yamlText)) as (
+    { kind?: unknown; metadata?: { annotations?: Record<string, unknown> } } | null
+  )[];
+  for (const doc of docs) {
+    if (!doc || typeof doc !== 'object' || doc.kind !== 'Pod') continue;
+    const raw = doc.metadata?.annotations?.['servicebay.backup'];
+    if (typeof raw === 'string') return raw;
+  }
+  return undefined;
 }
 
 /** Fail on anything the SCAN itself could not do: a template that would not
@@ -454,8 +500,12 @@ function reportScanProblems(
 /** Fail on a manifest that points at nothing: a gate naming no template (#2595)
  *  or a `volume` naming no declared claim (#2596). Both promise a backup that
  *  can never run, and both look healthy at runtime. */
-function reportManifestProblems(templates: readonly string[], all: readonly TemplateVolume[]): void {
-  const unknownGates = unknownGateManifests(SERVICE_BACKUP_MANIFESTS, templates);
+function reportManifestProblems(
+  templates: readonly string[],
+  all: readonly TemplateVolume[],
+  manifests: readonly ServiceBackupManifest[],
+): void {
+  const unknownGates = unknownGateManifests(manifests, templates);
   if (unknownGates.length > 0) {
     fail(
       '✗ backup-coverage contract (#2595): manifest entr(ies) gating on a name no template has — permanently inactive, so the backup they promise never runs:',
@@ -468,14 +518,14 @@ function reportManifestProblems(templates: readonly string[], all: readonly Temp
         'A gate that matches no template can never activate anywhere. Fix it by setting `gateOn` to the',
         'template that owns the data dir (an app of a multi-app template gates on the template, e.g.',
         "jellyfin → 'media', authelia/lldap → 'auth'), or by deleting the entry if the service is retired.",
-        'There is ONE copy since #2733: packages/backup-manifest/src/index.ts, imported by both the',
-        'backend and the sandboxed backup worker.',
+        'Since #2858 a store\'s gate IS the template that declares it, so this can only fire if the',
+        'resolver was taught a second way to produce a manifest.',
       ],
     );
   }
 
   const declaredClaims = all.filter(v => v.kind === 'persistentVolumeClaim').map(v => v.key);
-  const unknownVolumes = unknownVolumeManifests(SERVICE_BACKUP_MANIFESTS, declaredClaims);
+  const unknownVolumes = unknownVolumeManifests(manifests, declaredClaims);
   if (unknownVolumes.length > 0) {
     fail(
       "✗ backup-coverage contract (#2596): manifest entr(ies) whose `volume` names no PersistentVolumeClaim any template declares (or that set `volume` AND `dataSubdir`):",
@@ -490,8 +540,11 @@ function reportManifestProblems(templates: readonly string[], all: readonly Temp
 }
 
 /** The core #2153 contract: every persistent volume is covered or excused. */
-function reportUncovered(all: readonly TemplateVolume[]): void {
-  const uncovered = uncoveredVolumes(all);
+function reportUncovered(
+  all: readonly TemplateVolume[],
+  manifests: readonly ServiceBackupManifest[],
+): void {
+  const uncovered = uncoveredVolumes(all, manifests);
   if (uncovered.length > 0) {
     fail(
       '✗ backup-coverage contract (#2153): persistent volume(s) with no manifest entry and no EXCLUDED_BULK_VOLUMES marker:',
@@ -499,9 +552,9 @@ function reportUncovered(all: readonly TemplateVolume[]): void {
         `${v.template}: ${v.kind === 'persistentVolumeClaim' ? `podman volume ${v.raw}` : v.raw}`,
       ),
       [
-        'Add a SERVICE_BACKUP_MANIFESTS entry for it, or list it in EXCLUDED_BULK_VOLUMES with a reason.',
-        'Both live in packages/backup-manifest/src/index.ts — the one copy the backend and the worker share.',
-        'A PersistentVolumeClaim is covered by a manifest that sets `volume: <claimName>` (#2596) — the',
+        'Add the path to the template\'s own `servicebay.backup` declaration (docs/TEMPLATE_AUTHORING.md),',
+        'or list it in EXCLUDED_BULK_VOLUMES (packages/backup-manifest/src/index.ts) with a reason.',
+        'A PersistentVolumeClaim is covered by a store that sets `volume: <claimName>` (#2596) — the',
         'worker then reads it from the named volume servicebay binds in read-only.',
         'If a bare `{{VAR}}` hostPath is genuinely not stored state (a device, a socket), add a',
         'pattern + reason to NON_VOLUME_HOSTPATH_VARS in scripts/check-backup-coverage.ts (#2465).',
@@ -510,24 +563,84 @@ function reportUncovered(all: readonly TemplateVolume[]): void {
   }
 }
 
-function main(): void {
-  const templates = shippedTemplateNames();
+/**
+ * The #2858 question: every template ServiceBay ships DECLARES its backup, or
+ * says `backup: none` with a reason. A missing or refused declaration fails —
+ * silence is not an opt-out.
+ */
+function reportUndeclared(declarations: ReadonlyMap<string, TemplateBackupResolution>): void {
+  const rows = [...declarations.values()].flatMap(r => r.problems);
+  if (rows.length > 0) {
+    fail(
+      '✗ backup-coverage contract (#2858): template(s) whose `servicebay.backup` declaration is missing or refused:',
+      rows,
+      [
+        'Every template declares what it needs kept — or says it needs nothing, with a reason:',
+        '',
+        '    servicebay.backup: |',
+        '      include:',
+        '        - config.yaml',
+        '',
+        '    servicebay.backup: |',
+        '      backup: none',
+        '      reason: Stateless — every file is re-rendered on deploy.',
+        '',
+        'A multi-app template (or one with a sibling store) declares the extras under `stores:`,',
+        'keyed by the store\'s own service name. See docs/TEMPLATE_AUTHORING.md and',
+        'packages/backend/src/lib/template/backupContract.ts for the full field list.',
+      ],
+    );
+  }
+}
+
+/** The empty-shim ratchet (#2858): the old central table must stay empty. A
+ *  new row would be a backup only ServiceBay\'s own templates could have. */
+function reportTableRegression(): void {
+  if (SERVICE_BACKUP_MANIFESTS.length > 0) {
+    fail(
+      '✗ backup-coverage contract (#2858): SERVICE_BACKUP_MANIFESTS is not empty.',
+      SERVICE_BACKUP_MANIFESTS.map(m => `${m.service} (gate ${getBackupGate(m)})`),
+      [
+        'That table is a deprecated empty shim. A row in it describes a backup only ServiceBay\'s own',
+        'templates can have — the exact limitation #2849/#2858 removed. Put the declaration on the',
+        'template instead, as its `servicebay.backup` annotation.',
+      ],
+    );
+  }
+}
+
+/**
+ * Run the whole contract over one templates dir. Exported so a FOREIGN
+ * registry can run the identical check in its own CI (`--templates <dir>`),
+ * rather than re-deriving a weaker version of it.
+ */
+export function checkBackupCoverage(templatesDir: string = DEFAULT_TEMPLATES_DIR): void {
+  const templates = shippedTemplateNames(templatesDir);
 
   // Fail closed: an empty template list would make EVERY check vacuously green.
   if (templates.length === 0) {
-    console.error('✗ backup-coverage: no templates found under templates/ — the gate would scan nothing.');
+    console.error(`✗ backup-coverage: no templates found under ${templatesDir} — the gate would scan nothing.`);
     process.exit(1);
   }
 
-  const { volumes: all, unclassified, unreadable } = scanAllTemplates(templates);
+  const { volumes: all, unclassified, unreadable, declarations } = scanAllTemplates(templates, templatesDir);
   reportScanProblems(unreadable, unclassified);
-  reportManifestProblems(templates, all);
-  reportUncovered(all);
+  reportUndeclared(declarations);
+  reportTableRegression();
+
+  const manifests = [...declarations.values()].flatMap(d => d.manifests);
+  reportManifestProblems(templates, all, manifests);
+  reportUncovered(all, manifests);
 
   const hostPaths = all.filter(v => v.kind === 'hostPath').length;
   const claims = all.length - hostPaths;
-  console.log(`✓ backup-coverage: ${all.length} persistent template volume(s) all covered (manifest or explicit bulk-exclude) — ${hostPaths} hostPath, ${claims} podman named volume.`);
-  console.log(`✓ backup-gates: ${SERVICE_BACKUP_MANIFESTS.length} manifest entr(ies) all gate on a shipped template, and every \`volume\` names a declared claim.`);
+  const optOuts = [...declarations.values()].filter(d => d.optOut !== null).length;
+  console.log(`✓ backup-coverage: ${all.length} persistent template volume(s) all covered (a template declaration or an explicit bulk-exclude) — ${hostPaths} hostPath, ${claims} podman named volume.`);
+  console.log(`✓ backup-declarations: ${templates.length} template(s) all declare \`servicebay.backup\` — ${manifests.length} backing store(s), ${optOuts} explicit \`backup: none\`.`);
+}
+
+function main(): void {
+  checkBackupCoverage(templatesDirFromArgv(process.argv.slice(2)));
 }
 
 // Run only when invoked as the CLI — the pure helpers are imported by
@@ -538,6 +651,7 @@ if (/check-backup-coverage\.ts$/.test(process.argv[1] ?? '')) {
 }
 
 export {
+  backupAnnotation,
   toCoverageKey,
   toScannableYaml,
   extractTemplateVolumes,

@@ -25,6 +25,17 @@ vi.mock('../executor', () => ({ getExecutor: (...a: unknown[]) => mockGetExecuto
 import { restoreServiceBackup, autoRestoreServiceOnReinstall, wipeServiceForReinstall } from './restore';
 import { NAS_BACKUP_DIR } from './producer';
 
+/**
+ * The installed set matters since #2858 slice C: a sibling store (authelia,
+ * lldap, jellyfin, syncthing) is declared by the template that HOSTS it, so it
+ * resolves only when that template is installed — which is exactly the gate
+ * `gateOn` used to express.
+ */
+const INSTALLED_TEMPLATES = Object.fromEntries(
+  ['home-assistant', 'auth', 'media', 'file-share', 'nginx', 'adguard', 'vaultwarden', 'radicale', 'beets']
+    .map(name => [name, { schemaVersion: 1, installedAt: '2026-01-01T00:00:00.000Z' }]),
+);
+
 let tmpRoot: string;
 let dataDir: string;
 
@@ -63,7 +74,7 @@ function serveTar(tar: Buffer) {
 beforeEach(async () => {
   vi.clearAllMocks();
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'restore-test-'));
-  mockCfg.getConfig.mockResolvedValue({ templateSettings: { DATA_DIR: tmpRoot } });
+  mockCfg.getConfig.mockResolvedValue({ templateSettings: { DATA_DIR: tmpRoot }, installedTemplates: INSTALLED_TEMPLATES });
   mockCfg.saveConfig.mockResolvedValue(undefined);
   // #1865 — restore now resolves the latest snapshot from the listing. Default
   // to advertising the bare legacy slot (a valid undated snapshot) so the
@@ -357,7 +368,7 @@ describe('#2595 — the multi-app template stores round-trip through wipe + auto
    * The backup half of #2595 (adding `gateOn`) only matters if the RESTORE half
    * lands the bytes back where the app reads them. These three paths had never
    * been backed up, so they had never been restored either — the install
-   * runner's `[item.name, ...getSiblingBackupServices(item.name)]` list was
+   * runner's `[item.name, ...siblingBackupServices(...)]` list was
    * empty for `auth` and `media`. Assert the whole per-service path end to end:
    * data-dir resolution (via `dataSubdir`), the wipe's CONFIG/DATA split, and
    * the auto-restore that re-seeds over it.

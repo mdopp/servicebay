@@ -11,31 +11,67 @@ import {
   WorkerArgError,
   type WorkerIO,
 } from './main';
-import { getServiceManifest, type ServiceBackupManifest } from '@servicebay/backup-manifest';
+import type { ServiceBackupManifest } from '@servicebay/backup-manifest';
+
+/**
+ * The worker owns NO manifest table since #2858 slice C — servicebay resolves
+ * the templates' `servicebay.backup` declarations and hands the result over on
+ * the command line. So these fixtures are literal: they are what a run gives
+ * the worker, and the worker's job is to stage exactly that.
+ */
+const MANIFESTS: ServiceBackupManifest[] = [
+  { service: 'nginx', dataSubdir: 'nginx-proxy-manager', include: ['data/database.sqlite'], exclude: [], collector: { kind: 'npm-sqlite' } },
+  { service: 'adguard', include: ['conf/AdGuardHome.yaml'], exclude: [] },
+  { service: 'authelia', dataSubdir: 'auth/authelia-data', gateOn: 'auth', include: ['db.sqlite3'], exclude: [] },
+  { service: 'syncthing', gateOn: 'file-share', volume: 'file-share-syncthing-config', include: ['config.xml'], exclude: [] },
+];
+const manifestFor = (service: string): ServiceBackupManifest =>
+  MANIFESTS.find(m => m.service === service)!;
+const MANIFESTS_JSON = JSON.stringify(MANIFESTS);
 import type { WorkerStatus } from '../contract/status';
 
 describe('parseWorkerArgs', () => {
   it('parses the one-shot args', () => {
-    const opts = parseWorkerArgs(['--stacks', '/mnt/stacks', '--out', '/out', '--services', 'a,b,c', '--run-id', 'r1']);
+    const opts = parseWorkerArgs(['--stacks', '/mnt/stacks', '--out', '/out', '--services', 'a,b,c', '--manifests', MANIFESTS_JSON, '--run-id', 'r1']);
     expect(opts).toMatchObject({ stacks: '/mnt/stacks', out: '/out', services: ['a', 'b', 'c'], runId: 'r1' });
+    expect('manifests' in opts && opts.manifests.map(m => m.service)).toEqual(MANIFESTS.map(m => m.service));
   });
 
   it('parses the optional --volumes root (#2596)', () => {
-    const opts = parseWorkerArgs(['--stacks', '/s', '--out', '/o', '--services', 'a', '--volumes', '/mnt/volumes']);
+    const opts = parseWorkerArgs(['--stacks', '/s', '--out', '/o', '--services', 'a', '--manifests', MANIFESTS_JSON, '--volumes', '/mnt/volumes']);
     expect(opts).toMatchObject({ volumes: '/mnt/volumes' });
     // …and stays undefined when the run needs no named volume.
-    expect(parseWorkerArgs(['--stacks', '/s', '--out', '/o', '--services', 'a'])).toMatchObject({ volumes: undefined });
+    expect(parseWorkerArgs(['--stacks', '/s', '--out', '/o', '--services', 'a', '--manifests', MANIFESTS_JSON])).toMatchObject({ volumes: undefined });
   });
 
   it('trims + drops empty service tokens', () => {
-    const opts = parseWorkerArgs(['--stacks', '/s', '--out', '/o', '--services', 'a, ,b,']);
+    const opts = parseWorkerArgs(['--stacks', '/s', '--out', '/o', '--services', 'a, ,b,', '--manifests', MANIFESTS_JSON]);
     expect('services' in opts && opts.services).toEqual(['a', 'b']);
   });
 
   it('requires --stacks, --out, --services', () => {
-    expect(() => parseWorkerArgs(['--out', '/o', '--services', 'a'])).toThrow(WorkerArgError);
-    expect(() => parseWorkerArgs(['--stacks', '/s', '--services', 'a'])).toThrow(WorkerArgError);
-    expect(() => parseWorkerArgs(['--stacks', '/s', '--out', '/o'])).toThrow(WorkerArgError);
+    const m = ['--manifests', MANIFESTS_JSON];
+    expect(() => parseWorkerArgs(['--out', '/o', '--services', 'a', ...m])).toThrow(WorkerArgError);
+    expect(() => parseWorkerArgs(['--stacks', '/s', '--services', 'a', ...m])).toThrow(WorkerArgError);
+    expect(() => parseWorkerArgs(['--stacks', '/s', '--out', '/o', ...m])).toThrow(WorkerArgError);
+  });
+
+  it('requires the resolved manifests — a run without them would back up NOTHING and exit 0 (#2858)', () => {
+    const base = ['--stacks', '/s', '--out', '/o', '--services', 'a'];
+    delete process.env.BACKUP_MANIFESTS;
+    expect(() => parseWorkerArgs(base)).toThrow(/--manifests/);
+    expect(() => parseWorkerArgs([...base, '--manifests', '[{"service":"a"}]'])).toThrow(/include/);
+    expect(() => parseWorkerArgs([...base, '--manifests', 'not json'])).toThrow(/valid JSON/);
+  });
+
+  it('falls back to the BACKUP_MANIFESTS env var the launcher sets', () => {
+    process.env.BACKUP_MANIFESTS = MANIFESTS_JSON;
+    try {
+      const opts = parseWorkerArgs(['--stacks', '/s', '--out', '/o', '--services', 'adguard']);
+      expect('manifests' in opts && opts.manifests).toHaveLength(MANIFESTS.length);
+    } finally {
+      delete process.env.BACKUP_MANIFESTS;
+    }
   });
 
   it('returns help for --help', () => {
@@ -49,12 +85,12 @@ describe('parseWorkerArgs', () => {
 
 describe('resolveServiceDataDir', () => {
   it('honours the manifest dataSubdir', () => {
-    expect(resolveServiceDataDir('/mnt/stacks', getServiceManifest('nginx')!)).toBe('/mnt/stacks/nginx-proxy-manager');
-    expect(resolveServiceDataDir('/mnt/stacks', getServiceManifest('adguard')!)).toBe('/mnt/stacks/adguard');
+    expect(resolveServiceDataDir('/mnt/stacks', manifestFor('nginx'))).toBe('/mnt/stacks/nginx-proxy-manager');
+    expect(resolveServiceDataDir('/mnt/stacks', manifestFor('adguard'))).toBe('/mnt/stacks/adguard');
   });
 
   it('reads a volume-held manifest from the mounted named volume, not the stacks root (#2596)', () => {
-    const syncthing = getServiceManifest('syncthing')!;
+    const syncthing = manifestFor('syncthing');
     expect(syncthing.volume).toBe('file-share-syncthing-config');
     expect(resolveServiceDataDir('/mnt/stacks', syncthing, '/mnt/volumes'))
       .toBe('/mnt/volumes/file-share-syncthing-config');
@@ -64,7 +100,7 @@ describe('resolveServiceDataDir', () => {
     // The fail-open shape this whole issue is about: a stacks fallback would
     // resolve to a directory that does not exist, stage nothing, and report the
     // service as "no config on disk yet" — a backup that quietly does nothing.
-    expect(() => resolveServiceDataDir('/mnt/stacks', getServiceManifest('syncthing')!))
+    expect(() => resolveServiceDataDir('/mnt/stacks', manifestFor('syncthing')))
       .toThrow(/no --volumes root/);
   });
 });
@@ -77,18 +113,18 @@ describe('applyCollectorRemap', () => {
   it('remaps to the sqlite snapshot when present', async () => {
     await fs.mkdir(path.join(tmp, 'data'), { recursive: true });
     await fs.writeFile(path.join(tmp, 'data/database.sqlite.sb-backup'), 'snap');
-    const remapped = await applyCollectorRemap(tmp, getServiceManifest('nginx')!);
+    const remapped = await applyCollectorRemap(tmp, manifestFor('nginx'));
     expect(remapped.include).toContain('data/database.sqlite.sb-backup');
     expect(remapped.renames).toEqual({ 'data/database.sqlite.sb-backup': 'data/database.sqlite' });
   });
 
   it('leaves the manifest unchanged when no snapshot exists', async () => {
-    const m = getServiceManifest('nginx')!;
+    const m = manifestFor('nginx');
     expect(await applyCollectorRemap(tmp, m)).toBe(m);
   });
 
   it('is a no-op for a non-collector manifest', async () => {
-    const m = getServiceManifest('adguard')!;
+    const m = manifestFor('adguard');
     expect(await applyCollectorRemap(tmp, m)).toBe(m);
   });
 
@@ -133,7 +169,7 @@ describe('runWorker', () => {
     };
     return { io, statuses };
   }
-  const opts = { stacks: '/mnt/stacks', out: '/out', services: ['adguard', 'authelia'], runId: 'r' };
+  const opts = { stacks: '/mnt/stacks', out: '/out', services: ['adguard', 'authelia'], manifests: MANIFESTS, runId: 'r' };
 
   it('tars each service and finishes done', async () => {
     const { io, statuses } = fakeIO();

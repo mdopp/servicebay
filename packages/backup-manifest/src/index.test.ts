@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 import yaml from 'js-yaml';
 import {
   SERVICE_BACKUP_MANIFESTS,
-  getServiceManifest,
+  findServiceManifest,
   getBackupGate,
-  getSiblingBackupServices,
-  getConfigPaths,
+  siblingBackupServices,
+  parseBackupManifestsJson,
   stripYamlKeys,
   applyStripRules,
   applyTransformRules,
@@ -17,175 +17,62 @@ import {
   type ServiceBackupManifest,
 } from './index';
 
-/** The manifest's DATA class (#1585) — the large on-RAID artifacts a
- *  `wipe-config` reinstall keeps. Read straight off the manifest. */
-function dataPaths(service: string): string[] {
-  return [...(getServiceManifest(service)?.data ?? [])];
-}
+/**
+ * A resolved manifest set, as servicebay hands it to the worker. The package
+ * no longer OWNS a list since #2858 slice C — the declarations live on the
+ * templates — so these fixtures are literal, and the tests here cover the
+ * pure helpers that operate on whatever list they are given. The content of
+ * the built-in declarations is proved in
+ * `tests/backend/backup_template_declarations.test.ts`.
+ */
+const RESOLVED: ServiceBackupManifest[] = [
+  { service: 'home-assistant', dataSubdir: 'home-assistant/homeassistant', include: ['configuration.yaml'], exclude: ['logs'] },
+  { service: 'home-assistant-zwave', dataSubdir: 'home-assistant/zwave-js', gateOn: 'home-assistant', include: ['settings.json'], exclude: [] },
+  { service: 'authelia', dataSubdir: 'auth/authelia-data', gateOn: 'auth', include: ['db.sqlite3'], exclude: [] },
+  { service: 'lldap', dataSubdir: 'auth/lldap', gateOn: 'auth', include: ['users.db'], exclude: [] },
+  { service: 'adguard', include: ['conf/AdGuardHome.yaml'], exclude: [] },
+];
 
-describe('service backup manifests', () => {
-  it('covers the #1190 services plus the #2153 coverage-gap services', () => {
-    const names = SERVICE_BACKUP_MANIFESTS.map(m => m.service);
-    expect(names).toEqual(
-      expect.arrayContaining([
-        'home-assistant', 'authelia', 'adguard', 'nginx',
-        // #2153 — previously unprotected services now covered.
-        'lldap', 'vaultwarden', 'radicale', 'jellyfin', 'file-share',
-      ]),
-    );
-    // #2595 removed `syncthing` and `hermes`: both gated on a name no template
-    // has, so they promised a backup and staged nothing. `hermes` (the retired
-    // Solaris name) stays gone; `syncthing` came back in #2596 once the backup
-    // path learned to read a podman named volume — see below.
-    expect(names).not.toContain('hermes');
-    expect(names).toContain('syncthing');
+describe('manifest-list helpers (#2858 slice C)', () => {
+  it('finds a service in the list it was handed, and nothing outside it', () => {
+    expect(findServiceManifest(RESOLVED, 'adguard')?.include).toEqual(['conf/AdGuardHome.yaml']);
+    expect(findServiceManifest(RESOLVED, 'not-a-service')).toBeUndefined();
+    expect(findServiceManifest([], 'adguard')).toBeUndefined();
   });
 
-  it('backs up syncthing out of its podman named volume, gated on file-share (#2596)', () => {
-    const syncthing = getServiceManifest('syncthing')!;
-    // Not a DATA_DIR path at all: a hostPath there fails syncthing's startup
-    // chmod under rootless podman, so the template uses a PVC.
-    expect(syncthing.volume).toBe('file-share-syncthing-config');
-    expect(syncthing.dataSubdir).toBeUndefined();
-    // An app of `file-share`, so it activates on that template's presence —
-    // gating on its own name is the #2595 defect that made it permanently dead.
-    expect(getBackupGate(syncthing)).toBe('file-share');
-    expect(getSiblingBackupServices('file-share')).toContain('syncthing');
-    // config.xml holds the folder shares + device ID; cert/key ARE the identity.
-    expect(syncthing.include).toEqual(
-      expect.arrayContaining(['config.xml', 'cert.pem', 'key.pem']),
-    );
-    // The sync index is regenerable bulk — excluded from the tar, kept on disk.
-    expect(syncthing.exclude).toContain('index-v0.14.0.db');
-    expect(dataPaths('syncthing')).toContain('index-v0.14.0.db');
+  it('getBackupGate returns gateOn for a store declared on another name\'s behalf', () => {
+    expect(getBackupGate(findServiceManifest(RESOLVED, 'home-assistant-zwave')!)).toBe('home-assistant');
+    expect(getBackupGate(findServiceManifest(RESOLVED, 'authelia')!)).toBe('auth');
+    expect(getBackupGate(findServiceManifest(RESOLVED, 'adguard')!)).toBe('adguard');
   });
 
-  it('backs up LLDAP users.db — the family identity store (#2153)', () => {
-    const lldap = getServiceManifest('lldap')!;
-    expect(lldap.dataSubdir).toBe('auth/lldap');
-    expect(lldap.include).toContain('users.db');
-    // Identities can't be regenerated — kept verbatim.
-    expect(lldap.strip).toBeUndefined();
+  it('siblingBackupServices lists the stores that ride a template deploy (#1594)', () => {
+    expect(siblingBackupServices(RESOLVED, 'home-assistant')).toEqual(['home-assistant-zwave']);
+    expect(siblingBackupServices(RESOLVED, 'auth')).toEqual(['authelia', 'lldap']);
+    expect(siblingBackupServices(RESOLVED, 'adguard')).toEqual([]);
   });
 
-  it('backs up vaultwarden vault + JWT signing keys, excludes bulk attachments (#2153)', () => {
-    const vw = getServiceManifest('vaultwarden')!;
-    expect(vw.include).toEqual(
-      expect.arrayContaining(['db.sqlite3', 'rsa_key.pem', 'rsa_key.pub.pem', 'config.json']),
-    );
-    // rsa keys MUST persist or every session/token breaks — never stripped.
-    expect(vw.strip).toBeUndefined();
-    // Attachments/sends are bulk user DATA, kept off the tarball.
-    expect(vw.exclude).toContain('attachments');
-    expect(vw.data).toContain('attachments');
+  it('the central table is an EMPTY deprecated shim — a row here is a regression (#2858)', () => {
+    // A row in this table describes a backup only ServiceBay's own templates
+    // can have, which is the limitation #2849/#2858 removed. The coverage gate
+    // fails the build on one; this pins the same rule at unit level.
+    expect(SERVICE_BACKUP_MANIFESTS).toEqual([]);
+  });
+});
+
+describe('parseBackupManifestsJson — the worker handover (#2858 slice C)', () => {
+  it('round-trips the list servicebay serialises', () => {
+    expect(parseBackupManifestsJson(JSON.stringify(RESOLVED))).toEqual(RESOLVED);
   });
 
-  it('backs up radicale collections (calendars/contacts) (#2153)', () => {
-    const rad = getServiceManifest('radicale')!;
-    expect(rad.dataSubdir).toBe('radicale/data');
-    expect(rad.include).toContain('collections');
-  });
-
-  it('backs up jellyfin server config + users db, excludes regenerable caches (#2153)', () => {
-    const jf = getServiceManifest('jellyfin')!;
-    expect(jf.dataSubdir).toBe('media/jellyfin-config');
-    expect(jf.include).toEqual(expect.arrayContaining(['config', 'data/jellyfin.db', 'plugins']));
-    // The media library + caches are never in the tarball.
-    expect(jf.exclude).toEqual(expect.arrayContaining(['cache', 'metadata', 'transcodes']));
-  });
-
-  it('backs up file-share samba passdb + filebrowser config (#2153)', () => {
-    const fs = getServiceManifest('file-share')!;
-    expect(fs.include).toContain('samba-private');
-    expect(fs.include).toContain('filebrowser-config');
-  });
-
-  it('keeps the zwave_js network keys in home-assistant (needed to recover the mesh)', () => {
-    expect(getServiceManifest('home-assistant')!.include).toContain('.storage/zwave_js');
-  });
-
-  it('uses a glob for lovelace dashboards, not the bare exact name (#1595)', () => {
-    const ha = getServiceManifest('home-assistant')!;
-    // HA stores dashboards as `.storage/lovelace.<url_path>`; the bare exact
-    // include never matched them. The glob must be present and the dropped
-    // exact name must be gone.
-    expect(ha.include).toContain('.storage/lovelace*');
-    expect(ha.include).not.toContain('.storage/lovelace');
-  });
-
-  it('backs up HACS code + data so HACS integrations survive a reinstall (#1596)', () => {
-    const ha = getServiceManifest('home-assistant')!;
-    expect(ha.include).toContain('custom_components');
-    expect(ha.include).toContain('.storage/hacs*');
-  });
-
-  it('backs up the zwave-js store as a sibling entry gated on home-assistant (#1594)', () => {
-    const zw = getServiceManifest('home-assistant-zwave')!;
-    expect(zw).toBeDefined();
-    // The store is a SIBLING dir under DATA_DIR — a plain dataSubdir, no `../`,
-    // so the traversal guards stay intact.
-    expect(zw.dataSubdir).toBe('home-assistant/zwave-js');
-    expect(zw.gateOn).toBe('home-assistant');
-    // settings.json carries the network securityKeys + port + soft-reset.
-    expect(zw.include).toContain('settings.json');
-    // Kept verbatim — the keys can't be regenerated (trusted-NAS decision).
-    expect(zw.strip).toBeUndefined();
-  });
-
-  it('getBackupGate returns gateOn for a sibling entry, the service name otherwise', () => {
-    expect(getBackupGate(getServiceManifest('home-assistant-zwave')!)).toBe('home-assistant');
-    expect(getBackupGate(getServiceManifest('adguard')!)).toBe('adguard');
-  });
-
-  it('the apps of a multi-app template gate on the TEMPLATE name (#2595)', () => {
-    // installedTemplates carries template names — `auth` and `media` — never the
-    // app names. Defaulting the gate to the app name (the pre-fix state) left
-    // these three permanently dormant: the SSO server, the whole identity store,
-    // and the media server's config, none of them ever backed up.
-    expect(getBackupGate(getServiceManifest('authelia')!)).toBe('auth');
-    expect(getBackupGate(getServiceManifest('lldap')!)).toBe('auth');
-    expect(getBackupGate(getServiceManifest('jellyfin')!)).toBe('media');
-    // Their data dirs are the ones the template declares — the gate change does
-    // not move them.
-    expect(getServiceManifest('authelia')!.dataSubdir).toBe('auth/authelia-data');
-    expect(getServiceManifest('lldap')!.dataSubdir).toBe('auth/lldap');
-    expect(getServiceManifest('jellyfin')!.dataSubdir).toBe('media/jellyfin-config');
-  });
-
-  it('getSiblingBackupServices lists the stores that ride a template deploy (#1594)', () => {
-    expect(getSiblingBackupServices('home-assistant')).toEqual(['home-assistant-zwave']);
-    // A template with no sibling stores gets an empty list.
-    expect(getSiblingBackupServices('adguard')).toEqual([]);
-  });
-
-  it('the auth/media deploys now carry their app stores through wipe+restore (#2595)', () => {
-    // This is the RESTORE direction: install/runner.ts's deployItem builds
-    // `[item.name, ...getSiblingBackupServices(item.name)]` and runs
-    // wipeServiceForReinstall + autoRestoreServiceOnReinstall over each. Before
-    // the gate fix these lists were empty, so a reinstall of `auth` or `media`
-    // restored nothing for the apps inside them — there was never a tar either.
-    expect(getSiblingBackupServices('auth')).toEqual(['authelia', 'lldap']);
-    expect(getSiblingBackupServices('media')).toEqual(['jellyfin']);
-  });
-
-  it('excludes the recorder DB from home-assistant', () => {
-    expect(getServiceManifest('home-assistant')!.exclude).toContain('home-assistant_v2.db');
-  });
-
-  it('backs up NPM as a first-class entry: db + certs, no strip, in-container collector (#1528)', () => {
-    const npm = getServiceManifest('nginx')!;
-    expect(npm).toBeDefined();
-    // Template name is `nginx` but data lives under nginx-proxy-manager/.
-    expect(npm.dataSubdir).toBe('nginx-proxy-manager');
-    expect(npm.include).toEqual(
-      expect.arrayContaining(['data/database.sqlite', 'letsencrypt', 'data/custom_ssl']),
-    );
-    // Certs + admin hash are kept verbatim — no strip rules (trusted-NAS decision).
-    expect(npm.strip).toBeUndefined();
-    // database.sqlite is WAL-mode → needs a consistent in-container snapshot.
-    expect(npm.collector).toEqual({ kind: 'npm-sqlite' });
-    // ACME renewal logs are noise; conf.d server blocks regenerate from the DB.
-    expect(npm.exclude).toContain('letsencrypt/logs');
+  it('THROWS rather than staging a subset — a quiet subset is a shrunken denominator', () => {
+    expect(() => parseBackupManifestsJson('nope')).toThrow(/valid JSON/);
+    expect(() => parseBackupManifestsJson('{}')).toThrow(/JSON array/);
+    expect(() => parseBackupManifestsJson('[null]')).toThrow(/not an object/);
+    expect(() => parseBackupManifestsJson('[{"include":["a"],"exclude":[]}]')).toThrow(/`service`/);
+    expect(() => parseBackupManifestsJson('[{"service":"a","exclude":[]}]')).toThrow(/`include`/);
+    expect(() => parseBackupManifestsJson('[{"service":"a","include":[]}]')).toThrow(/`include`/);
+    expect(() => parseBackupManifestsJson('[{"service":"a","include":["x"]}]')).toThrow(/`exclude`/);
   });
 });
 
@@ -214,51 +101,6 @@ describe('stripYamlKeys', () => {
   });
 });
 
-describe('config/data classification (#1585)', () => {
-  it('getConfigPaths returns the manifest include set (the CONFIG class)', () => {
-    const ha = getServiceManifest('home-assistant')!;
-    expect(getConfigPaths('home-assistant')).toEqual(ha.include);
-    // CONFIG includes the small restorable bits.
-    expect(getConfigPaths('home-assistant')).toContain('configuration.yaml');
-    expect(getConfigPaths('home-assistant')).toContain('.storage/zwave_js');
-  });
-
-  it('the DATA class holds the large on-RAID artifacts kept through wipe-config', () => {
-    expect(dataPaths('home-assistant')).toContain('home-assistant_v2.db');
-    expect(dataPaths('home-assistant')).toContain('zwave_js_network.db');
-  });
-
-  it('CONFIG and DATA are disjoint for home-assistant (recorder db is DATA, mesh keys are CONFIG)', () => {
-    const config = new Set(getConfigPaths('home-assistant'));
-    const data = dataPaths('home-assistant');
-    // The heavy recorder DB must NOT be in the CONFIG (backed-up) set.
-    expect(config.has('home-assistant_v2.db')).toBe(false);
-    // No DATA path is also a CONFIG path.
-    for (const d of data) expect(config.has(d)).toBe(false);
-  });
-
-  it('returns empty arrays for a service with no manifest', () => {
-    expect(getConfigPaths('not-a-service')).toEqual([]);
-    expect(dataPaths('not-a-service')).toEqual([]);
-  });
-
-  it('a service may declare no DATA class (authelia is config-only)', () => {
-    expect(getServiceManifest('authelia')!.data).toBeUndefined();
-    expect(dataPaths('authelia')).toEqual([]);
-  });
-
-  it('authelia backs up the SQLite secret store, not the dead legacy YAML (#2153)', () => {
-    const authelia = getServiceManifest('authelia')!;
-    // The real per-service secrets (TOTP/WebAuthn/OIDC consent) live in db.sqlite3.
-    expect(authelia.dataSubdir).toBe('auth/authelia-data');
-    expect(getConfigPaths('authelia')).toContain('db.sqlite3');
-    // The legacy file-backend YAML is dead (LLDAP is the auth source) — not backed up.
-    expect(getConfigPaths('authelia')).not.toContain('users_database.yml');
-    // Encrypted at rest, kept verbatim — no strip.
-    expect(authelia.strip).toBeUndefined();
-  });
-});
-
 describe('applyStripRules', () => {
   // No shipped manifest declares a strip rule today (#2595 retired the last one
   // with the `hermes` entry), so the rule engine is exercised against an
@@ -279,7 +121,7 @@ describe('applyStripRules', () => {
   });
 
   it('passes everything through for a manifest with no strip rules', () => {
-    const lldap = getServiceManifest('lldap')!;
+    const lldap = findServiceManifest(RESOLVED, 'lldap')!;
     expect(applyStripRules(lldap, 'users.db', 'IDENTITY-BYTES')).toBe('IDENTITY-BYTES');
   });
 });
@@ -401,10 +243,10 @@ describe('translateHaAddonConfigEntries (#1595)', () => {
   });
 
   it('applyTransformRules runs the HA config-entries translation only on the targeted file', () => {
-    const ha = getServiceManifest('home-assistant')!;
-    expect(ha.transform).toEqual([
-      { file: '.storage/core.config_entries', kind: 'ha-config-entries-addon' },
-    ]);
+    const ha: ServiceBackupManifest = {
+      ...findServiceManifest(RESOLVED, 'home-assistant')!,
+      transform: [{ file: '.storage/core.config_entries', kind: 'ha-config-entries-addon' }],
+    };
     const translated = applyTransformRules(ha, '.storage/core.config_entries', supervisorEntries());
     expect(JSON.parse(translated).data.entries[0].data.url).toBe('ws://localhost:3001');
     // A different file is passed through untouched.
@@ -471,7 +313,10 @@ describe('pg-dump collector descriptor (#2864)', () => {
   });
 
   it('leaves a non-pg-dump manifest alone', () => {
-    const npm = getServiceManifest('nginx')!;
+    const npm: ServiceBackupManifest = {
+      service: 'nginx', dataSubdir: 'nginx-proxy-manager',
+      include: ['data/database.sqlite'], exclude: [], collector: { kind: 'npm-sqlite' },
+    };
     expect(pgDumpRemap(npm)).toBe(npm);
     expect(pgDumpCollectorProblems(npm)).toEqual([]);
   });
