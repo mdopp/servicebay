@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.33.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.0...servicebay-v5.33.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **backup:** prune the NAS before every write so a full share recovers itself ([abbffe2](https://github.com/mdopp/servicebay/commit/abbffe21232f79d519eba06131c814486af3fa53)), closes [#2873](https://github.com/mdopp/servicebay/issues/2873)
+* **backup:** prune the NAS before every write so a full share recovers itself ([#2873](https://github.com/mdopp/servicebay/issues/2873)) ([d6d7979](https://github.com/mdopp/servicebay/commit/d6d79797f01f1a6154a6efb5de2b83ad65327d21))
+
 ## [5.33.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.32.0...servicebay-v5.33.0) (2026-09-07)
 
 
