@@ -3,6 +3,8 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -65,6 +67,31 @@ import { logger } from '../logger';
 
 /** Match a dated slot tar `<service>-YYYYMMDD-HHMM.tar` (#1865). */
 const datedTarRe = (service: string) => new RegExp(`/${service}-\\d{8}-\\d{4}\\.tar$`);
+
+/**
+ * The agent's `SAFE_EXEC_ALLOWLIST`, parsed out of `agent.py` itself (#2882).
+ *
+ * Read from the source of truth rather than re-declared here: a hand-copied list
+ * would drift, and drift is exactly the bug — the collector shipped a `chmod`
+ * step the agent refuses, so every NAS backup logged its own working snapshot as
+ * "errored — as-is".
+ */
+function safeExecAllowlist(): Set<string> {
+  const py = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '../agent/v4/agent.py'),
+    'utf8',
+  );
+  const block = /SAFE_EXEC_ALLOWLIST = frozenset\(\{([\s\S]*?)\n\}\)/.exec(py);
+  if (!block) throw new Error('SAFE_EXEC_ALLOWLIST not found in agent.py — the allow-list guard cannot run');
+  const names = new Set<string>();
+  for (const line of block[1].split('\n')) {
+    // Strip the audit comment first: it quotes binaries that are NOT allow-listed.
+    const entry = /^\s*'([^']+)'\s*,/.exec(line.replace(/#.*$/, ''));
+    if (entry) names.add(entry[1]);
+  }
+  if (names.size === 0) throw new Error('SAFE_EXEC_ALLOWLIST parsed empty — the allow-list guard cannot run');
+  return names;
+}
 
 let tmpDirs: string[] = [];
 
@@ -262,23 +289,31 @@ describe('runBackupCollector (NPM sqlite snapshot, #1528)', () => {
   type ExecArgs = { command?: string; argv?: string[] };
   /**
    * Route the collector's agent calls by WHAT they are rather than by call index
-   * — the collector now makes up to six (find, rm, snapshot, mkdir, podman cp,
-   * chmod) and an index-keyed queue breaks on every ordering change.
+   * — the collector makes up to five (find, rm, snapshot, mkdir, podman cp) and
+   * an index-keyed queue breaks on every ordering change.
+   *
+   * `safe_exec` REJECTS (it does not resolve with a code) when argv[0] is not on
+   * the agent's allow-list, so that is what an off-list binary does here (#2882).
    */
   function npmAgent(opts: {
     container?: string;
     snapshot?: { stdout?: string; stderr?: string; code?: number };
     cp?: { stdout?: string; stderr?: string; code?: number };
-    chmod?: { stderr?: string; code?: number };
   } = {}): void {
+    const allowlist = safeExecAllowlist();
     mockSendCommand.mockImplementation(async (op: string, args: ExecArgs) => {
       if (op === 'exec' && (args.command ?? '').includes('podman ps')) {
         return { stdout: opts.container ?? 'npm_proxy-manager docker.io/jc21/nginx-proxy-manager', stderr: '', code: 0 };
       }
       if (op === 'exec') return { stdout: 'ok', stderr: '', code: 0, ...opts.snapshot };
       const argv = args.argv ?? [];
+      if (!allowlist.has(argv[0])) {
+        throw new Error(
+          `safe_exec: binary '${argv[0]}' is not on the allow-list. Add it to SAFE_EXEC_ALLOWLIST in agent.py `
+          + 'with an audit comment, or use the legacy \'exec\' path explicitly.',
+        );
+      }
       if (argv[0] === 'podman' && argv[1] === 'cp') return { stdout: '', stderr: '', code: 0, ...opts.cp };
-      if (argv[0] === 'chmod') return { stdout: '', stderr: '', code: 0, ...opts.chmod };
       return { stdout: '', stderr: '', code: 0 };
     });
   }
@@ -336,6 +371,7 @@ describe('runBackupCollector (NPM sqlite snapshot, #1528)', () => {
 
   it('with no sqlite3 in the image, copies the DB OUT with podman cp and marks it inconsistent (#2877)', async () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
     // The jc21 image ships no sqlite3, and `podman exec … cat /data/database.sqlite`
     // in this pod answers "Permission denied" — so the snapshot must be taken with
     // a primitive that does not depend on in-container permissions at all.
@@ -352,11 +388,31 @@ describe('runBackupCollector (NPM sqlite snapshot, #1528)', () => {
       'npm_proxy-manager:/data/database.sqlite',
       '/mnt/data/stacks/nginx-proxy-manager/data/database.sqlite.sb-backup',
     ]);
-    // podman cp preserves the source's 0600 — without the chmod the worker (a
-    // different uid) would EACCES on the copy exactly as it did on the original.
-    expect(argvCalls()).toContainEqual(['chmod', '0644', '/mnt/data/stacks/nginx-proxy-manager/data/database.sqlite.sb-backup']);
-    const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
-    expect(msg).toMatch(/LIVE/);
+    // A successful copy is a SNAPSHOT, not an error — the expected grade on the
+    // jc21 image is logged at info, and a healthy run raises no WARN (#2882).
+    expect(warn).not.toHaveBeenCalled();
+    expect(info.mock.calls.map(c => String(c[1])).join('\n')).toMatch(/LIVE/);
+    info.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('issues no binary that is missing from the agent\'s SAFE_EXEC_ALLOWLIST (#2882)', async () => {
+    // The chmod that used to follow the copy is not on the allow-list, so
+    // `safe_exec` REJECTED and the collector logged its own working snapshot as
+    // "errored — backing up database.sqlite as-is". The allow-list is read from
+    // agent.py, so adding a call the agent refuses fails here, not on the box.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    npmAgent({ snapshot: { stdout: 'nosqlite3' } });
+    const { manifest: out, consistent } = await runBackupCollector(npm, 'Local');
+    const allowlist = safeExecAllowlist();
+    const offList = argvCalls().map(a => a[0]).filter(b => !allowlist.has(b));
+    expect(offList).toEqual([]);
+    // …and the snapshot is reported as a snapshot: remapped, no WARN.
+    expect(out.include).toContain('data/database.sqlite.sb-backup');
+    expect(consistent).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+    info.mockRestore();
     warn.mockRestore();
   });
 
@@ -404,14 +460,20 @@ describe('runBackupCollector (NPM sqlite snapshot, #1528)', () => {
     warn.mockRestore();
   });
 
-  it('treats an unreadable copy as no snapshot when the chmod fails', async () => {
-    // A 0600 copy the worker cannot read is not a snapshot — remapping onto it
-    // would just move the EACCES one file along.
+  it('takes NO extra step after the copy — the podman-cp file is already worker-readable (#2882)', async () => {
+    // Rootless `podman cp` lands the copy owned by the podman user (`core`), the
+    // same host identity the backup worker's container-root maps to, so nothing
+    // has to relax its mode afterwards. The step that used to do it (`chmod`) is
+    // off the agent's allow-list; issuing it turned a working snapshot into a
+    // logged failure. `podman cp` must be the LAST safe_exec of the run.
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
-    npmAgent({ snapshot: { stdout: 'nosqlite3' }, chmod: { code: 1, stderr: 'operation not permitted' } });
-    const { manifest: out } = await runBackupCollector(npm, 'Local');
-    expect(out).toBe(npm);
-    expect(warn.mock.calls.map(c => String(c[1])).join('\n')).toMatch(/different uid/);
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    npmAgent({ snapshot: { stdout: 'nosqlite3' } });
+    await runBackupCollector(npm, 'Local');
+    const calls = argvCalls();
+    expect(calls[calls.length - 1]?.slice(0, 2)).toEqual(['podman', 'cp']);
+    expect(calls.some(a => a[0] === 'chmod')).toBe(false);
+    info.mockRestore();
     warn.mockRestore();
   });
 
