@@ -57,7 +57,7 @@ const FAKE_TOKEN = 'sb_deadbeef_not-a-real-secret';
 /** Sample bodies keyed by verb, shaped like the routes actually answer. */
 const SUCCESS_BODY: Record<string, unknown> = {
   services: [{ name: 'media', activeState: 'active', status: 'running' }],
-  service: { serviceFile: '[Unit]\nDescription=media', yamlFile: 'apiVersion: v1' },
+  service: { serviceContent: '[Unit]\nDescription=media', yamlContent: 'apiVersion: v1' },
   diagnose: { probes: [{ id: 'dns', status: 'ok', message: 'resolves' }] },
   logs: { serviceLogs: 'started', podmanLogs: 'pulled', podmanPs: [] },
   health: [{ name: 'Link: jellyfin', lastResult: { status: 'ok' } }],

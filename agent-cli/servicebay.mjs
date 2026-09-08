@@ -94,11 +94,15 @@ export const VERBS = {
     positionals: ['name'],
     options: ['node'],
     path: (args, opts) => `/api/services/${enc(args.name)}${opts.node ? `?node=${enc(opts.node)}` : ''}`,
-    reads: ['serviceFile', 'yamlFile'],
+    // `GET /api/services/[name]` hands `ServiceListing.getServiceFiles` straight
+    // through, so these are the payload's own names — `serviceFile`/`yamlFile`
+    // (what this verb read until #2907's contract test ran) exist nowhere on
+    // the wire and printed "no files returned" for every service.
+    reads: ['serviceContent', 'yamlContent'],
     text: body => {
       const parts = [];
-      if (body?.serviceFile) parts.push(`--- unit ---\n${clip(body.serviceFile)}`);
-      if (body?.yamlFile) parts.push(`--- pod manifest ---\n${clip(body.yamlFile)}`);
+      if (body?.serviceContent) parts.push(`--- unit ---\n${clip(body.serviceContent)}`);
+      if (body?.yamlContent) parts.push(`--- pod manifest ---\n${clip(body.yamlContent)}`);
       return parts.length ? parts.join('\n\n') : 'no files returned for this service';
     },
   },

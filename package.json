@@ -117,6 +117,7 @@
       ".": {
         "entry": [
           "scripts/**/*.{ts,mjs}",
+          "agent-cli/*.mjs",
           "tests/e2e/**/*.e2e.ts",
           "tests/backend/fixtures/*-emitter.ts",
           "templates/*/config-ui/server.mjs",
