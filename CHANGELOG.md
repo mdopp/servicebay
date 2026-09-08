@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.33.8](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.7...servicebay-v5.33.8) (2026-09-08)
+
+
+### Bug Fixes
+
+* **services:** report installedTemplates drift and let the operator reconcile it ([1af0245](https://github.com/mdopp/servicebay/commit/1af0245d859aef79b8ac98d583096e5f7ee4f1e5)), closes [#2902](https://github.com/mdopp/servicebay/issues/2902)
+* **services:** report installedTemplates drift and let the operator reconcile it ([#2902](https://github.com/mdopp/servicebay/issues/2902)) ([fae49bd](https://github.com/mdopp/servicebay/commit/fae49bdb7d4fc04f7d7a76469b18cfc533d081fb))
+
 ## [5.33.7](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.6...servicebay-v5.33.7) (2026-09-08)
 
 

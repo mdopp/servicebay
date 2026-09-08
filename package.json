@@ -1,6 +1,6 @@
 {
   "name": "servicebay",
-  "version": "5.33.7",
+  "version": "5.33.8",
   "private": true,
   "workspaces": [
     "packages/*"
