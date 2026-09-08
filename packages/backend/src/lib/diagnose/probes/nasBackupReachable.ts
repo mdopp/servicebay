@@ -10,12 +10,8 @@
  * round-trip into sb-backup/. Auth failures, plain unreachability, and a
  * read-only / no-drive target are surfaced distinctly.
  */
-import { getNasTarget, testNasConnection, nasUpload, nasRemove } from '@/lib/externalBackup/nasClient';
-import {
-  NAS_BACKUP_DIR,
-  NAS_WRITE_TEST_PREFIX,
-  isOutOfSpaceError,
-} from '@/lib/externalBackup/producer';
+import { getNasTarget, testNasConnection } from '@/lib/externalBackup/nasClient';
+import { NAS_BACKUP_DIR, nasWriteTest } from '@/lib/externalBackup/producer';
 import { logger } from '@/lib/logger';
 
 export interface NasBackupProbeResult {
@@ -74,23 +70,16 @@ export async function checkNasBackupReachable(): Promise<NasBackupProbeResult> {
   }
 
   // Connected + authed — confirm we can actually write where backups go.
-  // ensureDir + upload + remove exercises the full write path without leaving
-  // anything behind on the share.
-  const probePath = `${NAS_BACKUP_DIR}/${NAS_WRITE_TEST_PREFIX}${process.pid}-${Date.now()}`;
-  try {
-    await nasUpload(probePath, Buffer.from('servicebay-write-test'));
-    await nasRemove(probePath);
-  } catch (e) {
-    const error = e instanceof Error ? e.message : String(e);
-    logger.warn('diagnose:nas_backup_reachable', `write test failed: ${error}`);
-    // A 452/553 mid-transfer can still have created the file, and the remove
-    // above never ran — clean it up here so the probe stops littering the share
-    // it is complaining about (#2873). Idempotent, and best-effort by design.
-    await nasRemove(probePath).catch(() => {});
+  // `nasWriteTest` is the shared primitive (ensureDir + upload + remove, with its
+  // own leftover cleanup); the producer runs the same test mid-run to tell a full
+  // share from a network drop (#2888), so both read the share the same way.
+  const write = await nasWriteTest();
+  if (!write.ok) {
+    logger.warn('diagnose:nas_backup_reachable', `write test failed: ${write.error}`);
     return {
       status: 'warn',
-      detail: `Connected to ${target.host}, but writing to ${NAS_BACKUP_DIR}/ failed: ${error}`,
-      hint: isOutOfSpaceError(error) ? FULL_SHARE_HINT : ENABLE_SHARING_HINT,
+      detail: `Connected to ${target.host}, but writing to ${NAS_BACKUP_DIR}/ failed: ${write.error}`,
+      hint: write.full ? FULL_SHARE_HINT : ENABLE_SHARING_HINT,
     };
   }
 

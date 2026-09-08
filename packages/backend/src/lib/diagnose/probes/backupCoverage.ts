@@ -202,6 +202,7 @@ type ConfigBackupState =
   | 'last_run_failed'
   | 'partial'
   | 'connection_dropped'
+  | 'target_full'
   | 'incomplete'
   | 'overdue'
   | 'ok';
@@ -354,7 +355,10 @@ function classifyRecordedConfigRun(
   if (ok < total) {
     return withCaveat({
       status: 'warn',
-      state: cause.connectionDropped ? 'connection_dropped' : 'partial',
+      // Told apart on purpose (#2888): a share that filled mid-transfer signals
+      // itself as a dropped connection, and "the NAS closed the connection" is
+      // the wrong thing to chase when the write test says "no space left".
+      state: cause.targetFull ? 'target_full' : cause.connectionDropped ? 'connection_dropped' : 'partial',
       detail: `The last config backup (${age} ago) covered only ${tally}. ${record.lastMessage ?? ''}`.trim(),
       hint: partialRunHint(cause, PARTIAL_HINT),
     });

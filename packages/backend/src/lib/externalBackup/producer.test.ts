@@ -57,6 +57,7 @@ import {
   getNasBackupSchedule,
   deleteServiceBackup,
   NAS_BACKUP_DIR,
+  NAS_WRITE_TEST_PREFIX,
   DEFAULT_BACKUP_RETENTION,
   latestServiceBackupName,
   summariseBackupRun,
@@ -1396,5 +1397,162 @@ describe('summariseBackupRun — connection drops are ONE fact, not N broken ser
     expect(summariseBackupRun([
       { service: 'adguard', ok: false, error: 'No config files to back up' },
     ])).toBe('Not backed up: adguard (No config files to back up)');
+  });
+
+  // #2888 — a full share resets the data socket, so the error names BOTH causes.
+  // "dropped the connection" is the wrong headline for a disk with no room.
+  it('reports a full share as out of space even when the error also reads as a drop', () => {
+    const msg = summariseBackupRun([
+      { service: 'radicale', ok: true },
+      {
+        service: 'paperless',
+        ok: false,
+        error: 'read ECONNRESET (data socket) — no space left on the destination: target too small '
+          + 'for one snapshot of each service',
+      },
+      { service: 'beets', ok: false, error: '452 Error writing file: No space left on device.' },
+    ]);
+    expect(msg).toMatch(/ran out of space after 1 of 3 services/);
+    expect(msg).toContain('paperless, beets');
+    expect(msg).not.toMatch(/dropped the connection/);
+  });
+});
+
+describe('a full share that only signals as a dropped connection (#2888)', () => {
+  // The FritzBox does not answer a LARGE upload onto a full stick with 452/553 —
+  // it resets the data socket. The run classified that as a network drop, burned
+  // its retries on the same full disk, and never took the capacity path: the
+  // 2026-09-08 nightly went 11/13 with no `Freed …` line in the journal.
+  let store: Map<string, Buffer>;
+  let dropTarUploads: number;
+  let shareFull: boolean;
+
+  const p = (name: string) => `${NAS_BACKUP_DIR}/${name}`;
+  const reset = (): Error =>
+    Object.assign(new Error('read ECONNRESET (data socket)'), { code: 'ECONNRESET' });
+
+  function seedSnapshot(name: string, size: number): void {
+    store.set(p(name), Buffer.alloc(size, 1));
+    store.set(p(`${name}.meta.json`), Buffer.from('{"schemaVersion":1}'));
+  }
+
+  /** The last `onConnectionDrop` guard the producer handed the transport. */
+  let lastGuard: ((error: unknown, attempt: number) => boolean | Promise<boolean>) | undefined;
+
+  beforeEach(() => {
+    store = new Map();
+    dropTarUploads = 0;
+    shareFull = true;
+    lastGuard = undefined;
+    mockNas.nasUpload.mockImplementation(
+      async (remote: string, data: Buffer, opts?: { onConnectionDrop?: typeof lastGuard }) => {
+        if (remote.includes(NAS_WRITE_TEST_PREFIX)) {
+          // The small write is answered straight, which is how the share's real
+          // state becomes visible (`nas_backup_reachable` sees the same thing).
+          if (shareFull) throw new Error('452 Error writing file: No space left on device.');
+          store.set(remote, Buffer.from(data));
+          return;
+        }
+        if (opts?.onConnectionDrop) lastGuard = opts.onConnectionDrop;
+        if (dropTarUploads > 0) {
+          dropTarUploads--;
+          throw reset();
+        }
+        store.set(remote, Buffer.from(data));
+      },
+    );
+    mockNas.nasList.mockImplementation(async (dir = '') => {
+      const prefix = dir ? `${dir}/` : '';
+      return [...store.entries()]
+        .filter(([k]) => k.startsWith(prefix))
+        .map(([k, v]) => ({ name: k.slice(prefix.length), size: v.length }));
+    });
+    mockNas.nasRemove.mockImplementation(async (remote: string) => { store.delete(remote); });
+  });
+
+  it('(a) a reset data socket on a FULL share takes the capacity path and the retry lands', async () => {
+    seedSnapshot('adguard-20260601-0531.tar', 1024);
+    seedSnapshot('adguard-20260610-0531.tar', 1024);
+    seedSnapshot('syncthing-20260602-0531.tar', 1024);
+    seedSnapshot('syncthing-20260611-0531.tar', 1024);
+    dropTarUploads = 1; // the tar upload resets; the write test then says "full"
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-20T05:31:00Z'));
+      // Once room is made the retry must succeed, so the share reports free again.
+      mockNas.nasRemove.mockImplementation(async (remote: string) => {
+        store.delete(remote);
+        shareFull = false;
+      });
+      const res = await stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7));
+      expect(res.tarName).toBe('adguard-20260620-0531.tar');
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The snapshot landed on the retry …
+    expect(store.has(p('adguard-20260620-0531.tar'))).toBe(true);
+    expect(store.has(p('adguard-20260620-0531.tar.meta.json'))).toBe(true);
+    // … the globally-oldest snapshot was pruned to make room …
+    expect(store.has(p('adguard-20260601-0531.tar'))).toBe(false);
+    // … and every service still holds its newest copy.
+    expect(store.has(p('adguard-20260610-0531.tar'))).toBe(true);
+    expect(store.has(p('syncthing-20260611-0531.tar'))).toBe(true);
+    // The journal says WHY the connection dropped, not just that it did.
+    expect(info.mock.calls.map(c => String(c[1])).join('\n'))
+      .toMatch(/dropped the connection because the share is full/);
+  });
+
+  it('(a2) the guard it hands the transport stops the retries only while the share is full', async () => {
+    await stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7)).catch(() => {});
+    expect(lastGuard).toBeTypeOf('function');
+    // The first failure still gets its plain backoff retry (#2876) …
+    await expect(lastGuard?.(reset(), 1)).resolves.toBe(true);
+    // … the second consults the share: full → stop, so the caller can prune.
+    shareFull = true;
+    await expect(lastGuard?.(reset(), 2)).resolves.toBe(false);
+  });
+
+  it('(b) a reset data socket on a share with ROOM keeps the unchanged drop path', async () => {
+    seedSnapshot('adguard-20260601-0531.tar', 1024);
+    seedSnapshot('adguard-20260610-0531.tar', 1024);
+    dropTarUploads = 99; // every tar upload resets …
+    shareFull = false;   // … but the write test says the share has room
+
+    await expect(stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7)))
+      .rejects.toThrow(/ECONNRESET/);
+    // A network drop must never be answered by deleting other snapshots.
+    expect(store.has(p('adguard-20260601-0531.tar'))).toBe(true);
+    expect(store.has(p('adguard-20260610-0531.tar'))).toBe(true);
+  });
+
+  it('(c) a share that stays full through the retry is reported as out of space, not as a drop', async () => {
+    seedSnapshot('adguard-20260610-0531.tar', 1024); // one copy each — nothing prunable
+    seedSnapshot('syncthing-20260611-0531.tar', 1024);
+    dropTarUploads = 99;
+    shareFull = true;
+
+    await expect(stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7)))
+      .rejects.toThrow(/no space left on the destination/i);
+    expect(store.has(p('adguard-20260610-0531.tar'))).toBe(true);
+    expect(store.has(p('syncthing-20260611-0531.tar'))).toBe(true);
+  });
+
+  it('(d) the sweep clears the zero-length stub an aborted transfer left behind', async () => {
+    // Exactly the shape #2888 left on the share: a dated tar, zero bytes, no
+    // sidecar, older than the in-flight grace window.
+    store.set(p('paperless-20260908-0330.tar'), Buffer.alloc(0));
+    shareFull = false;
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-09-09T03:30:00Z'));
+      await stageUploadedServiceTar('adguard', Buffer.alloc(1024, 7));
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(store.has(p('paperless-20260908-0330.tar'))).toBe(false);
   });
 });

@@ -193,10 +193,33 @@ describe('checkConfigBackup — criterion 3: last nightly result is visible', ()
       },
     };
     const r = await checkConfigBackup(NOW);
-    expect(r.state).toBe('partial');
+    expect(r.state).toBe('target_full');
     expect(r.hint).toMatch(/reported itself full/i);
     expect(r.hint).toMatch(/prunes the oldest/i);
     expect(r.hint).not.toMatch(/per-service errors/);
+  });
+
+  // #2888 — the FritzBox answers a large upload onto a full stick by resetting
+  // the data socket, so the run message carries BOTH a connection phrase and the
+  // capacity phrase. Capacity is the actionable one; "the NAS closed the
+  // connection" sends the operator to the network for a full disk.
+  it('calls a share that filled mid-transfer full, not dropped, when both are named', async () => {
+    state.config = {
+      externalBackup: {
+        enabled: true, lastRun: ago(6 * HOUR), lastStatus: 'partial',
+        servicesOk: 11, servicesTotal: 13,
+        lastMessage:
+          'The destination ran out of space after 11 of 13 services — 2 service(s) never got a write: '
+          + 'paperless, beets (first error: read ECONNRESET (data socket) — no space left on the destination: '
+          + 'target too small for one snapshot of each service)',
+      },
+    };
+    const r = await checkConfigBackup(NOW);
+    expect(r.state).toBe('target_full');
+    expect(r.status).toBe('warn');
+    expect(r.detail).not.toMatch(/dropped the connection/i);
+    expect(r.hint).toMatch(/reported itself full/i);
+    expect(r.hint).not.toMatch(/one fact about the destination/i);
   });
 
   // #2876 — five identical `ECONNREFUSED` rows are ONE fact about the NAS, not

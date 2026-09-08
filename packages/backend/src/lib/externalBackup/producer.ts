@@ -22,7 +22,15 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getConfig, updateConfig } from '../config';
 import { logger } from '../logger';
-import { nasUpload, nasDownload, nasList, nasRemove, withNasSession, isConnectionLevelError } from './nasClient';
+import {
+  nasUpload,
+  nasDownload,
+  nasList,
+  nasRemove,
+  withNasSession,
+  isConnectionLevelError,
+  type ConnectionDropHandler,
+} from './nasClient';
 import {
   applyStripRules,
   applyTransformRules,
@@ -65,6 +73,43 @@ export function isOutOfSpaceError(error: unknown): boolean {
   const message =
     error instanceof Error ? error.message : typeof error === 'string' ? error : String(error ?? '');
   return OUT_OF_SPACE_RE.test(message);
+}
+
+/**
+ * Write-test the backup directory: upload a tiny file and remove it again.
+ *
+ * This is the primitive the `nas_backup_reachable` probe reports on, lifted out
+ * of the probe so the producer can ask the same question mid-run (#2888). A
+ * FritzBox with a full USB stick does NOT answer a large upload with 452/553 —
+ * it resets the data socket — but it *does* answer this 22-byte write with
+ * "452 … No space left on device", so a small write is how a full share is
+ * recognised when the big one only looks like a network drop.
+ *
+ * Single-shot on purpose (`retry: false`): the caller is already inside a failed
+ * upload's retry budget and needs an answer now, not another 22 s of backoff.
+ */
+export async function nasWriteTest(): Promise<{ ok: true } | { ok: false; full: boolean; error: string }> {
+  const probePath = `${NAS_BACKUP_DIR}/${NAS_WRITE_TEST_PREFIX}${process.pid}-${Date.now()}`;
+  try {
+    await nasUpload(probePath, Buffer.from('servicebay-write-test'), { retry: false });
+    await nasRemove(probePath);
+    return { ok: true };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    // A 452/553 mid-transfer can still have created the file and the remove above
+    // never ran — clean up so the test stops littering the share it is probing
+    // (#2873). Idempotent, and best-effort by design.
+    await nasRemove(probePath).catch(() => {});
+    return { ok: false, full: isOutOfSpaceError(error), error };
+  }
+}
+
+/** The share's own answer to "are you full?", or null when it still has room.
+ *  A write test that fails for some OTHER reason is not a capacity fact, so it
+ *  reads as "not full" and leaves the caller's original error in charge. */
+async function fullShareReason(): Promise<string | null> {
+  const probe = await nasWriteTest();
+  return probe.ok || !probe.full ? null : probe.error;
 }
 
 /** Slack added to the "how much must I free" estimate: the `.meta.json` sidecar
@@ -620,9 +665,23 @@ export function summariseBackupRun(results: ServiceBackupRunEntry[]): string {
         .join('; ')}`;
   const withNote = (base: string): string => (incompleteNote ? `${base}. ${incompleteNote}` : base);
   if (failed.length === 0) return withNote(`${ok}/${total} services backed up`);
-  const dropped = failed.filter(r => isConnectionLevelError(r.error));
-  const perService = failed.filter(r => !isConnectionLevelError(r.error));
+  // Capacity beats connectivity (#2888): a full share can surface as ECONNRESET
+  // on the data socket, so an error that names "no space" is reported as the
+  // capacity fact it is — never as "the destination dropped the connection",
+  // which sends the operator to the network and hides the one real cause.
+  const full = failed.filter(r => isOutOfSpaceError(r.error));
+  const dropped = failed.filter(r => !isOutOfSpaceError(r.error) && isConnectionLevelError(r.error));
+  const perService = failed.filter(
+    r => !isOutOfSpaceError(r.error) && !isConnectionLevelError(r.error),
+  );
   const parts: string[] = [];
+  if (full.length > 0) {
+    parts.push(
+      `The destination ran out of space after ${ok} of ${total} services — ` +
+        `${full.length} service(s) never got a write: ${full.map(r => r.service).join(', ')} ` +
+        `(first error: ${full[0].error ?? 'no reason recorded'})`,
+    );
+  }
   if (dropped.length > 0) {
     parts.push(
       `The destination dropped the connection after ${ok} of ${total} services — ` +
@@ -969,6 +1028,96 @@ async function pruneServiceBackups(
 }
 
 /**
+ * Tell "the share is full" from "the network dropped us", for ONE write (#2888).
+ *
+ * A full share is not always announced as 452/553: the FritzBox answers a LARGE
+ * upload onto a full stick by resetting the data socket, so the write looks like
+ * a network drop and the connection-level retries (#2876) burn the whole budget
+ * on a disk that cannot take the file — which is exactly how the 2026-09-08
+ * nightly went 11/13 with no `Freed …` line in the journal.
+ *
+ * Two entry points, both answered by the same small write test:
+ *   - `guard` rides the transport's retry loop. The first drop still gets its
+ *     plain backoff (a genuine blip is the common case); once the retry has ALSO
+ *     failed, the share is asked directly and a full one stops the loop, so the
+ *     caller can prune instead of retrying onto the same full disk.
+ *   - `outOfSpace` classifies the error that finally surfaced. It is what makes
+ *     this work outside a run too, where there is no retry loop at all and the
+ *     guard is never consulted.
+ * `reason` is the share's own words (null while it still has room), and `clear`
+ * resets it so the post-prune retry is judged on its own.
+ */
+function capacityDetector(): {
+  guard: ConnectionDropHandler;
+  outOfSpace: (error: unknown) => Promise<boolean>;
+  reason: () => string | null;
+  clear: () => void;
+} {
+  let full: string | null = null;
+  return {
+    guard: async (_error, attempt) => {
+      if (attempt < 2) return true;
+      full = await fullShareReason();
+      return full === null;
+    },
+    outOfSpace: async error => {
+      if (isOutOfSpaceError(error)) return true;
+      if (!isConnectionLevelError(error)) return false;
+      full ??= await fullShareReason();
+      return full !== null;
+    },
+    reason: () => full,
+    clear: () => {
+      full = null;
+    },
+  };
+}
+
+/**
+ * The capacity path for one write: drop whatever partial the failed attempt left
+ * behind, free `needBytes` by pruning the oldest snapshots across ALL services
+ * (never a service's last copy), and run the write ONCE more.
+ *
+ * A share still full afterwards is reported in capacity words, whichever way it
+ * signalled itself (#2888) — so neither the run summary nor `config_backup`
+ * calls it a dropped connection when the write test said "no space".
+ */
+async function pruneAndRetryWrite(args: {
+  tarName: string;
+  needBytes: number;
+  sweptBytes: number;
+  capacity: ReturnType<typeof capacityDetector>;
+  retry: () => Promise<void>;
+}): Promise<void> {
+  const { tarName, needBytes, sweptBytes, capacity, retry } = args;
+  await nasRemove(path.posix.join(NAS_BACKUP_DIR, tarName)).catch(() => {});
+  const { pruned, freedBytes } = await pruneAcrossServices(needBytes);
+  const droppedBecauseFull = capacity.reason();
+  capacity.clear();
+  try {
+    await retry();
+  } catch (retryError) {
+    if (!(await capacity.outOfSpace(retryError))) throw retryError;
+    const detail = retryError instanceof Error ? retryError.message : String(retryError);
+    throw new Error(
+      `${detail} — no space left on the destination: target too small for one snapshot of each service: ` +
+        `${tarName} needs ${needBytes} bytes, pruning ${pruned.length} old snapshot(s) freed ${freedBytes} ` +
+        `and the sweep freed ${sweptBytes}. Every service's newest snapshot is kept, so nothing further ` +
+        `can be released.`,
+    );
+  }
+  if (droppedBecauseFull) {
+    // Say WHY the connection dropped, so the journal does not read as a network
+    // fault when it was capacity (#2888).
+    logger.info(
+      'ExternalBackup',
+      `The destination dropped the connection because the share is full (${droppedBecauseFull}) — ` +
+        `pruned ${pruned.length} old snapshot(s) (${freedBytes} bytes) and retried ${tarName}.`,
+    );
+  }
+}
+
+/**
  * Write an already-built `<service>.tar` buffer to the NAS as a NEW dated slot
  * (`sb-backup/<service>-YYYYMMDD-HHMM.tar` + `.meta.json`) rather than
  * overwriting one slot, then prune to the retention policy (#1865). Keeping
@@ -1016,31 +1165,23 @@ async function writeServiceBackupToNas(
   const swept = await sweepNasBackupDir(now);
   await pruneServiceBackups(service, Math.max(keep - 1, 1), swept.entries);
 
+  const capacity = capacityDetector();
   const upload = async (): Promise<void> => {
-    await nasUpload(path.posix.join(NAS_BACKUP_DIR, tarName), tar);
-    await nasUpload(path.posix.join(NAS_BACKUP_DIR, metaName), metaBuf);
+    await nasUpload(path.posix.join(NAS_BACKUP_DIR, tarName), tar, { onConnectionDrop: capacity.guard });
+    await nasUpload(path.posix.join(NAS_BACKUP_DIR, metaName), metaBuf, { onConnectionDrop: capacity.guard });
   };
 
   try {
     await upload();
   } catch (e) {
-    if (!isOutOfSpaceError(e)) throw e;
-    // The destination is full. Drop whatever partial this attempt left behind,
-    // free space across services (never a service's last copy), retry ONCE.
-    const needBytes = tar.length + metaBuf.length + CAPACITY_SLACK_BYTES;
-    await nasRemove(path.posix.join(NAS_BACKUP_DIR, tarName)).catch(() => {});
-    const { pruned, freedBytes } = await pruneAcrossServices(needBytes);
-    try {
-      await upload();
-    } catch (retryError) {
-      if (!isOutOfSpaceError(retryError)) throw retryError;
-      const detail = retryError instanceof Error ? retryError.message : String(retryError);
-      throw new Error(
-        `${detail} — target too small for one snapshot of each service: ${tarName} needs ${needBytes} bytes, ` +
-          `pruning ${pruned.length} old snapshot(s) freed ${freedBytes} and the sweep freed ${swept.freedBytes}. ` +
-          `Every service's newest snapshot is kept, so nothing further can be released.`,
-      );
-    }
+    if (!(await capacity.outOfSpace(e))) throw e;
+    await pruneAndRetryWrite({
+      tarName,
+      needBytes: tar.length + metaBuf.length + CAPACITY_SLACK_BYTES,
+      sweptBytes: swept.freedBytes,
+      capacity,
+      retry: upload,
+    });
   }
 
   logger.info('ExternalBackup', `Wrote ${tarName} to NAS (${tar.length} bytes)`);

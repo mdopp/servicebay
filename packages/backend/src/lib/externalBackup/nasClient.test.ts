@@ -301,6 +301,50 @@ describe('connection-level backoff + retry (#2876)', () => {
     expect(mockClient.access).toHaveBeenCalledTimes(1);
   });
 
+  // #2888 — the caller (the producer) probes the share's free space after the
+  // first retry also fails. A full share must not eat the rest of the budget.
+  it('lets the caller veto the next retry after a connection drop', async () => {
+    vi.useFakeTimers();
+    try {
+      mockClient.uploadFrom.mockRejectedValue(
+        Object.assign(new Error('read ECONNRESET (data socket)'), { code: 'ECONNRESET' }),
+      );
+      const seen: number[] = [];
+      const run = withNasSession(() =>
+        nasUpload('sb-backup/big.tar', Buffer.from('big'), {
+          onConnectionDrop: (_e, attempt) => {
+            seen.push(attempt);
+            return attempt < 2; // "still has room" on the first drop, "full" on the second
+          },
+        }),
+      );
+      const assertion = expect(run).rejects.toThrow(/ECONNRESET/);
+      await vi.advanceTimersByTimeAsync(120_000);
+      await assertion;
+      // Attempt 1 failed → guard said retry; attempt 2 failed → guard said stop.
+      expect(seen).toEqual([1, 2]);
+      expect(mockClient.uploadFrom).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runs the full backoff when no drop handler is given', async () => {
+    vi.useFakeTimers();
+    try {
+      mockClient.uploadFrom.mockRejectedValue(
+        Object.assign(new Error('read ECONNRESET (data socket)'), { code: 'ECONNRESET' }),
+      );
+      const run = withNasSession(() => nasUpload('sb-backup/big.tar', Buffer.from('big')));
+      const assertion = expect(run).rejects.toThrow(/ECONNRESET/);
+      await vi.advanceTimersByTimeAsync(120_000);
+      await assertion;
+      expect(mockClient.uploadFrom).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('throws the dropped connection away so the next operation reconnects', async () => {
     vi.useFakeTimers();
     try {
