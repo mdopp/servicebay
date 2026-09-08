@@ -35,5 +35,6 @@ import './oidcProviderReachable';
 import './ssoVerify';
 import './hermesChat';
 import './mediaLibraryAccess';
+import './installedTemplatesDrift';
 
 export {};
