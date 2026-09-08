@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.33.7](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.6...servicebay-v5.33.7) (2026-09-08)
+
+
+### Bug Fixes
+
+* **api:** accept a read-scoped token on GET /api/services ([532c01f](https://github.com/mdopp/servicebay/commit/532c01f54f9b144e84bf0b37d306f83ff74e1a3c)), closes [#2899](https://github.com/mdopp/servicebay/issues/2899)
+* **api:** accept a read-scoped token on GET /api/services ([#2899](https://github.com/mdopp/servicebay/issues/2899)) ([bc21bc2](https://github.com/mdopp/servicebay/commit/bc21bc2fc6a04d0d51d4a63a6e6fe90ecebe572b))
+
 ## [5.33.6](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.5...servicebay-v5.33.6) (2026-09-08)
 
 
