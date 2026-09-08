@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.33.5](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.4...servicebay-v5.33.5) (2026-09-08)
+
+
+### Bug Fixes
+
+* **backup:** take the capacity path when a full share only signals as a drop ([0a64015](https://github.com/mdopp/servicebay/commit/0a640159c3f131159a06f539668025d56224852c)), closes [#2888](https://github.com/mdopp/servicebay/issues/2888)
+* **backup:** take the capacity path when a full share only signals as a drop ([#2888](https://github.com/mdopp/servicebay/issues/2888)) ([d6009d1](https://github.com/mdopp/servicebay/commit/d6009d127929c6dc01d33946324c157f6db24a21))
+
 ## [5.33.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.3...servicebay-v5.33.4) (2026-09-07)
 
 
