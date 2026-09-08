@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.33.6](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.5...servicebay-v5.33.6) (2026-09-08)
+
+
+### Bug Fixes
+
+* **backup:** run the NAS config backup when no real content target exists ([a999aa9](https://github.com/mdopp/servicebay/commit/a999aa917fc5205f9646ab3fb604ef1bb0e02153)), closes [#2872](https://github.com/mdopp/servicebay/issues/2872)
+* **backup:** run the NAS config backup when no real content target exists ([#2872](https://github.com/mdopp/servicebay/issues/2872)) ([dfabe37](https://github.com/mdopp/servicebay/commit/dfabe3731d056b469da055d1c82f9b2704ee9a79))
+
 ## [5.33.5](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.4...servicebay-v5.33.5) (2026-09-08)
 
 
