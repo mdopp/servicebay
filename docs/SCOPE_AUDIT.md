@@ -130,6 +130,7 @@ not listed here reject Bearer tokens (cookie/internal-token only).
 | `/api/install/current` | GET | `read` | poll install progress |
 | `/api/install/plan` | POST | `read` | compute install plan (inspect-only) |
 | `/api/settings` | GET | `read` | read settings |
+| `/api/services` | GET | `read` | list services + external links (read-only; opted in on #2899 — it had no `tokenScope`, so a valid `read` token 401'd while its lean twin `/napi/services` accepted one) |
 | `/api/settings/backups` | GET | `read` | list config backups |
 | `/api/system/external-backup/list` | GET | `read` | list NAS backups |
 | `/api/system/external-backup/target` | GET | `read` | read NAS target config |

@@ -74,8 +74,20 @@ const mapExternalLinks = (links: ExternalLink[]) => {
     });
 };
 
+/**
+ * GET /api/services — the rich service list the browser dashboard renders.
+ *
+ * `tokenScope: 'read'` (#2899). REST routes opt into named-token (`Bearer sb_…`)
+ * auth per handler; a route that omits it has `requireSession` skip the Bearer
+ * branch entirely, so a *valid* read-scoped token fell through to the (absent)
+ * cookie and 401'd. This branch is read-only — it reads config, health checks,
+ * the service list and the node twin, and writes nothing — and its own lean
+ * projection `/napi/services` has been `read`-scoped since #2252, so `read` is
+ * the right (and least) scope. POST below stays cookie/internal-only: it
+ * deploys services, and adding a scope here does not touch it.
+ */
 export const GET = withApiHandler<undefined, z.infer<typeof ListQuery>>(
-  { query: ListQuery },
+  { query: ListQuery, tokenScope: 'read' },
   async ({ query }) => {
   try {
     const scope = query.scope;
