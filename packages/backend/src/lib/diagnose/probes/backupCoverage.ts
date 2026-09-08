@@ -35,7 +35,7 @@
 import { getConfig } from '@/lib/config';
 import { getBackupHistory } from '@/lib/backup/service';
 import { isOutOfSpaceError, isConnectionLevelError } from '@/lib/externalBackup/producer';
-import { resolveBackupSources, type BackupConfig, type BackupSchedule } from '@/lib/backup/types';
+import { isPhantomBackupTarget, resolveBackupSources, type BackupConfig, type BackupSchedule } from '@/lib/backup/types';
 
 /**
  * Probe id + row label for each mechanism. Exported so `runDiagnose` and the
@@ -116,19 +116,28 @@ function describeCoverage(config: BackupConfig): string {
   return `${sources.length} source${sources.length === 1 ? '' : 's'} (${sources.map(s => s.path).join(', ')})`;
 }
 
-/** The never-configured state, plus whatever the history still remembers. */
-async function notConfiguredResult(): Promise<ContentBackupProbeResult> {
+/**
+ * The never-configured state, plus whatever the history still remembers.
+ *
+ * `residue` tells the two ways of not being configured apart (#2872): nothing
+ * was ever stored, or something was — probe leftovers naming a destination that
+ * does not exist. Both are `not_configured`, because neither is a destination
+ * anyone chose; only the sentence changes, so the row never reads as if a
+ * `/mnt/backup` were configured and merely broken.
+ */
+async function notConfiguredResult(residue = false): Promise<ContentBackupProbeResult> {
   const history = await getBackupHistory();
   const last = history[0];
   const past = last
     ? ` The last run ever recorded (${last.completedAt.slice(0, 10)}) ${last.success ? 'succeeded' : `failed: ${last.message}`}, and nothing has run since.`
     : ' No run has ever been recorded.';
+  const lead = residue
+    ? 'Content backup (Backup Sync) has no real destination — the stored target is left-over probe data rather than a disk or share anyone picked, so nothing under /mnt/data is being copied anywhere.'
+    : 'Content backup (Backup Sync) has never been configured — there is no source directory and no target, so nothing under /mnt/data is being copied anywhere.';
   return {
     status: 'warn',
     state: 'not_configured',
-    detail:
-      'Content backup (Backup Sync) has never been configured — there is no source directory and no target, so nothing under /mnt/data is being copied anywhere.' +
-      past,
+    detail: lead + past,
     hint: CONFIGURE_HINT,
   };
 }
@@ -172,7 +181,14 @@ function classifyLastRun(config: BackupConfig, now: Date): ContentBackupProbeRes
 
 export async function checkContentBackup(now: Date = new Date()): Promise<ContentBackupProbeResult> {
   const config = (await getConfig()).backup;
+  // A stored `config.backup` whose target is probe residue is not a decision
+  // anyone made (#2872) — reporting it as "configured but switched off"
+  // described a destination that never existed, and sent the operator looking
+  // for a `/mnt/backup` mount instead of at the empty setting behind it. Only
+  // the *shape* is judged here: a real target on a currently-unmounted disk is
+  // a live fault and keeps its own state below.
   if (!config) return notConfiguredResult();
+  if (isPhantomBackupTarget(config.target)) return notConfiguredResult(true);
   if (!config.enabled) {
     return {
       status: 'info',

@@ -91,7 +91,10 @@ export function useBackupState() {
     schedule: 'daily',
     time: '02:00',
     targetType: 'local',
-    localPath: '/mnt/backup',
+    // No phantom default (#2872): an unset target is "not configured", never a
+    // path. A pre-filled `/mnt/backup` made a box that had never chosen a
+    // destination look like it had one, and every run died on its ENOENT.
+    localPath: '',
     sshHost: '', sshPort: '22', sshUser: 'root', sshPath: '/backup', sshIdentityFile: '/app/data/ssh/id_rsa',
     smbHost: '', smbShare: '', smbPath: '', smbUsername: '', smbPassword: '', smbHasPassword: false,
     nfsHost: '', nfsExport: '', nfsPath: '',
@@ -140,7 +143,9 @@ export function useBackupState() {
       const data = await fetchBackupSyncState();
       if (data.config) {
         const c = data.config;
-        const t = c.target || { type: 'local', path: '/mnt/backup' };
+        // An absent target stays absent — the editor keeps its own (empty)
+        // draft rather than inventing a destination (#2872).
+        const t = c.target;
         // New configs carry `sources`; pre-multi-source configs carry the
         // legacy single `sourcePath`/`excludePatterns` pair — fold it into a
         // one-element list so the editor always renders a source row.
@@ -158,25 +163,25 @@ export function useBackupState() {
           dayOfWeek: c.dayOfWeek,
           dayOfMonth: c.dayOfMonth,
           sources,
-          targetType: t.type ?? 'local',
-          localPath: t.type === 'local' ? t.path : prev.localPath,
-          sshHost: t.type === 'ssh' ? t.host : prev.sshHost,
-          sshPort: t.type === 'ssh' ? String(t.port ?? 22) : prev.sshPort,
-          sshUser: t.type === 'ssh' ? t.user : prev.sshUser,
-          sshPath: t.type === 'ssh' ? t.path : prev.sshPath,
-          sshIdentityFile: t.type === 'ssh' ? (t.identityFile ?? '/app/data/ssh/id_rsa') : prev.sshIdentityFile,
-          smbHost: t.type === 'smb' ? t.host : prev.smbHost,
-          smbShare: t.type === 'smb' ? t.share : prev.smbShare,
-          smbPath: t.type === 'smb' ? (t.path ?? '') : prev.smbPath,
-          smbUsername: t.type === 'smb' ? (t.username ?? '') : prev.smbUsername,
+          targetType: t?.type ?? prev.targetType,
+          localPath: t?.type === 'local' ? t.path : prev.localPath,
+          sshHost: t?.type === 'ssh' ? t.host : prev.sshHost,
+          sshPort: t?.type === 'ssh' ? String(t.port ?? 22) : prev.sshPort,
+          sshUser: t?.type === 'ssh' ? t.user : prev.sshUser,
+          sshPath: t?.type === 'ssh' ? t.path : prev.sshPath,
+          sshIdentityFile: t?.type === 'ssh' ? (t.identityFile ?? '/app/data/ssh/id_rsa') : prev.sshIdentityFile,
+          smbHost: t?.type === 'smb' ? t.host : prev.smbHost,
+          smbShare: t?.type === 'smb' ? t.share : prev.smbShare,
+          smbPath: t?.type === 'smb' ? (t.path ?? '') : prev.smbPath,
+          smbUsername: t?.type === 'smb' ? (t.username ?? '') : prev.smbUsername,
           // The GET reports `hasPassword`, never the value (#2771) — reset the
           // editor field so a save that doesn't touch it sends blank, which the
           // route reads as "keep the stored secret".
-          smbPassword: t.type === 'smb' ? '' : prev.smbPassword,
-          smbHasPassword: t.type === 'smb' ? Boolean(t.hasPassword) : prev.smbHasPassword,
-          nfsHost: t.type === 'nfs' ? t.host : prev.nfsHost,
-          nfsExport: t.type === 'nfs' ? t.export : prev.nfsExport,
-          nfsPath: t.type === 'nfs' ? (t.path ?? '') : prev.nfsPath,
+          smbPassword: t?.type === 'smb' ? '' : prev.smbPassword,
+          smbHasPassword: t?.type === 'smb' ? Boolean(t.hasPassword) : prev.smbHasPassword,
+          nfsHost: t?.type === 'nfs' ? t.host : prev.nfsHost,
+          nfsExport: t?.type === 'nfs' ? t.export : prev.nfsExport,
+          nfsPath: t?.type === 'nfs' ? (t.path ?? '') : prev.nfsPath,
           lastRun: c.lastRun,
           lastStatus: c.lastStatus,
           lastMessage: c.lastMessage,
