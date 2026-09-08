@@ -35,15 +35,18 @@
  *     the additive namespaced `landed/` dir. See `catalog.ts` for how an
  *     override announces itself so it cannot age quietly.
  *
- * ## The same delivery carries the agent CLI (#2908)
+ * ## The same delivery carries the CLI and the AGENTS.md template (#2908/#2909)
  *
- * An agent container needs two things from ServiceBay: the catalog to read and
- * the CLI to act with (`agent-cli/servicebay.mjs`, #2906). Both are maintained
- * here, both must reach a running box without a release, and both would rot the
- * same way if they were baked into an image. So there is ONE delivery, widened
- * — `AGENT_KIT_SUBDIRS` is the sparse-checkout set — not a second mechanism
- * beside it. The checkout root itself is the stable, read-only-mountable path a
- * template mounts (`agentKitDir()`): catalog and CLI under one roof.
+ * An agent container needs three things from ServiceBay: the catalog to read,
+ * the CLI to act with (`agent-cli/servicebay.mjs`, #2906), and the orientation
+ * that says how to use either (`agent-docs/AGENTS.md`, #2909 — one file that
+ * serves pi and Claude Code alike, linked into place rather than copied). All
+ * three are maintained here, all three must reach a running box without a
+ * release, and all three would rot the same way if they were baked into an
+ * image. So there is ONE delivery, widened — `AGENT_KIT_SUBDIRS` is the
+ * sparse-checkout set — not a second mechanism beside it. The checkout root
+ * itself is the stable, read-only-mountable path a template mounts
+ * (`agentKitDir()`): catalog, CLI and orientation under one roof.
  *
  * The CLI is delivered as source and run as source: `node <kit>/agent-cli/
  * servicebay.mjs`. It imports `node:` builtins only, so a git checkout on disk
@@ -109,9 +112,11 @@ const CATALOG_SUBDIR = 'assists';
  * THE sparse-checkout set: the repo directories that make up the agent kit.
  * Widening the delivery means adding a path here — never adding a second
  * checkout, a second timer or a second read path beside it (ADR 0014, #2908).
- * Slice 4 (#2909) adds the AGENTS.md template's home the same way.
+ * Slice 4 (#2909) added `agent-docs/` the same way: the AGENTS.md template
+ * rides the delivery it documents, so it lands wherever the kit lands and there
+ * is no second thing to install, copy or keep in step.
  */
-export const AGENT_KIT_SUBDIRS = [CATALOG_SUBDIR, 'agent-cli'] as const;
+export const AGENT_KIT_SUBDIRS = [CATALOG_SUBDIR, 'agent-cli', 'agent-docs'] as const;
 
 /**
  * Files a delivered checkout MUST carry, relative to the kit root. Their
@@ -119,7 +124,7 @@ export const AGENT_KIT_SUBDIRS = [CATALOG_SUBDIR, 'agent-cli'] as const;
  * matching, or a file that moved in the repo, otherwise lands a directory that
  * mounts fine and is missing the half nobody looked at.
  */
-export const AGENT_KIT_REQUIRED_FILES = ['agent-cli/servicebay.mjs'] as const;
+export const AGENT_KIT_REQUIRED_FILES = ['agent-cli/servicebay.mjs', 'agent-docs/AGENTS.md'] as const;
 
 const DEFAULT_MAX_AGE_HOURS = 24;
 const DEFAULT_SYNC_INTERVAL_MS = 60 * 60 * 1000; // hourly

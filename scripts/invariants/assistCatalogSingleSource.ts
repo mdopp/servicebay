@@ -1,8 +1,8 @@
 /**
- * Invariant 8c — the delivered agent kit has exactly ONE source (#2701/#2908,
- * ADR 0014). The kit is the assist catalog plus the agent CLI: #2908 widened
- * the one delivery to carry both, so this gate widened with it rather than
- * growing a second check beside it.
+ * Invariant 8c — the delivered agent kit has exactly ONE source (#2701/#2908/
+ * #2909, ADR 0014). The kit is the assist catalog, the agent CLI and the
+ * AGENTS.md template: each widening carried the one delivery further, so this
+ * gate widened with it rather than growing a second check beside it.
  * Extracted from `scripts/check-invariants.ts`, which is at its max-lines
  * budget; the driver there calls `auditAssistCatalogSingleSource` and folds the
  * result into the shared violation/measurement lists.
@@ -48,10 +48,12 @@ export interface AssistCatalogAuditResult {
 
 /**
  * The delivered directories, and the file that must be the ONE place they are
- * declared. #2908 widened the delivery to carry the agent CLI as well; the
- * condition is unchanged, so the gate covers both the same way.
+ * declared. #2908 widened the delivery to carry the agent CLI, #2909 the
+ * AGENTS.md template; the condition is unchanged, so the gate covers each new
+ * half the same way. A dir added to the kit and not added here is a dir whose
+ * second source nobody would notice.
  */
-const DELIVERED_DIRS = ['assists', 'agent-cli'] as const;
+const DELIVERED_DIRS = ['assists', 'agent-cli', 'agent-docs'] as const;
 
 /** Pure text audit — exported so the suite can exercise the RED path. */
 export function auditAssistCatalogSource(dockerfile: string, loader: string, delivery = ''): string[] {
