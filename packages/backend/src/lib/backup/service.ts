@@ -4,7 +4,7 @@ import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { BackupConfig, BackupRunResult, BackupSource, BackupTarget, resolveBackupSources } from './types';
+import { BackupConfig, BackupRunResult, BackupSource, BackupTarget, isPhantomBackupTarget, resolveBackupSources } from './types';
 import { getConfig, updateConfig } from '../config';
 import { logger } from '../logger';
 import { DATA_DIR } from '../dirs';
@@ -449,6 +449,32 @@ async function recordBackupSuccess(
  */
 export const BACKUP_NOT_CONFIGURED_MESSAGE =
     "Backup isn't configured — add a source and target in Settings → Backup, then run it again.";
+
+/**
+ * Does this box have a Backup-Sync destination worth rsyncing to (#2872)?
+ *
+ * Two questions, both of which must answer yes:
+ *  1. Was a target ever really configured — `isPhantomBackupTarget` rejects an
+ *     absent one and the probe residue the reference box carries.
+ *  2. For a `local` target, does the path exist as a directory *here*? A path
+ *     that isn't there is a destination that was never mounted, and
+ *     `validateLocalTarget` (#1612) will refuse it anyway — it must never
+ *     auto-mkdir, so asking first is the only way to choose a path instead of
+ *     failing into one.
+ *
+ * Remote targets (ssh/smb/nfs) are taken at their word: reachability is the
+ * run's own problem, and a genuine connection failure must stay a failure
+ * rather than silently becoming a different kind of backup.
+ */
+export async function hasUsableBackupSyncTarget(config: BackupConfig | undefined): Promise<boolean> {
+    if (!config || isPhantomBackupTarget(config.target)) return false;
+    if (config.target.type !== 'local') return true;
+    try {
+        return (await fs.stat(config.target.path)).isDirectory();
+    } catch {
+        return false;
+    }
+}
 
 // Returns `config: undefined` when nothing is configured. The caller decides
 // what that means; asserting past it (`appConfig.backup!`) crashed the manual

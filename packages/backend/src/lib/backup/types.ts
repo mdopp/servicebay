@@ -22,6 +22,56 @@ type BackupTargetView =
 export type BackupSchedule = 'hourly' | 'daily' | 'weekly' | 'monthly';
 
 /**
+ * The fields each target type legitimately owns. A stored target carrying a
+ * field from ANOTHER type was not written by an operator picking a destination
+ * — it is residue a connection probe left behind in `config.backup.target`
+ * (#2872). The reference box holds exactly that shape:
+ * `{ type: 'local', path: '/mnt/backup', host: 'probe-verify.invalid', share: 'probe', username: 'probe' }`
+ * with `enabled: false`, and it made every manual run fail on a `/mnt/backup`
+ * that has never existed.
+ */
+const TARGET_OWN_FIELDS: Record<BackupTarget['type'], readonly string[]> = {
+    local: ['type', 'path'],
+    ssh: ['type', 'host', 'port', 'user', 'path', 'identityFile'],
+    smb: ['type', 'host', 'share', 'path', 'username', 'password', 'domain'],
+    nfs: ['type', 'host', 'export', 'path'],
+};
+
+/** Without these a target names no destination at all. */
+const TARGET_REQUIRED_FIELDS: Record<BackupTarget['type'], readonly string[]> = {
+    local: ['path'],
+    ssh: ['host', 'user', 'path'],
+    smb: ['host', 'share'],
+    nfs: ['host', 'export'],
+};
+
+/** RFC 2606's reserved TLD: a host under it is a probe/test value, never real. */
+const RESERVED_INVALID_TLD = '.invalid';
+
+/**
+ * Is this stored target a phantom — an absent, malformed or probe-left target
+ * that names no destination anyone chose (#2872)?
+ *
+ * Pure on purpose: it answers "was this ever configured", not "is it reachable
+ * right now". A real target on an unmounted disk is NOT phantom — that is a
+ * live fault and must keep reporting itself as one.
+ */
+export function isPhantomBackupTarget(target: BackupTarget | undefined | null): boolean {
+    if (!target || typeof target !== 'object') return true;
+    const own = TARGET_OWN_FIELDS[target.type];
+    if (!own) return true;
+    const fields = target as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(fields)) {
+        if (!own.includes(key)) return true; // a foreign field ⇒ probe residue
+        if (typeof value === 'string' && value.trim().toLowerCase().endsWith(RESERVED_INVALID_TLD)) return true;
+    }
+    return TARGET_REQUIRED_FIELDS[target.type].some(field => {
+        const value = fields[field];
+        return typeof value !== 'string' || value.trim() === '';
+    });
+}
+
+/**
  * A single sync source: a directory to back up plus .gitignore-style
  * exclude patterns scoped to that directory. Each source rsyncs into its
  * own subfolder under the target so per-source `--delete` can't collide.

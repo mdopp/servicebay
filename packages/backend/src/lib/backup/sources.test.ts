@@ -6,7 +6,7 @@
  * subfolders under the target so per-source `--delete` can't collide.
  */
 import { describe, it, expect } from 'vitest';
-import { resolveBackupSources, type BackupConfig, type BackupTarget } from './types';
+import { isPhantomBackupTarget, resolveBackupSources, type BackupConfig, type BackupTarget } from './types';
 import { assignSourceSubFolders, buildRsyncArgs } from './service';
 
 const base: Omit<BackupConfig, 'sources' | 'sourcePath' | 'excludePatterns'> = {
@@ -121,5 +121,50 @@ describe('buildRsyncArgs', () => {
     const { args, mountPath } = buildRsyncArgs('/mnt/media/', target, [], undefined, '/tmp/mnt-2');
     expect(mountPath).toBe('/tmp/mnt-2');
     expect(args[args.length - 1]).toBe('/tmp/mnt-2/');
+  });
+});
+
+/**
+ * Probe residue is not a configuration (#2872). The box carries
+ * `{ type: 'local', path: '/mnt/backup', host: 'probe-verify.invalid',
+ * share: 'probe', username: 'probe' }` — a `local` target wearing an smb
+ * target's fields, left behind by a connection probe. The fix has to see
+ * through that shape without anyone editing the stored config.
+ */
+describe('isPhantomBackupTarget', () => {
+  it('rejects the probe residue on the reference box', () => {
+    expect(isPhantomBackupTarget({
+      type: 'local',
+      path: '/mnt/backup',
+      host: 'probe-verify.invalid',
+      share: 'probe',
+      username: 'probe',
+    } as unknown as BackupTarget)).toBe(true);
+  });
+
+  it('rejects an absent or type-less target', () => {
+    expect(isPhantomBackupTarget(undefined)).toBe(true);
+    expect(isPhantomBackupTarget(null)).toBe(true);
+    expect(isPhantomBackupTarget({} as unknown as BackupTarget)).toBe(true);
+  });
+
+  it('rejects any host under the reserved .invalid TLD, whatever the type', () => {
+    expect(isPhantomBackupTarget({ type: 'smb', host: 'probe-verify.invalid', share: 'probe' })).toBe(true);
+    expect(isPhantomBackupTarget({ type: 'nfs', host: 'x.INVALID', export: '/e' })).toBe(true);
+  });
+
+  it('rejects a target missing the field that names its destination', () => {
+    expect(isPhantomBackupTarget({ type: 'local', path: '   ' })).toBe(true);
+    expect(isPhantomBackupTarget({ type: 'smb', host: 'nas.lan', share: '' })).toBe(true);
+    expect(isPhantomBackupTarget({ type: 'ssh', host: 'box', user: 'root' } as unknown as BackupTarget)).toBe(true);
+  });
+
+  it('accepts every well-formed target — including a local path nothing is mounted on', () => {
+    // Not phantom on purpose: an unmounted disk is a live fault that must keep
+    // reporting itself as one, not get filed as "never configured".
+    expect(isPhantomBackupTarget({ type: 'local', path: '/mnt/usb-backup' })).toBe(false);
+    expect(isPhantomBackupTarget({ type: 'smb', host: 'nas.lan', share: 'backup', username: 'sb', password: 'x' })).toBe(false);
+    expect(isPhantomBackupTarget({ type: 'ssh', host: 'box', user: 'root', path: '/backup', port: 22 })).toBe(false);
+    expect(isPhantomBackupTarget({ type: 'nfs', host: 'nas.lan', export: '/volume1/backup' })).toBe(false);
   });
 });

@@ -88,6 +88,26 @@ describe('checkContentBackup — criterion 1: unconfigured is a named state', ()
     expect(r.detail).toMatch(/recorded decision, not a fault/);
   });
 
+  it('treats a probe-residue target as not configured, and never describes it (#2872)', async () => {
+    // The exact shape the reference box carries: a `local` target wearing an
+    // smb target's fields, `enabled: false`. Read as "configured but switched
+    // off", this row asserted a `/mnt/backup` destination that has never
+    // existed and sent the operator looking for a missing mount.
+    state.config = {
+      backup: {
+        ...CONFIGURED,
+        enabled: false,
+        target: { type: 'local', path: '/mnt/backup', host: 'probe-verify.invalid', share: 'probe', username: 'probe' },
+      },
+    };
+    const r = await checkContentBackup(NOW);
+    expect(r.state).toBe('not_configured');
+    expect(r.status).toBe('warn');
+    expect(r.detail).toMatch(/left-over probe data/);
+    expect(r.detail).not.toMatch(/\/mnt\/backup/);
+    expect(r.detail).not.toMatch(/switched off/);
+  });
+
   it('warns when it is enabled but covers no source directory', async () => {
     state.config = { backup: { ...CONFIGURED, sources: [] } };
     const r = await checkContentBackup(NOW);
