@@ -244,15 +244,28 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+/**
+ * Consulted after each connection-level failure, before the backoff sleep, with
+ * the 1-based number of the attempt that just failed. Returning `false` stops
+ * the retry loop and re-throws — the caller has decided the drop needs a
+ * different answer than waiting (#2888: the share is full, so the caller wants
+ * to prune rather than burn the rest of the retry budget on the same disk).
+ */
+export type ConnectionDropHandler = (error: unknown, attempt: number) => boolean | Promise<boolean>;
+
 /** Retry `attempt` with a backoff while it fails at the CONNECTION level. A
  *  per-service/per-file error is re-thrown immediately — only the destination
- *  dropping us is worth waiting for. */
-async function withConnectionRetry<T>(attempt: () => Promise<T>): Promise<T> {
+ *  dropping us is worth waiting for. `onDrop` can veto the next retry (#2888). */
+async function withConnectionRetry<T>(
+  attempt: () => Promise<T>,
+  onDrop?: ConnectionDropHandler,
+): Promise<T> {
   for (let i = 0; ; i += 1) {
     try {
       return await attempt();
     } catch (e) {
       if (i >= RETRY_DELAYS_MS.length || !isConnectionLevelError(e)) throw e;
+      if (onDrop && !(await onDrop(e, i + 1))) throw e;
       const delay = RETRY_DELAYS_MS[i];
       logger.warn(
         'ExternalBackup',
@@ -277,7 +290,7 @@ async function withConnectionRetry<T>(attempt: () => Promise<T>): Promise<T> {
 async function runFtp<T>(
   t: ResolvedFtpTarget,
   fn: (client: Client) => Promise<T>,
-  opts: { retry?: boolean } = {},
+  opts: { retry?: boolean; onDrop?: ConnectionDropHandler } = {},
 ): Promise<T> {
   const s = session;
   if (!s) return withFtpClient(t, fn);
@@ -306,14 +319,18 @@ async function runFtp<T>(
       throw e;
     }
   };
-  return opts.retry === false ? once() : withConnectionRetry(once);
+  return opts.retry === false ? once() : withConnectionRetry(once, opts.onDrop);
 }
 
 /** SFTP has no session to reuse (ssh2 owns its own connection lifetime), but a
  *  run still gets the backoff+retry so one refused connection does not cascade. */
-async function runSftp<T>(t: ResolvedSshTarget, fn: (sftp: SFTPWrapper) => Promise<T>): Promise<T> {
+async function runSftp<T>(
+  t: ResolvedSshTarget,
+  fn: (sftp: SFTPWrapper) => Promise<T>,
+  onDrop?: ConnectionDropHandler,
+): Promise<T> {
   if (!session) return withSftp(t, fn);
-  return withConnectionRetry(() => withSftp(t, fn));
+  return withConnectionRetry(() => withSftp(t, fn), onDrop);
 }
 
 function splitRemote(remotePath: string): { dir: string; base: string } {
@@ -419,9 +436,21 @@ async function requireTarget(): Promise<ResolvedTarget> {
   return t;
 }
 
+export interface NasUploadOptions {
+  /** Veto/allow the next connection-level retry — see {@link ConnectionDropHandler}. */
+  onConnectionDrop?: ConnectionDropHandler;
+  /** Force single-shot (no connection retry) even for a Buffer, for a probe
+   *  whose whole point is a fast answer (#2888's capacity write test). */
+  retry?: boolean;
+}
+
 /** Upload a buffer or stream to `remotePath` (relative to the destination root),
  *  creating parent directories as needed. */
-export async function nasUpload(remotePath: string, data: Buffer | Readable): Promise<void> {
+export async function nasUpload(
+  remotePath: string,
+  data: Buffer | Readable,
+  opts: NasUploadOptions = {},
+): Promise<void> {
   const t = await requireTarget();
   const full = joinDir(t.dir, remotePath);
   if (t.transport === 'ftp') {
@@ -436,7 +465,7 @@ export async function nasUpload(remotePath: string, data: Buffer | Readable): Pr
         // handed in by the caller can only be consumed once — hence `retry`.
         await client.uploadFrom(Buffer.isBuffer(data) ? Readable.from(data) : data, base);
       },
-      { retry: Buffer.isBuffer(data) },
+      { retry: opts.retry ?? Buffer.isBuffer(data), onDrop: opts.onConnectionDrop },
     );
     return;
   }
@@ -450,7 +479,7 @@ export async function nasUpload(remotePath: string, data: Buffer | Readable): Pr
       const source = Buffer.isBuffer(data) ? Readable.from(data) : data;
       source.pipe(ws);
     });
-  });
+  }, opts.onConnectionDrop);
 }
 
 /** Download `remotePath` (relative to the destination root) into a Buffer. */
