@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.34.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.8...servicebay-v5.34.0) (2026-09-08)
+
+
+### Features
+
+* **agents:** deliver the agent CLI alongside the assist catalog ([948a1b1](https://github.com/mdopp/servicebay/commit/948a1b1b311a0b011d718937ff86055a932b6c7a)), closes [#2908](https://github.com/mdopp/servicebay/issues/2908)
+* **agents:** ship a build-free ServiceBay CLI for agent containers ([478f50d](https://github.com/mdopp/servicebay/commit/478f50d3b42a70c93ebf3db88a9a68934e85cf87)), closes [#2906](https://github.com/mdopp/servicebay/issues/2906)
+* **agents:** ship a maintained agent kit — CLI, contract, delivery, AGENTS.md ([#2906](https://github.com/mdopp/servicebay/issues/2906), [#2907](https://github.com/mdopp/servicebay/issues/2907), [#2908](https://github.com/mdopp/servicebay/issues/2908), [#2909](https://github.com/mdopp/servicebay/issues/2909)) ([95e4b56](https://github.com/mdopp/servicebay/commit/95e4b5640e35f7d634ff889ed58b297103fe89ac))
+
 ## [5.33.8](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.7...servicebay-v5.33.8) (2026-09-08)
 
 
