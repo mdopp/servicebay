@@ -1,5 +1,5 @@
 /**
- * Assist-catalog DELIVERY (#2701).
+ * Agent-kit DELIVERY — the assist catalog and the agent CLI (#2701, #2908).
  *
  * The catalog used to be baked into the container image (`COPY /app/assists`).
  * That made a catalog entry an *image artifact*: a `docs(assists):` commit
@@ -25,7 +25,7 @@
  *     checkout is the *authoring* location, never a runtime one.
  *   - The single runtime home is `catalogDir()`: the `assists/` directory of a
  *     shallow, sparse git checkout of the repo under
- *     `DATA_DIR/assist-catalog/checkout`, refreshed by `syncAssistCatalog()`.
+ *     `DATA_DIR/agent-kit/checkout`, refreshed by `syncAssistCatalog()`.
  *   - `ASSIST_CATALOG_DIR` overrides that with an operator/dev-supplied
  *     directory (a source checkout in `npm run dev`, a temp dir in tests). It
  *     REPLACES the delivered dir — it never layers over it, so setting it still
@@ -34,6 +34,21 @@
  *     only ever holds what an admin approved through the assist editor, plus
  *     the additive namespaced `landed/` dir. See `catalog.ts` for how an
  *     override announces itself so it cannot age quietly.
+ *
+ * ## The same delivery carries the agent CLI (#2908)
+ *
+ * An agent container needs two things from ServiceBay: the catalog to read and
+ * the CLI to act with (`agent-cli/servicebay.mjs`, #2906). Both are maintained
+ * here, both must reach a running box without a release, and both would rot the
+ * same way if they were baked into an image. So there is ONE delivery, widened
+ * — `AGENT_KIT_SUBDIRS` is the sparse-checkout set — not a second mechanism
+ * beside it. The checkout root itself is the stable, read-only-mountable path a
+ * template mounts (`agentKitDir()`): catalog and CLI under one roof.
+ *
+ * The CLI is delivered as source and run as source: `node <kit>/agent-cli/
+ * servicebay.mjs`. It imports `node:` builtins only, so a git checkout on disk
+ * is already a runnable CLI — no build, no `npm install`, nothing that could
+ * make the delivered copy differ from the repo one.
  *
  * ## A failed delivery is EMPTY and LOUD, never stale and quiet
  *
@@ -45,6 +60,12 @@
  * age; `list_assists` / `get_assist` surface that text instead of an empty list
  * or a "no assist found with id …". A reader therefore sees a catalog that says
  * it is broken, never one that quietly answers from last month's tree.
+ *
+ * A checkout that lands WITHOUT the files the kit is defined as
+ * (`AGENT_KIT_REQUIRED_FILES`, plus at least one assist entry) is a FAILED
+ * delivery, not a half-filled path — the same rule the zero-entry tree already
+ * got. Otherwise a narrowed sparse set or a moved file would leave a directory
+ * that exists, mounts, and is missing the half nobody checked.
  */
 
 import { promises as fs } from 'fs';
@@ -69,12 +90,36 @@ export const catalogRepoUrl = (): string =>
 
 export const catalogRepoRef = (): string => process.env.ASSIST_CATALOG_REF?.trim() || 'main';
 
-const ROOT_DIR = () => path.join(DATA_DIR, 'assist-catalog');
+const ROOT_DIR = () => path.join(DATA_DIR, 'agent-kit');
 const CHECKOUT_DIR = () => path.join(ROOT_DIR(), 'checkout');
 const STATE_FILE = () => path.join(ROOT_DIR(), 'delivery.json');
 
+/**
+ * Where the checkout lived while it carried the catalog alone (#2701). It is
+ * removed once the kit has landed at the new root, so the box never keeps a
+ * second `assists/` tree on disk that ages beside the delivered one — which is
+ * the very shape ADR 0014 exists to prevent.
+ */
+const LEGACY_ROOT_DIR = () => path.join(DATA_DIR, 'assist-catalog');
+
 /** Directory inside the checkout that holds the catalog markdown. */
 const CATALOG_SUBDIR = 'assists';
+
+/**
+ * THE sparse-checkout set: the repo directories that make up the agent kit.
+ * Widening the delivery means adding a path here — never adding a second
+ * checkout, a second timer or a second read path beside it (ADR 0014, #2908).
+ * Slice 4 (#2909) adds the AGENTS.md template's home the same way.
+ */
+export const AGENT_KIT_SUBDIRS = [CATALOG_SUBDIR, 'agent-cli'] as const;
+
+/**
+ * Files a delivered checkout MUST carry, relative to the kit root. Their
+ * absence is a failed delivery (see the header): a sparse set that stopped
+ * matching, or a file that moved in the repo, otherwise lands a directory that
+ * mounts fine and is missing the half nobody looked at.
+ */
+export const AGENT_KIT_REQUIRED_FILES = ['agent-cli/servicebay.mjs'] as const;
 
 const DEFAULT_MAX_AGE_HOURS = 24;
 const DEFAULT_SYNC_INTERVAL_MS = 60 * 60 * 1000; // hourly
@@ -104,6 +149,20 @@ export function catalogSyncIntervalMs(): number {
  */
 export function externalCatalogDir(): string | null {
   return process.env.ASSIST_CATALOG_DIR?.trim() || null;
+}
+
+/**
+ * The delivered kit's root — the stable path an agent container mounts
+ * read-only. Catalog and CLI are subdirectories of it, so a template mounts one
+ * path and gets both (#2908).
+ *
+ * With `ASSIST_CATALOG_DIR` set, the operator has pointed at a checkout's own
+ * `assists/` dir (that is what `npm run dev` does), so the kit root is its
+ * parent — still exactly one source, still no second mechanism.
+ */
+export function agentKitDir(): string {
+  const external = externalCatalogDir();
+  return external ? path.dirname(external) : CHECKOUT_DIR();
 }
 
 /** The one runtime directory the catalog is read from. */
@@ -177,6 +236,37 @@ async function countEntries(dir: string): Promise<number> {
   return entries.filter(e => e.isFile() && e.name.endsWith('.md') && !e.name.startsWith('.')).length;
 }
 
+const exists = (p: string): Promise<boolean> => fs.access(p).then(() => true, () => false);
+
+/**
+ * Is the tree the kit is defined as actually there? Throws — the caller turns
+ * that into a recorded, logged, LOUD delivery failure. Returns the catalog
+ * entry count on success.
+ */
+export async function verifyDeliveredKit(root: string): Promise<number> {
+  const catalog = path.join(root, CATALOG_SUBDIR);
+  const entryCount = await countEntries(catalog).catch(() => 0);
+  if (entryCount === 0) {
+    // A checkout that carries no entries is a DELIVERY failure, not an empty
+    // catalog — treating it as the latter is how a broken path reads as
+    // "there is nothing to say".
+    throw new Error(`the delivered tree at ${catalog} carries no assist entries`);
+  }
+
+  const missing: string[] = [];
+  for (const rel of AGENT_KIT_REQUIRED_FILES) {
+    if (!(await exists(path.join(root, rel)))) missing.push(rel);
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `the delivered tree at ${root} is missing ${missing.join(', ')} — a checkout without the agent kit's own ` +
+      'files is a FAILED delivery, not an empty directory (#2908)',
+    );
+  }
+
+  return entryCount;
+}
+
 async function hasGitCheckout(dir: string): Promise<boolean> {
   return fs
     .access(path.join(dir, '.git'))
@@ -193,7 +283,7 @@ async function cloneCatalog(dest: string): Promise<void> {
       ['clone', '--depth', '1', '--branch', catalogRepoRef(), '--filter=blob:none', '--sparse', url, dest],
       { env: GIT_ENV },
     );
-    await execFileAsync('git', ['sparse-checkout', 'set', CATALOG_SUBDIR], { cwd: dest });
+    await execFileAsync('git', ['sparse-checkout', 'set', ...AGENT_KIT_SUBDIRS], { cwd: dest });
   } catch {
     // A git too old for partial clone / sparse checkout still delivers the tree.
     await fs.rm(dest, { recursive: true, force: true });
@@ -208,6 +298,14 @@ async function refreshCatalog(dest: string): Promise<void> {
   // exactly what was just fetched.
   await execFileAsync('git', ['fetch', '--depth', '1', 'origin', ref], { cwd: dest, env: GIT_ENV });
   await execFileAsync('git', ['reset', '--hard', 'FETCH_HEAD'], { cwd: dest, env: GIT_ENV });
+  // Re-apply the sparse set on every refresh. A checkout made before a path was
+  // added to `AGENT_KIT_SUBDIRS` keeps its old, narrower set forever otherwise:
+  // fetch+reset succeed, and the new directory never materialises. Only for a
+  // checkout that IS sparse — the old-git fallback below clones the full tree,
+  // where enabling sparse mode would REMOVE files rather than add them.
+  if (await exists(path.join(dest, '.git', 'info', 'sparse-checkout'))) {
+    await execFileAsync('git', ['sparse-checkout', 'set', ...AGENT_KIT_SUBDIRS], { cwd: dest });
+  }
 }
 
 export interface AssistSyncResult {
@@ -224,6 +322,21 @@ export interface AssistSyncResult {
  * never thrown — the READ path is where a broken delivery becomes visible, and
  * it becomes visible as a refusal, not as a short list.
  */
+/**
+ * Remove the pre-#2908 checkout root once the kit has landed at the new one.
+ * Best effort: failing to clean up an old cache is not a delivery failure.
+ */
+async function dropLegacyCheckout(): Promise<void> {
+  const legacy = LEGACY_ROOT_DIR();
+  if (legacy === ROOT_DIR() || !(await exists(legacy))) return;
+  try {
+    await fs.rm(legacy, { recursive: true, force: true });
+    logger.info(TAG, `Removed the pre-#2908 catalog checkout at ${legacy}; the kit now lives at ${ROOT_DIR()}.`);
+  } catch (e) {
+    logger.warn(TAG, `Could not remove the legacy catalog checkout at ${legacy}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 export async function syncAssistCatalog(): Promise<AssistSyncResult> {
   const external = externalCatalogDir();
   if (external) {
@@ -249,18 +362,17 @@ export async function syncAssistCatalog(): Promise<AssistSyncResult> {
       await cloneCatalog(dest);
     }
 
-    const entryCount = await countEntries(dir);
-    if (entryCount === 0) {
-      // A checkout that carries no entries is a DELIVERY failure, not an empty
-      // catalog — treating it as the latter is how a broken path reads as
-      // "there is nothing to say".
-      throw new Error(`the delivered tree at ${dir} carries no assist entries`);
-    }
+    const entryCount = await verifyDeliveredKit(dest);
 
     const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: dest, env: GIT_ENV });
     const sha = stdout.trim();
     await writeDeliveryState({ lastAttemptAt: now, lastSuccessAt: now, sha, entryCount, lastError: null });
-    logger.info(TAG, `Assist catalog delivered: ${entryCount} entries at ${sha.slice(0, 8)} (${catalogRepoUrl()}#${catalogRepoRef()}).`);
+    await dropLegacyCheckout();
+    logger.info(
+      TAG,
+      `Agent kit delivered to ${dest}: ${entryCount} assist entries + ${AGENT_KIT_SUBDIRS.join(', ')} ` +
+      `at ${sha.slice(0, 8)} (${catalogRepoUrl()}#${catalogRepoRef()}).`,
+    );
     return { status: 'synced', dir, sha, entryCount };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
@@ -309,14 +421,13 @@ function ageText(sinceIso: string): string {
 }
 
 /**
- * The single gate every catalog read passes. Returns the one directory to read
- * from, or throws `AssistCatalogUnavailableError` with a message that says what
- * broke — the "empty and loud" half of the #2701 contract.
+ * The single gate. Every read of anything delivered — the catalog and the CLI
+ * alike — passes through here; `resolveCatalogDir()` and `resolveAgentKitDir()`
+ * are two views of this one check, not two paths. Throws
+ * `AssistCatalogUnavailableError` with a message that says what broke: the
+ * "empty and loud" half of the #2701 contract.
  */
-export async function resolveCatalogDir(): Promise<string> {
-  const external = externalCatalogDir();
-  if (external) return external;
-
+async function assertDeliveryUsable(): Promise<void> {
   const state = await readDeliveryState();
   const dir = catalogDir();
 
@@ -353,12 +464,32 @@ export async function resolveCatalogDir(): Promise<string> {
       'a wrong assist is worse than a missing one.',
     );
   }
+}
 
-  return dir;
+/** The one directory the catalog is read from, gated by `assertDeliveryUsable`. */
+export async function resolveCatalogDir(): Promise<string> {
+  const external = externalCatalogDir();
+  if (external) return external;
+  await assertDeliveryUsable();
+  return catalogDir();
+}
+
+/**
+ * The delivered kit root — the read-only mount point a container gets. Same
+ * gate, same freshness window, same refusal text: a kit that was never
+ * delivered or has aged out is not handed out as a half-filled directory.
+ */
+export async function resolveAgentKitDir(): Promise<string> {
+  const external = externalCatalogDir();
+  if (external) return path.dirname(external);
+  await assertDeliveryUsable();
+  return agentKitDir();
 }
 
 /** Delivery status for operators/diagnostics — never throws. */
-export async function assistDeliveryStatus(): Promise<AssistDeliveryState & { dir: string; external: boolean }> {
+export async function assistDeliveryStatus(): Promise<
+  AssistDeliveryState & { dir: string; kitDir: string; external: boolean }
+> {
   const state = await readDeliveryState();
-  return { ...state, dir: catalogDir(), external: externalCatalogDir() !== null };
+  return { ...state, dir: catalogDir(), kitDir: agentKitDir(), external: externalCatalogDir() !== null };
 }

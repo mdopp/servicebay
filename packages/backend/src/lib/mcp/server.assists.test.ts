@@ -127,7 +127,7 @@ describe('a failed catalog delivery is loud, not an empty answer (#2701)', () =>
       sha: 'deadbee',
       entryCount: 42,
       lastError: 'fatal: could not read Username',
-      dir: '/app/data/assist-catalog/checkout/assists',
+      dir: '/app/data/agent-kit/checkout/assists',
       external: false,
     } as Awaited<ReturnType<typeof import('@/lib/assists/delivery').assistDeliveryStatus>>);
     getAssist.mockResolvedValue(null);

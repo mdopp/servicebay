@@ -26,10 +26,19 @@ vi.hoisted(() => {
 });
 
 import * as delivery from './delivery';
-import { AssistCatalogUnavailableError, catalogDir, resolveCatalogDir, assistDeliveryStatus } from './delivery';
+import {
+  AGENT_KIT_REQUIRED_FILES,
+  AssistCatalogUnavailableError,
+  agentKitDir,
+  catalogDir,
+  resolveAgentKitDir,
+  resolveCatalogDir,
+  assistDeliveryStatus,
+  verifyDeliveredKit,
+} from './delivery';
 import { listAssists, getAssist } from './catalog';
 
-const STATE_FILE = path.join(BASE, 'assist-catalog', 'delivery.json');
+const STATE_FILE = path.join(BASE, 'agent-kit', 'delivery.json');
 
 async function seedDeliveredTree(): Promise<void> {
   const dir = catalogDir();
@@ -39,6 +48,11 @@ async function seedDeliveredTree(): Promise<void> {
     '---\ntitle: Alpha\nwhenToUse: when alpha\nkind: guide\n---\nbody\n',
     'utf-8',
   );
+  for (const rel of AGENT_KIT_REQUIRED_FILES) {
+    const file = path.join(agentKitDir(), rel);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, '#!/usr/bin/env node\n', 'utf-8');
+  }
 }
 
 async function writeState(state: Record<string, unknown>): Promise<void> {
@@ -155,5 +169,65 @@ describe('assist catalog delivery (#2701)', () => {
     const status = await assistDeliveryStatus();
     expect(status).toMatchObject({ lastSuccessAt: null, external: false });
     expect(status.dir).toBe(catalogDir());
+    expect(status.kitDir).toBe(agentKitDir());
+  });
+});
+
+// #2908: the same delivery carries the agent CLI. One checkout, one gate, one
+// mount point — so these cases assert the KIT, not a second mechanism.
+describe('agent-kit delivery (#2908)', () => {
+  it('puts the catalog and the CLI under one root a container can mount', async () => {
+    await seedDeliveredTree();
+    await writeState({
+      lastAttemptAt: new Date().toISOString(),
+      lastSuccessAt: new Date().toISOString(),
+      sha: 'abc1234',
+      entryCount: 1,
+      lastError: null,
+    });
+
+    const root = await resolveAgentKitDir();
+    expect(catalogDir().startsWith(`${root}${path.sep}`)).toBe(true);
+    for (const rel of AGENT_KIT_REQUIRED_FILES) {
+      await expect(fs.access(path.join(root, rel))).resolves.toBeUndefined();
+    }
+  });
+
+  it('holds the kit root behind the SAME gate as the catalog — never delivered means no mount point either', async () => {
+    await seedDeliveredTree(); // on disk, but nothing vouches for it
+    await expect(resolveAgentKitDir()).rejects.toBeInstanceOf(AssistCatalogUnavailableError);
+    await expect(resolveAgentKitDir()).rejects.toThrow(/never been delivered/i);
+  });
+
+  it('stops handing out the kit root once the delivery ages out', async () => {
+    await seedDeliveredTree();
+    await writeState({
+      lastAttemptAt: new Date().toISOString(),
+      lastSuccessAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+      sha: 'abc1234',
+      entryCount: 1,
+      lastError: 'fatal: unable to access',
+    });
+
+    await expect(resolveAgentKitDir()).rejects.toThrow(/no longer served/);
+  });
+
+  it('counts a checkout missing the CLI as a FAILED delivery, not an empty directory', async () => {
+    // The half-filled path is the failure worth naming: the assists are there,
+    // the directory mounts, and the CLI the agent came for is silently absent.
+    await seedDeliveredTree();
+    for (const rel of AGENT_KIT_REQUIRED_FILES) await fs.rm(path.join(agentKitDir(), rel));
+
+    const err = await verifyDeliveredKit(agentKitDir()).then(() => null, (e: unknown) => e as Error);
+    expect(err).toBeInstanceOf(Error);
+    expect(err?.message).toMatch(/FAILED delivery, not an empty directory/);
+    expect(err?.message).toContain(AGENT_KIT_REQUIRED_FILES[0]);
+  });
+
+  it('counts a checkout with no assist entries as a FAILED delivery too', async () => {
+    await seedDeliveredTree();
+    await fs.rm(path.join(catalogDir(), 'alpha.md'));
+
+    await expect(verifyDeliveredKit(agentKitDir())).rejects.toThrow(/carries no assist entries/);
   });
 });

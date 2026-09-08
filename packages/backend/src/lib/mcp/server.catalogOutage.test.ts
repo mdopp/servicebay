@@ -36,7 +36,7 @@ vi.hoisted(() => {
 });
 
 const BASE = '/tmp/sb-mcp-catalog-outage-test';
-const STATE_FILE = path.join(BASE, 'assist-catalog', 'delivery.json');
+const STATE_FILE = path.join(BASE, 'agent-kit', 'delivery.json');
 
 // Keep the mutation gate permissive so `set_channel` reaches its handler — the
 // point here is whether the tool is REACHABLE during a catalog outage.
@@ -81,7 +81,7 @@ function firstText(res: unknown): string {
 
 /** A tree that WOULD be served if the gate ever fell back to "whatever is there". */
 async function seedStaleTree(): Promise<void> {
-  const dir = path.join(BASE, 'assist-catalog', 'checkout', 'assists');
+  const dir = path.join(BASE, 'agent-kit', 'checkout', 'assists');
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(
     path.join(dir, 'stale-entry.md'),
@@ -115,7 +115,7 @@ beforeEach(async () => {
   // Only the delivery root is reset between cases; `maxRetries` because a
   // recursive rm of a tree the test just wrote can lose a race with the OS and
   // report ENOTEMPTY.
-  await fs.rm(path.join(BASE, 'assist-catalog'), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  await fs.rm(path.join(BASE, 'agent-kit'), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   setServicebayChannel.mockClear();
   delete process.env.ASSIST_CATALOG_DIR;
   delete process.env.ASSIST_CATALOG_MAX_AGE_HOURS;
