@@ -42,6 +42,7 @@ import {
   hasListener,
 } from '@/lib/diagnose/listenSnapshot';
 import { checkNginxOnlineFailed } from '@/lib/diagnose/probes/nginxOnlineFailed';
+import { checkInstalledTemplatesDrift } from '@/lib/diagnose/probes/installedTemplatesDrift';
 import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
 import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailure';
 import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewritesMissing';
@@ -152,6 +153,11 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   // green-looking things that mean three different things.
   [CONFIG_BACKUP_PROBE_ID]: 'storage-backups',
   [CONTENT_BACKUP_PROBE_ID]: 'storage-backups',
+  // #2902 — install-record drift. Deliberately `other` (a normal, expanded
+  // card) rather than `services`: nothing is down, but upgrade planning,
+  // migrations and backup gating are reasoning about the wrong service set,
+  // and that is invisible everywhere else.
+  installed_templates_drift: 'other',
   // Host/OS state (#2585). Deliberately NOT `system-info`: that card is
   // collapsed because it holds things that are never a problem, and a
   // permanently-failing update loop is exactly the problem an operator is
@@ -1401,6 +1407,31 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     probes.push({
       id: 'hermes_chat',
       label: 'Maintenance chat (Hermes)',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 18c) #2902 — `installedTemplates` vs. the services that actually exist,
+  //      in both directions. A record with no service anywhere is drift the
+  //      "Drop orphaned records" action repairs; a record whose service is
+  //      merely trashed is kept (a restore needs it); a service with template
+  //      evidence but no record is reported only, since only an install can
+  //      write a record.
+  try {
+    const itd = await checkInstalledTemplatesDrift(nodeName);
+    probes.push({
+      id: 'installed_templates_drift',
+      label: 'Template install records',
+      status: itd.status,
+      detail: itd.detail,
+      hint: itd.hint,
+      _items: itd.items && itd.items.length > 0 ? itd.items : undefined,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'installed_templates_drift',
+      label: 'Template install records',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
