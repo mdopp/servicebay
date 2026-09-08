@@ -7,8 +7,10 @@ export const dynamic = 'force-dynamic';
 
 // GET /api/assists/:id — full raw markdown (frontmatter + body) of one entry,
 // Local overriding Built-in. 404 for an unknown or unsafe id (#2221).
+// `tokenScope: 'read'` (#2906) — the HTTP twin of `get_assist`, reachable with a
+// read-scoped token so a container can read an ADR without an MCP client.
 export const GET = withApiHandlerParams<undefined, undefined, { id: string }>(
-  {},
+  { tokenScope: 'read' },
   async ({ params }) => {
     const id = decodeURIComponent(params.id);
     try {

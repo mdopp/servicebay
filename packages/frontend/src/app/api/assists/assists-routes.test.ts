@@ -85,27 +85,58 @@ beforeEach(() => {
   editor.readHistory.mockResolvedValue([]);
 });
 
+// The two read routes carry `tokenScope: 'read'` since #2906, so the gate now
+// runs on them and they need a credential like every other case in this file.
+// They were never anonymous in production — `proxy.ts` already required a
+// session for `/api/*` — but the route-level opt-in is what lets the agent CLI
+// reach them with a delegated `Bearer sb_…` read token instead of a cookie.
 describe('GET /api/assists (list)', () => {
+  beforeEach(() => { auth.session = { user: 'admin', expires: new Date(Date.now() + 60_000) }; });
+
   it('returns the catalog list', async () => {
     catalog.listAssists.mockResolvedValue([{ id: 'a', title: 'A', whenToUse: 'x', kind: 'guide', tags: [], source: 'Built-in' }]);
-    const res = await listGET(req('/api/assists'));
+    const res = await listGET(req('/api/assists', { headers: cookie }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.assists).toHaveLength(1);
   });
+
+  it('admits a read-scoped Bearer token (#2906 — the agent CLI has no cookie)', async () => {
+    auth.session = null;
+    auth.token = { name: 'agent', scopes: ['read'] };
+    catalog.listAssists.mockResolvedValue([]);
+    const res = await listGET(req('/api/assists', { headers: { authorization: 'Bearer sb_x_y' } }));
+    expect(res.status).toBe(200);
+  });
+
+  it('still refuses a caller with no credential at all', async () => {
+    auth.session = null;
+    const res = await listGET(req('/api/assists'));
+    expect(res.status).toBe(401);
+  });
 });
 
 describe('GET /api/assists/:id', () => {
+  beforeEach(() => { auth.session = { user: 'admin', expires: new Date(Date.now() + 60_000) }; });
+
   it('returns raw content', async () => {
     catalog.getAssist.mockResolvedValue(goodProposal);
-    const res = await getGET(req('/api/assists/demo'), { params: Promise.resolve({ id: 'demo' }) });
+    const res = await getGET(req('/api/assists/demo', { headers: cookie }), { params: Promise.resolve({ id: 'demo' }) });
     expect(res.status).toBe(200);
     expect((await res.json()).content).toBe(goodProposal);
   });
   it('404s an unknown id', async () => {
     catalog.getAssist.mockResolvedValue(null);
-    const res = await getGET(req('/api/assists/nope'), { params: Promise.resolve({ id: 'nope' }) });
+    const res = await getGET(req('/api/assists/nope', { headers: cookie }), { params: Promise.resolve({ id: 'nope' }) });
     expect(res.status).toBe(404);
+  });
+  it('admits a read-scoped Bearer token (#2906)', async () => {
+    auth.session = null;
+    auth.token = { name: 'agent', scopes: ['read'] };
+    catalog.getAssist.mockResolvedValue(goodProposal);
+    const res = await getGET(req('/api/assists/demo', { headers: { authorization: 'Bearer sb_x_y' } }),
+      { params: Promise.resolve({ id: 'demo' }) });
+    expect(res.status).toBe(200);
   });
 });
 

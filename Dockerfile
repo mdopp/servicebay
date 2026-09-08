@@ -161,19 +161,21 @@ COPY --from=builder --chown=nextjs:nodejs /app/packages/frontend/.next ./package
 # Copy templates and stacks
 COPY --from=builder --chown=nextjs:nodejs /app/templates ./templates
 COPY --from=builder --chown=nextjs:nodejs /app/stacks ./stacks
-# The task-assist catalog (#2146) is deliberately NOT copied here (#2701).
+# The agent kit — the task-assist catalog (#2146) and the agent CLI (#2906) —
+# is deliberately NOT copied here (#2701, #2908).
 #
 # Baking it in made a catalog entry an image artifact: a `docs(assists):` commit
 # cuts no release, so merged entries sat on `main` and never reached a running
-# box. The catalog is now DELIVERED AT RUNTIME — a shallow sparse checkout of
-# this repo's `assists/` tree under DATA_DIR, refreshed at boot and hourly by
-# packages/backend/src/lib/assists/delivery.ts.
+# box. Both are now DELIVERED AT RUNTIME — one shallow sparse checkout of this
+# repo's `assists/` + `agent-cli/` trees under DATA_DIR, refreshed at boot and
+# hourly by packages/backend/src/lib/assists/delivery.ts. The checkout root is
+# the stable path an agent container mounts read-only.
 #
-# Do not re-add a COPY of assists/ here. Two sources is the failure the decision
-# exists to prevent: the image copy would age and answer alongside the disk one,
-# and an assist that answers WRONGLY is worse than one that is missing. If
-# delivery fails, every read reports the failure (empty and loud) instead of
-# falling back to a baked-in tree.
+# Do not re-add a COPY of assists/ or agent-cli/ here. Two sources is the
+# failure the decision exists to prevent: the image copy would age and answer
+# alongside the disk one, and an assist (or a CLI) that answers WRONGLY is worse
+# than one that is missing. If delivery fails, every read reports the failure
+# (empty and loud) instead of falling back to a baked-in tree.
 
 # (The ADRs used to be copied in from docs/adr/ for get_service_standards.
 # #2607 MOVED them into assists/ above — one copy, in the only place an MCP

@@ -1,8 +1,8 @@
 ---
 title: ADR 0014 — The assist catalog is delivered at runtime, not baked into the image
-whenToUse: You are about to add or change an assist and want to know when it reaches a running box; you are wondering why assists/ is not in the Dockerfile; you are adding a second place assists could be read from; or get_assist/list_assists is refusing to answer and you need to know whether that is an outage or an empty catalog.
+whenToUse: You are about to add or change an assist and want to know when it reaches a running box; you are wondering why assists/ is not in the Dockerfile; you are adding a second place assists could be read from; or get_assist/list_assists is refusing to answer and you need to know whether that is an outage or an empty catalog; also when you need the path an agent container mounts to get the catalog and the ServiceBay CLI.
 kind: adr
-tags: [assists, catalog, delivery, release, docs-commit, image, one-source, mcp]
+tags: [assists, catalog, delivery, release, docs-commit, image, one-source, mcp, agent-cli, agent-kit]
 ---
 
 # ADR 0014 — The assist catalog is delivered at runtime, not baked into the image
@@ -10,6 +10,12 @@ tags: [assists, catalog, delivery, release, docs-commit, image, one-source, mcp]
 ## Status
 
 Accepted (2026-08-31, #2701). Operator decision, 30.08.2026.
+
+Widened by #2908 (2026-09-08): the same delivery now also carries the agent CLI
+(`agent-cli/`), so the checkout root is the read-only-mountable **agent kit** —
+catalog and CLI under one roof. Widening means adding a path to the one sparse
+set (`AGENT_KIT_SUBDIRS` in `delivery.ts`), never a second checkout, timer or
+read path. Everything below holds unchanged for both halves.
 
 ## Context
 
@@ -43,7 +49,7 @@ catalog is read at runtime). The operator chose the second.
    tree onto the disk — a shallow, sparse `git` checkout of
    `ASSIST_CATALOG_REPO_URL` (default `mdopp/servicebay`) at
    `ASSIST_CATALOG_REF` (default `main`), under
-   `DATA_DIR/assist-catalog/checkout`. It runs at server boot and hourly.
+   `DATA_DIR/agent-kit/checkout` (the kit root). It runs at server boot and hourly.
 2. `resolveCatalogDir()` is the single gate every catalog read passes.
    `catalog.ts` has **no** `process.cwd()/assists` fallback any more.
 3. `ASSIST_CATALOG_DIR` **replaces** that directory (used by `npm run dev`, which
@@ -77,8 +83,10 @@ for — but it can no longer do so quietly:
 - the last successful delivery is older than `ASSIST_CATALOG_MAX_AGE_HOURS`
   (default 24 — i.e. 24 consecutive hourly failures).
 
-A checkout that lands with zero `*.md` files counts as a **failed delivery**, not
-an empty catalog. `list_assists`, `get_assist` and `list_assist_drift` return
+A checkout that lands with zero `*.md` files — or without the kit's own required
+files (`AGENT_KIT_REQUIRED_FILES`, e.g. the CLI itself) — counts as a **failed
+delivery**, not an empty catalog and not a half-filled directory.
+`list_assists`, `get_assist` and `list_assist_drift` return
 that error text plus the delivery status (last attempt, last success, commit,
 entry count, last error) instead of an empty list or a "no assist found with id
 …". `get_service_standards` carries the same failure into

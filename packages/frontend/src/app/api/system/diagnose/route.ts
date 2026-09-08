@@ -18,7 +18,9 @@ export type { DiagnoseProbe };
 
 export const dynamic = 'force-dynamic';
 
-export const POST = withApiHandler({}, async ({ request }) => {
+// `tokenScope: 'read'` (#2906) — a POST that writes nothing: it runs the probes
+// and returns their results, the same read-only-POST shape as /api/install/plan.
+export const POST = withApiHandler({ tokenScope: 'read' }, async ({ request }) => {
   let nodeName = 'Local';
   try {
     const body = await request.json().catch(() => ({}));

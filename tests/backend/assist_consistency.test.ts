@@ -207,10 +207,42 @@ describe('ESLint sb/* rule-name drift in docs', () => {
 // on, and the RED path of the gate that holds it — a gate whose failure branch is
 // never exercised is a gate nobody knows still works.
 describe('the assist catalog has exactly one source (#2701)', () => {
-  it('passes on the real Dockerfile + loader', () => {
+  const realDelivery = () =>
+    fs.readFileSync(path.join(REPO_ROOT, 'packages/backend/src/lib/assists/delivery.ts'), 'utf-8');
+
+  it('passes on the real Dockerfile + loader + delivery', () => {
     const dockerfile = fs.readFileSync(path.join(REPO_ROOT, 'Dockerfile'), 'utf-8');
     const loader = fs.readFileSync(path.join(REPO_ROOT, 'packages/backend/src/lib/assists/catalog.ts'), 'utf-8');
-    expect(auditAssistCatalogSource(dockerfile, loader)).toEqual([]);
+    expect(auditAssistCatalogSource(dockerfile, loader, realDelivery())).toEqual([]);
+  });
+
+  // #2908 widened the one delivery to carry the agent CLI. The condition is
+  // unchanged — one source — so the gate has to hold for the CLI too.
+  it('fails when the CLI is baked into the image beside the delivered copy', () => {
+    const problems = auditAssistCatalogSource(
+      'FROM node\nCOPY --from=builder /app/agent-cli ./agent-cli\n',
+      'const x = 1;',
+      realDelivery(),
+    );
+    expect(problems.join(' ')).toMatch(/Dockerfile copies agent-cli\/ into the image/);
+  });
+
+  it('fails when the delivery stops carrying the CLI', () => {
+    const problems = auditAssistCatalogSource(
+      'FROM node\n',
+      'const x = 1;',
+      "export const AGENT_KIT_SUBDIRS = [CATALOG_SUBDIR] as const;\nexport async function resolveAgentKitDir() {}\n",
+    );
+    expect(problems.join(' ')).toMatch(/no longer lists agent-cli\/ in AGENT_KIT_SUBDIRS/);
+  });
+
+  it('fails when the kit root escapes the freshness gate', () => {
+    const problems = auditAssistCatalogSource(
+      'FROM node\n',
+      'const x = 1;',
+      "export const AGENT_KIT_SUBDIRS = [CATALOG_SUBDIR, 'agent-cli'] as const;\n",
+    );
+    expect(problems.join(' ')).toMatch(/no longer exports resolveAgentKitDir/);
   });
 
   it('fails when the image COPY comes back', () => {
@@ -218,7 +250,7 @@ describe('the assist catalog has exactly one source (#2701)', () => {
       'FROM node\nCOPY --from=builder /app/assists ./assists\n',
       'const x = 1;',
     );
-    expect(problems.join(' ')).toMatch(/copies the assist catalog into the image/);
+    expect(problems.join(' ')).toMatch(/Dockerfile copies assists\/ into the image/);
   });
 
   it('fails when the loader grows a process.cwd() fallback again', () => {
