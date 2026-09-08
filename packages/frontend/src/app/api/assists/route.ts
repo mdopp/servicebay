@@ -15,8 +15,10 @@ const Query = z
 
 // GET /api/assists — list catalog entries (built-in + local), Local overriding
 // Built-in by id. The HTTP twin of the `list_assists` MCP tool (#2221).
+// `tokenScope: 'read'` (#2906) so the agent CLI can list the catalog with the
+// container's delegated read token, as the `list_assists` MCP tool already does.
 export const GET = withApiHandler<undefined, z.infer<typeof Query>>(
-  { query: Query },
+  { query: Query, tokenScope: 'read' },
   async ({ query }) => {
     try {
       const assists = await listAssists({ query: query?.query, kind: query?.kind });

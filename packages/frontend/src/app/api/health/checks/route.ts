@@ -9,7 +9,9 @@ import { getDiagnoseChecksEnriched } from '@/lib/diagnose/diagnoseChecks';
 import { buildServiceAttributionIndex, resolveDomainCheckService } from '@/lib/health/checkAttribution';
 import { isKnownLocalSystemTarget } from '@/lib/health/ssrfGuard';
 
-export const GET = withApiHandler({}, async () => {
+// `tokenScope: 'read'` (#2906) — the agent CLI's `health` verb. POST/DELETE
+// below create and remove checks and stay cookie/internal-only.
+export const GET = withApiHandler({ tokenScope: 'read' }, async () => {
   const checks = HealthStore.getChecks();
   // #2394: one attribution index per node touched by this batch (built from
   // the in-memory twin, so it costs no agent round trip). A `domain` check's

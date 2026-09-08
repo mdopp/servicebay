@@ -35,8 +35,13 @@ function ensureServiceName(name: string): { ok: true; value: string } | { ok: fa
   return { ok: true, value: check.data };
 }
 
+/**
+ * `tokenScope: 'read'` (#2906, same rationale as #2899 on the list route). This
+ * GET only reads the service's files; DELETE and PUT below stay cookie/internal-
+ * only, so opening the read branch does not widen them.
+ */
 export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { name: string }>(
-  { query: Query },
+  { query: Query, tokenScope: 'read' },
   async ({ query, params }) => {
   try {
     const decoded = decodeName(params.name);

@@ -10,8 +10,10 @@ export const dynamic = 'force-dynamic';
 
 const Query = z.object({ node: z.string().optional() });
 
+// `tokenScope: 'read'` (#2906) — the agent CLI's `logs` verb reads this with the
+// container's delegated read token. Log retrieval writes nothing.
 export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { name: string }>(
-  { query: Query },
+  { query: Query, tokenScope: 'read' },
   async ({ query, params }) => {
     const rawName = params?.name ?? '';
     let decoded = '';
