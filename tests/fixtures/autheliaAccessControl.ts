@@ -30,8 +30,9 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import Mustache from 'mustache';
 import yaml from 'js-yaml';
+
+import { renderTemplate } from '@/lib/template/render';
 
 interface AccessControlRule {
   domain?: unknown;
@@ -76,7 +77,11 @@ export function authTemplateAccessControl(
     path.join(repoRoot, 'templates', 'auth', 'configuration.yml.mustache'),
     'utf-8',
   );
-  return parseAccessControl(Mustache.render(src, { PUBLIC_DOMAIN: publicDomain }));
+  // Through the one renderer (#599), not `mustache` directly: this fixture
+  // must see the SAME escape semantics a deploy writes to disk, and the
+  // `one-renderer` invariant keeps the direct-importer set at render.ts plus
+  // the one test that asserts on the raw engine.
+  return parseAccessControl(renderTemplate(src, { PUBLIC_DOMAIN: publicDomain }));
 }
 
 function asList(v: unknown): string[] {
