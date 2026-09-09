@@ -123,6 +123,11 @@ export function registerProxyTools({ server }: ToolRegistration) {
           exposure,
           forwardAuth: !!forwardAuth,
           cert: d.certs.find(c => c.domain === domain) ?? null,
+          // #2933 — the kernel derives this from the access_list_id NPM
+          // holds after the call, and fails the host (→ `failedHere` above)
+          // when the live row disagrees with the requested exposure. So
+          // reaching this line already means NPM matches `exposure`; we are
+          // never echoing the request back as if it were the outcome.
           lanRestricted: d.lanRestricted.includes(domain),
           note: 'Route pushed to NPM. Poll get_proxy_routes to confirm nginx_online=true (a bad conf reverts silently otherwise).',
         });

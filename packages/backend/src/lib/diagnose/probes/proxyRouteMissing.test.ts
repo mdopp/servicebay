@@ -145,3 +145,46 @@ describe('proxy_route_missing.retry_create', () => {
     expect(result.message).toMatch(/Domain already exists/);
   });
 });
+
+/**
+ * #2933 — "Retry create" forwarded only domain/service/forwardPort, so the
+ * provisioner saw no exposure, read that as "no access list", and published
+ * a LAN-only admin console (dns./ldap./nginx.<domain>) to the internet —
+ * while the config entry still said `lan` and the log line still printed
+ * `exposure=lan`. The retry must carry the STORED exposure, and an entry
+ * that pre-dates the field must resolve to the conservative default.
+ */
+describe('proxy_route_missing.retry_create carries the stored exposure (#2933)', () => {
+  const retry = async (entry: Record<string, unknown>) => {
+    state.config = { reverseProxy: { hosts: [entry] } };
+    state.services = ACTIVE_NGINX;
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, created: [entry.domain], failed: [] }),
+    });
+    const result = await dispatchProbeAction({
+      probeId: 'dangling_proxy',
+      actionId: 'retry_create',
+      itemId: entry.domain as string,
+      node: 'Local',
+    });
+    expect(result.ok).toBe(true);
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    return body.hosts[0];
+  };
+
+  it.each([
+    ['lan', 'lan'],
+    ['internal', 'internal'],
+    ['public', 'public'],
+  ])('forwards a stored exposure "%s" verbatim — never weaker', async (stored, expected) => {
+    const host = await retry({ domain: 'dns.example.com', service: 'adguard', forwardPort: 3000, created: false, exposure: stored });
+    expect(host.exposure).toBe(expected);
+  });
+
+  it('resolves an entry with no exposure to lan, not to open', async () => {
+    const host = await retry({ domain: 'ldap.example.com', service: 'lldap', forwardPort: 17170, created: false });
+    expect(host.exposure).toBe('lan');
+  });
+});

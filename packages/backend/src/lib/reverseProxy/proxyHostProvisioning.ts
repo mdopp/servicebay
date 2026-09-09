@@ -33,6 +33,7 @@ import {
     deleteProxyHost,
     findProxyHostByDomain,
     listProxyHosts,
+    readAccessListId,
     updateProxyHost,
     type NpmProxyHost,
 } from '../npm/proxyHosts';
@@ -46,8 +47,12 @@ import {
 import { deployProxyErrorPages, withProxyErrorPage } from './proxyErrorPages';
 import {
     buildForwardAuthPatch,
+    decideAccessListId,
+    decideAccessListReconcile,
     decideAdvancedConfigReconcile,
     decideUpstreamReconcile,
+    normalizeExposure,
+    requiresLanAccessList,
     type ProxyHostRequest,
 } from './proxyHostPolicy';
 import { checkPublicARecord, missingARecordMessage } from './publicDnsCheck';
@@ -119,6 +124,40 @@ async function reconcileProxyHostUpstream(
         logger.warn('ProxyHosts', `Failed to update forward target for ${domain}: ${e instanceof Error ? e.message : String(e)}`);
         return false;
     }
+}
+
+/**
+ * #2933 — Reconcile an existing NPM proxy host's `access_list_id` to the one
+ * its exposure demands.
+ *
+ * This is the half of the reconcile that was missing: `createOrReconcile`
+ * converged `advanced_config` and the upstream but passed `accessListId`
+ * only in the CREATE body, so re-provisioning an already-open host with
+ * `exposure: 'lan'` / `'internal'` left NPM's `access_list_id: 0` untouched
+ * — publicly reachable — while the summary, the MCP response and the log
+ * line all said "LAN-only". For `internal` it also got a real LE cert, so it
+ * served HTTPS to the whole internet with no IP gate.
+ *
+ * Both directions are reconciled: an open host gets the gate, and a host
+ * whose exposure was widened to `public` gets the stale gate removed.
+ * Throws on a failed PUT — an exposure we could not converge must abort this
+ * host, not continue into cert issuance.
+ */
+async function reconcileProxyHostAccessList(
+    apiUrl: string,
+    token: string,
+    hostId: number,
+    domain: string,
+    expectedAccessListId: number,
+    currentAccessListId: number | undefined,
+): Promise<void> {
+    const decision = decideAccessListReconcile(expectedAccessListId, currentAccessListId);
+    if (!decision.changed) return;
+    const r = await updateProxyHost(apiUrl, token, hostId, { access_list_id: expectedAccessListId });
+    if (!r.ok) {
+        throw new Error(`Failed to reconcile the NPM access list for ${domain} (access_list_id ${decision.from} → ${decision.to}): NPM PUT returned ${r.status}. The host keeps its previous exposure.`);
+    }
+    logger.info('ProxyHosts', `Reconciled ${domain} access list: access_list_id ${decision.from} → ${decision.to}`);
 }
 
 /**
@@ -255,6 +294,19 @@ async function createOrReconcileProxyHost(
 ): Promise<{ id?: number }> {
     const existing = await findExistingHost(apiUrl, token, host.domain);
     if (existing) {
+        // #2933 — Converge the EXPOSURE first. `accessListId` used to be a
+        // create-only field, so an existing host kept whatever gate (or
+        // none) it already had while every report claimed the requested
+        // one. Do it before the cert/patch work below so a host we cannot
+        // gate never reaches `provisionCert`.
+        await reconcileProxyHostAccessList(
+            apiUrl,
+            token,
+            existing.id,
+            host.domain,
+            accessListId,
+            existing.access_list_id,
+        );
         // #991 / #1862 — Reconcile advanced_config for a ServiceBay-owned
         // host when the template's rendered value differs from live.
         // decideAdvancedConfigReconcile leaves genuine manual edits on
@@ -493,11 +545,18 @@ interface BatchContext extends NpmSession {
  *  rendering, default upstream, LAN/proxy-error/forward-auth-denied pages. */
 async function prepareHost(input: ProxyHostRequest, ctx: BatchContext): Promise<{
     host: ProxyHostRequest;
-    accessListId: number;
+    /** `null` = the exposure demands an IP gate we cannot bind (#2933). */
+    accessListId: number | null;
+    accessListError?: string;
     wantsConfPatch: boolean;
     upstreamHostHeader: string | undefined;
 }> {
-    const host: ProxyHostRequest = { ...input };
+    // #2933 — resolve an ABSENT exposure to the conservative default up
+    // front, so the cert branch, the persisted entry and the log line all
+    // read the same tier the access-list decision used. Before this an
+    // exposure-less request was treated as "no allow-list" (= open) while
+    // the log printed `exposure=lan`.
+    const host: ProxyHostRequest = { ...input, exposure: normalizeExposure(input.exposure) };
     if (host.proxyConfig?.advanced_config) {
         // The `__authelia_forward_auth__` sentinel is normally expanded by the
         // STACK INSTALLER right before Mustache renders. A DIRECT call (a
@@ -520,13 +579,21 @@ async function prepareHost(input: ProxyHostRequest, ctx: BatchContext): Promise<
     // Default forward host = node LAN IP (NPM is in a container,
     // 127.0.0.1 would only reach the NPM pod itself)
     if (!host.forwardHost) host.forwardHost = ctx.npm.nodeIp;
-    const wantsLanList = host.exposure === 'lan' || host.exposure === 'internal';
-    const accessListId = wantsLanList && ctx.lanAccessListId !== null ? ctx.lanAccessListId : 0;
+    // #2933 — a host that needs the LAN gate and has no list to bind is a
+    // FAILURE, not a fallback to open. The old expression collapsed
+    // `lanAccessListId === null` to `0`, quietly publishing an admin console
+    // to the internet with `lanRestricted: true` in the summary.
+    const decidedAccessList = decideAccessListId(host.exposure, ctx.lanAccessListId);
+    const accessListId = decidedAccessList.ok ? decidedAccessList.accessListId : null;
+    const accessListError = decidedAccessList.ok ? undefined : decidedAccessList.reason;
     // #1415 — When this host is actually behind the LAN access list, wire
     // the branded explainer into its `advanced_config`. Idempotent;
     // preserves any existing directives. The access rule itself is
     // UNCHANGED — only the denied-response body differs.
-    if (accessListId !== 0) {
+    // #2933 — keyed off the EXPOSURE, not off the resolved id, so the two
+    // never disagree (a null id means "gate demanded but unavailable").
+    const gated = requiresLanAccessList(host.exposure);
+    if (gated) {
         host.proxyConfig = { ...host.proxyConfig, advanced_config: withLanDeniedPage(host.proxyConfig?.advanced_config) };
     }
     // #1583 — Wire the branded bare-proxy-error page (401/502/503/504) into
@@ -551,11 +618,11 @@ async function prepareHost(input: ProxyHostRequest, ctx: BatchContext): Promise<
     // (signed-in but wrong group), NOT the LAN-only deny. Wire its
     // `error_page 403` to a branded explainer naming the required group. A
     // forward-auth host is not LAN-bound, so the two owners never collide.
-    if (wantsForwardAuth && accessListId === 0) {
+    if (wantsForwardAuth && !gated) {
         host.proxyConfig = { ...host.proxyConfig, advanced_config: withForwardAuthDeniedPage(host.proxyConfig?.advanced_config, host.domain) };
         await deployForwardAuthDeniedPage(host.domain, ctx.errorPageDomain, ctx.node);
     }
-    return { host, accessListId, wantsConfPatch: wantsForwardAuth || wantsStrictHost || wantsLocalHost, upstreamHostHeader };
+    return { host, accessListId, accessListError, wantsConfPatch: wantsForwardAuth || wantsStrictHost || wantsLocalHost, upstreamHostHeader };
 }
 
 /** Auto-cert for public AND internal hosts. Best-effort: install continues
@@ -596,9 +663,63 @@ async function provisionCert(
     await reapplyConfPatch();
 }
 
+/**
+ * #2933 — Read the host's `access_list_id` back out of NPM and report THAT.
+ *
+ * `lanRestricted` used to be `accessListId !== 0` computed from the request
+ * before a single byte reached NPM, so it stayed `true` for a host whose
+ * reconcile never happened (or silently failed) — the summary, the MCP tool
+ * response and the log line agreed with each other and disagreed with the
+ * proxy. Now:
+ *   - the reported value is derived from the live row;
+ *   - a live row that does not match the requested exposure fails the host;
+ *   - a row we could not read leaves `lanRestricted` UNSET (no claim either
+ *     way) and fails the host, because "unknown" is not "restricted".
+ */
+async function confirmExposure(
+    ctx: BatchContext,
+    host: ProxyHostRequest,
+    hostId: number | undefined,
+    expectedAccessListId: number,
+    outcome: HostOutcome,
+): Promise<void> {
+    if (typeof hostId !== 'number') {
+        outcome.success = false;
+        outcome.error = outcome.error ?? `NPM did not return an id for ${host.domain}; its exposure could not be confirmed.`;
+        logger.error('ProxyHosts', `Cannot confirm the exposure of ${host.domain} — NPM returned no host id.`);
+        return;
+    }
+    const live = await readAccessListId(ctx.npm.apiUrl, ctx.token, hostId);
+    if (!live.ok) {
+        outcome.success = false;
+        outcome.error = outcome.error ?? `Could not read back the NPM access list for ${host.domain} (${live.reason}); its exposure is unconfirmed.`;
+        logger.error('ProxyHosts', `Exposure of ${host.domain} is UNCONFIRMED — ${live.reason}. Not reporting it as restricted.`);
+        return;
+    }
+    outcome.lanRestricted = live.accessListId !== 0;
+    if (live.accessListId !== expectedAccessListId) {
+        outcome.success = false;
+        outcome.error = outcome.error ?? `NPM holds access_list_id=${live.accessListId} for ${host.domain}, but exposure "${host.exposure}" requires ${expectedAccessListId}. The route is NOT gated as requested.`;
+        logger.error('ProxyHosts', `Exposure MISMATCH on ${host.domain}: NPM holds access_list_id=${live.accessListId}, exposure=${host.exposure} requires ${expectedAccessListId}.`);
+        return;
+    }
+    logger.info('ProxyHosts', `Provisioned proxy host: ${host.domain} → ${host.forwardHost}:${host.forwardPort} (exposure=${host.exposure}, NPM access_list_id=${live.accessListId}, lanRestricted=${outcome.lanRestricted})`);
+}
+
 async function provisionOneHost(input: ProxyHostRequest, ctx: BatchContext): Promise<HostOutcome> {
-    const { host, accessListId, wantsConfPatch, upstreamHostHeader } = await prepareHost(input, ctx);
-    const outcome: HostOutcome = { domain: host.domain, success: true, lanRestricted: accessListId !== 0 };
+    const { host, accessListId, accessListError, wantsConfPatch, upstreamHostHeader } = await prepareHost(input, ctx);
+    // #2933 — refuse rather than publish. `accessListId === null` means the
+    // exposure demands NPM's LAN-only list and the batch has none, so the
+    // only thing we could create is an OPEN host. Nothing is sent to NPM:
+    // an existing host keeps whatever it had, and the failure is reported.
+    if (accessListId === null) {
+        const msg = `Refusing to provision ${host.domain}: ${accessListError ?? 'its exposure could not be resolved to an NPM access list'}. NPM was not changed.`;
+        logger.error('ProxyHosts', msg);
+        return { domain: host.domain, success: false, error: msg };
+    }
+    // `lanRestricted` stays undefined until NPM has been read back — it is a
+    // claim about the live proxy, never an echo of the request.
+    const outcome: HostOutcome = { domain: host.domain, success: true };
     let createdHost: { id?: number } | null = null;
     const reapplyConfPatch = async () => {
         if (wantsConfPatch && typeof createdHost?.id === 'number') {
@@ -607,7 +728,6 @@ async function provisionOneHost(input: ProxyHostRequest, ctx: BatchContext): Pro
     };
     try {
         createdHost = await createOrReconcileProxyHost(ctx.npm.apiUrl, ctx.token, host, accessListId);
-        logger.info('ProxyHosts', `Created proxy host: ${host.domain} → ${host.forwardHost}:${host.forwardPort} (exposure=${host.exposure ?? 'lan'}${accessListId !== 0 ? ', LAN-only via access list' : ''})`);
         await reapplyConfPatch();
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -618,6 +738,12 @@ async function provisionOneHost(input: ProxyHostRequest, ctx: BatchContext): Pro
     if (host.exposure === 'public' || host.exposure === 'internal') {
         await provisionCert(ctx, host, createdHost?.id, outcome, reapplyConfPatch);
     }
+
+    // #2933 — the ONE place `lanRestricted` and the exposure log line are
+    // decided: what NPM holds after every write has settled, never what the
+    // request asked for. A mismatch (or an unreadable row) fails the host
+    // loudly instead of reporting the requested posture as fact.
+    await confirmExposure(ctx, host, createdHost?.id, accessListId, outcome);
 
     // #2156 — NPM's create/cert-bind/patch all returned "ok", but the route
     // only actually routes if nginx loaded the conf. Read the live
@@ -704,14 +830,16 @@ export async function provisionProxyHosts(input: ProvisionProxyHostsInput): Prom
     const leEmail = config.reverseProxy?.npm?.email;
 
     // Auto-create the "ServiceBay LAN only" access list once if any host
-    // wants it (at most two NPM calls per batch instead of N). `null`
-    // falls back to the previous open behaviour for that subset of hosts
-    // so the install doesn't fail just because the access-list creation
-    // hiccupped — the diagnose UI is the recovery path. `lan` AND
-    // `internal` both bind the list; `internal` additionally requests a
-    // public LE cert (the ACME challenge location bypasses the allowlist
-    // by design inside NPM).
-    const needsLanList = hosts.some(h => h.exposure === 'lan' || h.exposure === 'internal');
+    // wants it (at most two NPM calls per batch instead of N). `null` means
+    // NPM could not give us one — and since #2933 that FAILS the hosts that
+    // need it instead of quietly publishing them open; the diagnose UI is
+    // still the recovery path, it just no longer runs behind a route that
+    // is already on the internet. `lan` AND `internal` both bind the list;
+    // `internal` additionally requests a public LE cert (the ACME challenge
+    // location bypasses the allowlist by design inside NPM).
+    // #2933 — via the exposure contract, so an exposure-less host (which
+    // resolves to `lan`) still makes the batch create the list.
+    const needsLanList = hosts.some(h => requiresLanAccessList(h.exposure));
     const lanAccessListId = needsLanList ? await ensureLanAccessList(npm.apiUrl, token, npm.nodeIp) : null;
 
     // #1415 — Ship the branded "this host is LAN-only" 403 explainer into

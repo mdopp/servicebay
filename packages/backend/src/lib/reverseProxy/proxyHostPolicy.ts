@@ -4,6 +4,7 @@
  * the agent or config; each function is a string/record transform the
  * provisioning module applies and the unit tests exercise directly.
  */
+import type { ProxyExposure } from '../config';
 import { AUTHELIA_LOCATION_HEADERS, sanitizeForwardAuthPort } from '../stackInstall/forwardAuth';
 import { withLanDeniedPage } from './lanDeniedPage';
 
@@ -41,7 +42,7 @@ export interface ProxyHostRequest {
      * `variables.json`; the wizard's configure step lets the operator
      * override per service.
      */
-    exposure?: 'public' | 'internal' | 'lan';
+    exposure?: ProxyExposure;
     /** Service-specific NPM proxy host settings */
     proxyConfig?: {
         allow_websocket_upgrade?: boolean;
@@ -260,4 +261,91 @@ export function buildForwardAuthPatch(
         return { skip: 'no replacement needed' };
     }
     return { content: newContent };
+}
+
+// ─── Exposure → NPM access list ─────────────────────────────────────────
+
+/**
+ * #2933 — the conservative resolution of an ABSENT exposure. A request that
+ * carries no exposure is missing information, and missing information is
+ * never permission: it resolves to the most restrictive tier, never to
+ * `public`. `ProxyHostEntry.exposure` (config.ts) has documented this as the
+ * rule all along; before #2933 the provisioning code read `undefined` as
+ * "no allow-list" — i.e. open — which is the exact opposite.
+ */
+const DEFAULT_PROXY_EXPOSURE: ProxyExposure = 'lan';
+
+/**
+ * Which tiers must be bound to NPM's "ServiceBay LAN only" IP access list.
+ *
+ * Exhaustive over {@link PROXY_EXPOSURES} by TYPE (a new tier fails `tsc`)
+ * and by TEST (`exposureReconcile.test.ts` iterates the contract). Do not
+ * replace this with an `=== 'lan' || === 'internal'` expression: the point
+ * of the table is that a new tier cannot slip through unanswered.
+ */
+const EXPOSURE_REQUIRES_LAN_ACCESS_LIST: Record<ProxyExposure, boolean> = {
+    // Reachable from the internet on purpose: no IP gate.
+    public: false,
+    // LE cert so forward-auth works, but every non-ACME path is IP-gated.
+    internal: true,
+    // Plain HTTP, LAN only.
+    lan: true,
+};
+
+/** Resolve an absent exposure to `DEFAULT_PROXY_EXPOSURE` (`lan`). */
+export function normalizeExposure(exposure: ProxyExposure | undefined): ProxyExposure {
+    return exposure ?? DEFAULT_PROXY_EXPOSURE;
+}
+
+/**
+ * Does this exposure require the LAN access list? Throws on a value that is
+ * not in the contract — a route we cannot classify must fail loudly rather
+ * than fall through to "no access list", which publishes it wide open.
+ */
+export function requiresLanAccessList(exposure: ProxyExposure | undefined): boolean {
+    const tier = normalizeExposure(exposure);
+    const required = EXPOSURE_REQUIRES_LAN_ACCESS_LIST[tier];
+    if (typeof required !== 'boolean') {
+        throw new Error(`Unknown proxy exposure "${tier}" — refusing to provision a host whose access rule is undefined (it would be published open).`);
+    }
+    return required;
+}
+
+/**
+ * The `access_list_id` NPM must end up holding for this exposure, given the
+ * batch's LAN access-list id (`null` = NPM could not give us one).
+ *
+ * `{ ok: false }` is the loud failure the caller must surface: the host WANTS
+ * an IP gate and there is no list to bind, so provisioning it would publish
+ * it open while every report said "restricted". The old code silently used
+ * `0` (open) here.
+ */
+export function decideAccessListId(
+    exposure: ProxyExposure | undefined,
+    lanAccessListId: number | null,
+): { ok: true; accessListId: number } | { ok: false; reason: string } {
+    if (!requiresLanAccessList(exposure)) return { ok: true, accessListId: 0 };
+    if (lanAccessListId === null || lanAccessListId === 0) {
+        return {
+            ok: false,
+            reason: `exposure "${normalizeExposure(exposure)}" requires NPM's LAN-only access list and none is available — refusing to publish the host without its IP gate`,
+        };
+    }
+    return { ok: true, accessListId: lanAccessListId };
+}
+
+/**
+ * Pure decision for the access-list reconcile on an EXISTING host: does
+ * NPM's live `access_list_id` already match what the exposure demands?
+ *
+ * An absent `access_list_id` on the live row means NPM has no gate on it
+ * (`0`), so it is compared as `0` — never as "unknown, leave alone".
+ */
+export function decideAccessListReconcile(
+    expectedAccessListId: number,
+    currentAccessListId: number | undefined,
+): { changed: false } | { changed: true; from: number; to: number } {
+    const current = currentAccessListId ?? 0;
+    if (current === expectedAccessListId) return { changed: false };
+    return { changed: true, from: current, to: expectedAccessListId };
 }
