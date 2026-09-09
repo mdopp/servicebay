@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.35.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.35.0...servicebay-v5.35.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **assists:** search id, kind and tags in the list_assists q filter ([c6efd6c](https://github.com/mdopp/servicebay/commit/c6efd6cebe855e1b310bcce652890f38a45fd03f)), closes [#2917](https://github.com/mdopp/servicebay/issues/2917)
+* **auth:** refuse a token mint that exceeds the caller's own scopes ([a1d135e](https://github.com/mdopp/servicebay/commit/a1d135ec54cfee2ad21fbc16348036cfa6cbb061)), closes [#2919](https://github.com/mdopp/servicebay/issues/2919)
+* **autoloop:** resolve the box URL by trying candidates until one answers ([1ffdb65](https://github.com/mdopp/servicebay/commit/1ffdb65e7a71fa7077a4529d96528a500503e6cd)), closes [#2922](https://github.com/mdopp/servicebay/issues/2922)
+* **restore:** stop reporting success for restore work that never happened ([3feed12](https://github.com/mdopp/servicebay/commit/3feed12d0c652104b358b6be823996a072520019)), closes [#2920](https://github.com/mdopp/servicebay/issues/2920) [#2921](https://github.com/mdopp/servicebay/issues/2921)
+
 ## [5.35.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.34.0...servicebay-v5.35.0) (2026-09-09)
 
 
