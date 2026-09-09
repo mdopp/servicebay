@@ -78,7 +78,9 @@ If the empty state says "run the composer" and there is no button that runs the
 composer, the fix is the button, not a reword. Rewording it to "the composer has
 not run" ships the same dead end with better grammar. Either give the user the
 control, or state the automatic condition that will resolve it ("this runs every
-night; nothing to do").
+night; nothing to do"). When the action is the slow kind, the button must start a
+**server-owned, observable job** — not a request the tab has to survive (see the
+`long-running-process` standard).
 
 ### 4. Onboarding shows while its condition holds, not only on virgin state
 
@@ -89,12 +91,26 @@ picked) and hide it when that condition clears. Same rule ServiceBay applies to
 its own setup entry: visible while something is pending, hidden once acknowledged
 (`docs/UX_DECISIONS.md` § *Primary sidebar is a user-task list*).
 
+Skipping is a **user decision, and it gets stored as one** — not a transient
+dismissal the next reload undoes, and not a one-way door either: the way back
+into setup stays visible after the skip.
+
 ### 5. Settings group by user questions, not by config structure
 
 Group by *"what do I want to do?"* — not by which file or object the value lives
 in. A settings page that mirrors the config schema forces the user to learn the
 implementation to change one thing. (ServiceBay's own settings IA decision:
 goal-based groups with tiered disclosure, `docs/UX_DECISIONS.md`.)
+
+Two corollaries:
+
+- **The state and the form of one concern live in the same card.** Showing
+  "where does my data come from?" in one place and the control that changes it in
+  another makes the user reconstruct the connection every visit.
+- **Auth architecture is never explained to the user.** No proxy, no forward-auth,
+  no header names, no "session validated by …" — the reverse proxy already hands
+  the app a name, so the whole of what belongs on the page is `Signed in as
+  <the user's name>`.
 
 ### 6. Progress and capacity answer the household question
 
@@ -107,6 +123,18 @@ keep the raw numbers one expand away for whoever wants them.
 
 Read your own rendered strings as the operator: for each one, name the question
 it answers and the action it enables. Anything that fails that pass is either
-copy to rewrite, a control to add, or a line that belongs in the log. If a rule
+copy to rewrite, a control to add, or a line that belongs in the log.
+
+The sharper form of that pass — read each string as the **least technical member
+of the household** and ask, verbatim:
+
+1. *What am I supposed to understand here — as a user?*
+2. *What do I have to do now?*
+3. *Where do I see the result?*
+
+A string that cannot answer all three is wrong — or the feature behind it is
+missing, which is the more common finding.
+
+If a rule
 here was missing, ambiguous, or wrong when you needed it, report it back —
 `get_assist("report-standards-gaps")`.
