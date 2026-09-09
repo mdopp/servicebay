@@ -289,6 +289,12 @@ app.prepare().then(() => {
           // bare HTTP 500 on `initialize`, i.e. the WHOLE MCP surface, tools a
           // caller never asked for included. A session lookup that fails is an
           // unauthenticated request, and says so as a 401 below.
+          // `getSessionFromCookieHeader` is the chokepoint (#2931): it refuses a
+          // session past its computed `expires` AND one whose source token
+          // (`viaToken`, from POST /api/auth/session-from-token) has been
+          // revoked or has expired. Before that, this branch trusted the
+          // signature alone, so a revoked token's cookie kept driving MCP tools
+          // at that token's full scopes for the rest of the JWT's 24h.
           const session = await getSessionFromCookieHeader(req.headers.cookie).catch((e) => {
             logger.error('Server', 'MCP cookie-session lookup failed', e);
             return null;
@@ -397,6 +403,10 @@ app.prepare().then(() => {
   // one for you. The session (scopes included) is stashed on `socket.data.user`
   // for exactly that purpose.
   io.use(async (socket, next) => {
+    // Same chokepoint as `/mcp` and `/api/*` (#2931): a bridged session whose
+    // token was revoked, or one past its computed expiry, is not "a valid
+    // session" here either — a long-lived socket is the surface where a stale
+    // credential is least visible.
     const session = await getSessionFromCookieHeader(socket.handshake.headers.cookie);
     if (!session) {
       logger.warn('Server', `Rejected unauthenticated socket from ${socket.handshake.address}`);

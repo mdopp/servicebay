@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { decrypt } from '@/lib/auth/session';
+import { getSessionFromCookieHeader } from '@/lib/auth/session';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { getConfig } from '@/lib/config';
 import { getActiveDomain } from '@/lib/mode';
@@ -261,13 +261,13 @@ export async function proxy(request: NextRequest) {
 
   if (isPublicApi(pathname, request.method)) return NextResponse.next();
 
-  const token = request.cookies.get('session')?.value;
-  if (!token) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const session = await decrypt(token);
-  if (!session || typeof session.user !== 'string') {
+  // #2931 — read the cookie through the single chokepoint, never `decrypt`
+  // directly. A valid signature is not enough: a session bridged from a named
+  // token (`POST /api/auth/session-from-token`) dies with that token, and every
+  // session dies at its computed `expires`. Doing it by hand here is exactly how
+  // a revoked token kept passing this gate for the rest of the day.
+  const session = await getSessionFromCookieHeader(request.headers.get('cookie') ?? undefined);
+  if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
