@@ -81,3 +81,76 @@ describe('ApprovalsSection (#2100 settings migration)', () => {
     expect((toggle as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+/**
+ * An agent-filed install request (#2965, criterion 2): the operator has to see
+ * exactly what would be installed AT THE MOMENT OF APPROVAL. An approval of an
+ * opaque operation is not an approval, so the plan is rendered outright —
+ * never only behind the payload disclosure the reviewer has to think to open.
+ */
+const INSTALL_REQUEST = {
+  id: 'a2',
+  service: 'linkwarden',
+  title: 'install linkwarden as linkwarden',
+  description: 'An agent (token:pi-dev) asks ServiceBay to install this template. Nothing has been installed.',
+  payload: {
+    kind: 'install-request',
+    caller: 'token:pi-dev',
+    installRequestId: 'req-7f3a',
+    plan: {
+      template: 'linkwarden',
+      templateSource: 'Local',
+      serviceName: 'linkwarden',
+      subdomain: 'links',
+      mounts: [{ host: '/mnt/data/stacks/linkwarden/data', container: '/data', mode: 'rw' }],
+      ports: [{ host: 8099, container: 3000 }],
+      variables: { TZ: 'Europe/Berlin' },
+    },
+  },
+  node: 'box',
+  created_at: '2026-09-09T10:00:00Z',
+  status: 'pending' as const,
+};
+
+describe('an install request shows what would be installed (#2965)', () => {
+  beforeEach(() => vi.unstubAllGlobals());
+
+  it('names template, service name, subdomain, mounts and ports without expanding anything', async () => {
+    mockFetch([INSTALL_REQUEST]);
+    render(<ApprovalsSection />);
+    await waitFor(() => expect(screen.getByText('install linkwarden as linkwarden')).toBeDefined());
+
+    // No click, no disclosure — these are on screen next to the Approve button.
+    expect(screen.getByText('Template')).toBeDefined();
+    expect(screen.getByText('linkwarden (from Local)')).toBeDefined();
+    expect(screen.getByText('Service name')).toBeDefined();
+    expect(screen.getByText('Subdomain')).toBeDefined();
+    expect(screen.getByText('links')).toBeDefined();
+    expect(screen.getByText('Mounts')).toBeDefined();
+    expect(screen.getByText('/mnt/data/stacks/linkwarden/data → /data (rw)')).toBeDefined();
+    expect(screen.getByText('Ports')).toBeDefined();
+    expect(screen.getByText('8099→3000/tcp')).toBeDefined();
+    expect(screen.getByText('TZ=Europe/Berlin')).toBeDefined();
+  });
+
+  it('says "none" rather than silently omitting a reach the request did not ask for', async () => {
+    const bare = {
+      ...INSTALL_REQUEST,
+      payload: {
+        ...INSTALL_REQUEST.payload,
+        plan: { template: 'uptime-kuma', serviceName: 'uptime', subdomain: null, mounts: [], ports: [], variables: {} },
+      },
+    };
+    mockFetch([bare]);
+    render(<ApprovalsSection />);
+    await waitFor(() => expect(screen.getByText('Template')).toBeDefined());
+    expect(screen.getAllByText('none')).toHaveLength(4); // subdomain, mounts, ports, variables
+  });
+
+  it('leaves a plain approval alone — no install summary where there is no plan', async () => {
+    mockFetch([PENDING]);
+    render(<ApprovalsSection />);
+    await waitFor(() => expect(screen.getByText('Restart immich')).toBeDefined());
+    expect(screen.queryByText('Template')).toBeNull();
+  });
+});

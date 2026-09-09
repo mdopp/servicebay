@@ -1,10 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   parseSchemaVersion,
   parsePodContainerNames,
   classifyTemplateFile,
   classifyChanges,
+  collectChangedFiles,
   packageJsonChangeIsInert,
   parseRange,
   formatVerdict,
@@ -144,6 +148,57 @@ describe('templates/** classification (the #2823 gap)', () => {
 
   it('a removed template does not force a FULL flip', () => {
     expect(classifyTemplateFile({ status: 'D', path: 'templates/gone/template.yml', before: v3, after: null })).toBeNull();
+  });
+});
+
+/**
+ * #2939 — `git diff --name-status -M` reports a rename as `R100<TAB>old<TAB>new`,
+ * and `collectChangedFiles` fed the OLD path in as `before`. So the classifier
+ * compared the old manifest's content against the new one, saw the same
+ * schema-version and the same containers, and said LIGHT — for a template id
+ * that does not exist in the `:latest` image at all.
+ */
+describe('a renamed template manifest is a NEW template id (#2939)', () => {
+  it('classifyTemplateFile returns FULL for an R status, whatever the content says', () => {
+    // Worst case for the old code: identical content on both sides of the
+    // rename, so every content-keyed check finds nothing.
+    for (const status of ['R100', 'R095', 'R']) {
+      const reason = classifyTemplateFile({ status, path: 'templates/renamed/template.yml', before: v3, after: v3 });
+      expect(reason, `status ${status}`).toMatch(/renamed template manifest/);
+    }
+  });
+
+  it('classifyChanges puts the whole rename on the FULL path', () => {
+    const result = classifyChanges([{ status: 'R100', path: 'templates/renamed/template.yml', before: v3, after: v3 }]);
+    expect(result.path).toBe('full');
+    expect(result.files.full).toEqual(['templates/renamed/template.yml']);
+    expect(result.reasons.join('\n')).toMatch(/does not exist in the :latest image/);
+  });
+
+  it('end to end over a real git rename: collectChangedFiles + classifyChanges → FULL', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'classify-rename-'));
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
+    git('init', '--quiet', '-b', 'main');
+    git('config', 'user.email', 'autoloop@example.invalid');
+    git('config', 'user.name', 'autoloop');
+    mkdirSync(join(dir, 'templates', 'oldname'), { recursive: true });
+    writeFileSync(join(dir, 'templates', 'oldname', 'template.yml'), v3);
+    git('add', '-A');
+    git('commit', '--quiet', '-m', 'base');
+    const base = git('rev-parse', 'HEAD').trim();
+    mkdirSync(join(dir, 'templates', 'newname'), { recursive: true });
+    renameSync(join(dir, 'templates', 'oldname', 'template.yml'), join(dir, 'templates', 'newname', 'template.yml'));
+    git('add', '-A');
+    git('commit', '--quiet', '-m', 'rename the template');
+    const head = git('rev-parse', 'HEAD').trim();
+
+    const changes = collectChangedFiles(base, head, dir);
+    const manifestChange = changes.find(c => c.path === 'templates/newname/template.yml');
+    expect(manifestChange, 'git should report the manifest as renamed').toBeTruthy();
+    expect(manifestChange!.status.startsWith('R')).toBe(true);
+    // the old code read the old path's content here and then found "no change"
+    expect(manifestChange!.before).toBeNull();
+    expect(classifyChanges(changes).path).toBe('full');
   });
 });
 

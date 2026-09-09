@@ -61,6 +61,25 @@ export type ExternalBackupTarget =
   | { type: 'ftp'; host: string; port?: number; username: string; password: string; secure?: boolean; dir?: string }
   | { type: 'ssh'; host: string; port?: number; username: string; password?: string; privateKey?: string; dir?: string };
 
+/**
+ * THE exposure contract — every tier a proxy host can carry, as a runtime
+ * value and not only a type (#2933).
+ *
+ * A type-only union is invisible to a test: the reconcile that binds NPM's
+ * IP access list could quietly cover a subset of the tiers and nothing went
+ * red. Iterating this tuple is what makes the class gate in
+ * `reverseProxy/exposureReconcile.test.ts` bite — adding a tier here without
+ * wiring `EXPOSURE_REQUIRES_LAN_ACCESS_LIST` (proxyHostPolicy.ts) and the
+ * test's expectation table fails the suite instead of shipping an
+ * unreconciled, open host.
+ *
+ * Order is documentation only; nothing depends on it.
+ */
+export const PROXY_EXPOSURES = ['public', 'internal', 'lan'] as const;
+
+/** One tier of {@link PROXY_EXPOSURES}. */
+export type ProxyExposure = (typeof PROXY_EXPOSURES)[number];
+
 export interface ProxyHostEntry {
   /** Full domain, e.g. "vault.dopp.cloud" */
   domain: string;
@@ -87,10 +106,12 @@ export interface ProxyHostEntry {
    *   - whether to bother letsdebug.net with this domain (skipped
    *     entirely for `lan` since it'll never have a public record).
    * Missing on entries that pre-date this field; treat as `lan` so
-   * the conservative default applies. See VariableMeta.exposure for
-   * the three-tier semantics.
+   * the conservative default applies. `normalizeExposure` in
+   * `reverseProxy/proxyHostPolicy.ts` is the ONE place allowed to
+   * resolve an absent value, and it never resolves it to `public`.
+   * See VariableMeta.exposure for the three-tier semantics.
    */
-  exposure?: 'public' | 'internal' | 'lan';
+  exposure?: ProxyExposure;
 }
 
 export interface ReverseProxyConfig {

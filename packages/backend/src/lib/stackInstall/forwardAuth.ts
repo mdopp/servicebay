@@ -16,6 +16,9 @@
  * line is appended verbatim to the rendered snippet.
  */
 
+import { logger } from '@/lib/logger';
+import { isNpmOwnedAcmePrefix, validateAuthSkipPath } from './authSkipPaths';
+
 export const AUTHELIA_FORWARD_AUTH_SENTINEL = '__authelia_forward_auth__';
 
 /**
@@ -258,10 +261,25 @@ export function buildAuthSkipLocations(paths: string[] | undefined): string {
   const seen = new Set<string>();
   const blocks: string[] = [];
   for (const raw of paths) {
-    const path = raw.trim();
-    // Absolute prefixes only; never shadow NPM's acme-challenge location.
-    if (!path.startsWith('/')) continue;
-    if (path.startsWith('/.well-known/acme-challenge')) continue;
+    // #2932 — the SECOND, independent refusal. `create_proxy_route`'s schema
+    // rejects a hostile entry at the tool boundary; this one means a caller
+    // that never goes through the tool (a template's `variables.json`, a
+    // hand-edited `config.reverseProxy` entry, a future writer) still cannot
+    // render `location ^~ / { auth_request off; }` or escape the block.
+    // Dropping (not throwing) is deliberate: the failure mode is "this path
+    // stays gated", never "the install dies" or "the host goes open".
+    const verdict = validateAuthSkipPath(raw);
+    if (!verdict.ok) {
+      logger.warn(
+        'forwardAuth',
+        `Refused authSkipPaths entry ${JSON.stringify(raw.slice(0, 80))}: ${verdict.reason}. The path stays behind forward-auth.`,
+      );
+      continue;
+    }
+    const path = verdict.path;
+    // Never shadow NPM's acme-challenge location — it owns that prefix on
+    // every cert-bearing host, and a duplicate location is an nginx [emerg].
+    if (isNpmOwnedAcmePrefix(path)) continue;
     if (seen.has(path)) continue;
     seen.add(path);
     blocks.push(

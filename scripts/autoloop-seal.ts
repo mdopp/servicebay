@@ -39,8 +39,15 @@
  * (`PATH_MANDATED_PATHS`) and the *effect* it has (`durableStateEffects` —
  * anything that writes or migrates persisted state). See `gateDecision`.
  *
+ * The CI verdict is POSITIVE (#2938): green needs every check to be a pass or an
+ * explicit skip and the list to be non-empty — a `cancel` or any bucket this
+ * script does not know is NOT a pass. `main` is not branch-protected, so this is
+ * the only gate before `release.yml` fires. The box-verify gate has a third
+ * state (#2939): "could not be computed" resolves to OWED, never to clear.
+ *
  * Exit codes: 0 merged; 3 CI red (result carries the failing checks — LLM
  * decides fix-forward); 2 setup error (dirty tree, bad branch, merge conflict).
+ * EVERY exit path prints exactly one AUTOLOOP_SEAL_RESULT line.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -308,32 +315,126 @@ function fail(code: number, result: Record<string, unknown>): never {
   process.exit(code);
 }
 
+// ---------------------------------------------------------------------------
+// The CI verdict (#2938) — POSITIVE proof, never inferred from an absence.
+// ---------------------------------------------------------------------------
+//
+// The old verdict was "not in the fail set and not in the pending set ⇒ green".
+// `gh pr checks --json bucket` emits FIVE buckets, so a `cancel` sat in neither
+// filter and read as green — and `main` is not branch-protected (release-please
+// owns it), so `watchCi` is the only thing between a half-run CI and a push to
+// `main` that fires `release.yml`. Cancellation is routine here:
+// `.github/workflows/ci.yml` sets `cancel-in-progress: true`.
+//
+// So the verdict is now derived from what a check IS, not from what it is not:
+// green requires every check to be positively a pass (or an explicit skip) AND
+// the list to be non-empty. Anything else — `cancel`, a bucket gh adds next
+// year, a check with no bucket and an unrecognised state — is NOT PASSED.
+
+/** Every bucket `gh pr checks --json bucket` can emit today. Enumerated so the
+ *  test can assert the whole class rather than the one case that bit us — a new
+ *  bucket must be classified here deliberately, not discovered by a bad merge. */
+export const GH_CHECK_BUCKETS = ['pass', 'fail', 'pending', 'skipping', 'cancel'] as const;
+
+/** …of which ONLY these mean "this check actually passed". `skipping` is an
+ *  explicit "this check does not apply", which is a decision, not a failure. */
+export const PASSING_BUCKETS: ReadonlySet<string> = new Set(['pass', 'skipping']);
+
+/** …and only these mean "not resolved yet, keep polling". */
+export const PENDING_BUCKETS: ReadonlySet<string> = new Set(['pending']);
+
+/** The legacy `state` field, used only when a check carries no bucket at all. */
+const PASSING_STATES: ReadonlySet<string> = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
+const PENDING_STATES: ReadonlySet<string> = new Set(['PENDING', 'IN_PROGRESS', 'QUEUED', 'WAITING', 'REQUESTED', 'EXPECTED']);
+
+export interface CiCheck {
+  name: string;
+  state?: string;
+  bucket?: string;
+}
+
+/** What one check proves. `not-passed` is the catch-all on purpose: an
+ *  unrecognised bucket/state is never evidence of a pass. */
+export function classifyCheck(check: CiCheck): 'passed' | 'pending' | 'not-passed' {
+  const bucket = check.bucket;
+  if (bucket) {
+    if (PASSING_BUCKETS.has(bucket)) return 'passed';
+    if (PENDING_BUCKETS.has(bucket)) return 'pending';
+    return 'not-passed';
+  }
+  const state = check.state ?? '';
+  if (PASSING_STATES.has(state)) return 'passed';
+  if (PENDING_STATES.has(state)) return 'pending';
+  return 'not-passed';
+}
+
+export type CiVerdict = 'green' | 'red' | 'pending';
+
+/** Pure: the verdict for one `gh pr checks` payload. Exported so the whole
+ *  bucket class is unit-tested without a network or a PR.
+ *  - `green`   every check passed (or was explicitly skipped) and there is at
+ *              least one check — an empty list proves nothing.
+ *  - `red`     at least one check is positively not-passed (fail, cancel, an
+ *              unknown bucket). Reported even when others are still pending: a
+ *              cancelled check will never become a pass.
+ *  - `pending` nothing is not-passed yet, but something is unresolved (or the
+ *              list is still empty) — the caller keeps polling within its cap. */
+export function ciVerdict(checks: readonly CiCheck[]): { verdict: CiVerdict; failing: string[] } {
+  if (!checks.length) return { verdict: 'pending', failing: [] };
+  const failing: string[] = [];
+  let pending = 0;
+  for (const check of checks) {
+    const cls = classifyCheck(check);
+    if (cls === 'passed') continue;
+    if (cls === 'pending') {
+      pending++;
+      continue;
+    }
+    failing.push(`${check.name || '<unnamed>'} [${check.bucket || check.state || 'no bucket/state'}]`);
+  }
+  if (failing.length) return { verdict: 'red', failing };
+  if (pending) return { verdict: 'pending', failing: [] };
+  return { verdict: 'green', failing: [] };
+}
+
 /** Poll CI for the PR in a HARD-CAPPED loop that always returns.
- *  → 'green' (all non-pending, none failed), 'red' (a check failed), or
+ *  → 'green' (every check positively passed), 'red' (a check is not a pass), or
  *  'timeout'. Never an unbounded wait — this is the anti-wedge core. */
 function watchCi(pr: number, maxPolls = 20, intervalSec = 30): { verdict: 'green' | 'red' | 'timeout'; failing: string[] } {
   for (let i = 0; i < maxPolls; i++) {
     sh('sleep', [String(intervalSec)]);
     const res = shSafe('gh', ['pr', 'checks', String(pr), '--json', 'name,state,bucket']);
     if (!res.ok) continue; // transient gh/API hiccup — keep polling within the cap
-    let checks: Array<{ name: string; state?: string; bucket?: string }>;
+    let checks: CiCheck[];
     try {
       checks = JSON.parse(res.out);
     } catch {
       continue;
     }
-    const failing = checks.filter(c => c.bucket === 'fail' || ['FAILURE', 'ERROR'].includes(c.state ?? '')).map(c => c.name);
-    if (failing.length) return { verdict: 'red', failing };
-    const pending = checks.filter(c => c.bucket === 'pending' || ['PENDING', 'IN_PROGRESS', 'QUEUED'].includes(c.state ?? ''));
-    if (!pending.length) return { verdict: 'green', failing: [] };
+    if (!Array.isArray(checks)) continue;
+    const decided = ciVerdict(checks);
+    if (decided.verdict !== 'pending') return { verdict: decided.verdict, failing: decided.failing };
   }
   return { verdict: 'timeout', failing: [] };
 }
 
 /** Decide box-verify for a merged range, on BOTH axes: place (the directory
- *  list) and effect (does it write/migrate persisted state — #2700). */
+ *  list) and effect (does it write/migrate persisted state — #2700).
+ *
+ *  THROWS when it cannot decide (#2939). The caller turns a throw into the
+ *  distinct "not computed" state, which resolves to OWED — never into the
+ *  optimistic "computed, nothing owed". The `git diff --name-only` is
+ *  deliberately the throwing `sh`: an unresolvable rev (the `--delete-branch`
+ *  pruned the tip, HEAD sits on the deleted branch) must be loud, not silently
+ *  read as an empty change set. */
 function gateForRange(from: string, to: string): GateDecision {
   const changedPaths = sh('git', ['diff', '--name-only', `${from}..${to}`]).split('\n').filter(Boolean);
+  // A merge always ships files. An empty list is not evidence that nothing is
+  // owed — it means the range told us nothing (wrong revs, a pruned tip). Check
+  // the denominator before trusting the verdict.
+  if (!changedPaths.length) {
+    throw new Error(`git diff listed no changed files for ${from}..${to} — the gate has no evidence to decide on`);
+  }
   // `--unified=0` keeps this to the added lines themselves. If the read fails
   // (huge diff, binary-only), we degrade to the path-keyed rules rather than
   // aborting a completed merge.
@@ -343,16 +444,60 @@ function gateForRange(from: string, to: string): GateDecision {
 }
 
 /**
+ * Pure: the machine-readable result line for a merged seal. `gate === null` is
+ * the "could not be computed" state (#2939) and resolves to OWED — the emitted
+ * result says WHICH of the two it is, so the orchestrator (which folds the
+ * field, not the warning) cannot read an uncomputed gate as a clean one.
+ * Exported so that resolution is asserted without a subprocess.
+ */
+export function mergedResult(args: {
+  pr: number;
+  sha: string;
+  gate: GateDecision | null;
+  postMergeWarning?: string;
+}): Record<string, unknown> {
+  const { pr, sha, gate, postMergeWarning } = args;
+  const gateComputed = gate !== null;
+  const boxVerifyOwed = gate === null || gate.boxVerifyOwed;
+  let detail: string;
+  if (gate === null) {
+    detail = `Merged PR #${pr} → ${sha}; box_verify=owed — THE GATE COULD NOT BE COMPUTED, so it is owed rather than clear (${postMergeWarning ?? 'no detail'})`;
+  } else if (gate.boxVerifyOwed) {
+    detail = `Merged PR #${pr} → ${sha}; box_verify=owed (${gate.detail})`;
+  } else {
+    detail = `Merged PR #${pr} → ${sha}; neither path-mandated nor a durable-state effect (box_verify stays clear unless a unit's gate=verify)`;
+  }
+  return {
+    ok: true,
+    pr,
+    sha,
+    gateComputed,
+    pathMandated: gate?.pathMandated ?? [],
+    effects: gate?.effects ?? [],
+    boxVerifyOwed,
+    ...(postMergeWarning ? { postMergeWarning } : {}),
+    detail,
+  };
+}
+
+/**
  * Post-merge fold (#2761). The PR is MERGED, so every step here is best-effort
  * and the result line is printed from a `finally`: the orchestrator needs
  * sha/pathMandated/boxVerifyOwed to fold the verify state, and losing them to a
  * throttled `git pull` meant folding it by hand. Failures become
- * `postMergeWarning`, never a non-zero exit.
+ * `postMergeWarning`, never a non-zero exit. Only the VERDICT fails closed
+ * (#2939): a failed checkout/pull/sha lookup is still just a warning and still
+ * exit 0 — what changed is that an uncomputed gate cannot be folded as clean.
  */
 function foldMerged(pr: number, oldMain: string, batchTip: string): void {
   const warnings: string[] = [];
   let newSha = '';
-  let gate: GateDecision = { pathMandated: [], effects: [], boxVerifyOwed: false, detail: '' };
+  // `null` is the THIRD state (#2939): not "nothing is owed", but "the gate did
+  // not get to run". It is deliberately NOT the optimistic `boxVerifyOwed:false`
+  // initialiser the old code emitted from the `finally` after a throw — an
+  // uncomputed gate resolved to a clean verdict, and the orchestrator folds the
+  // machine-readable field, not the warning.
+  let gate: GateDecision | null = null;
   try {
     const checkout = shSafe('git', ['checkout', 'main']);
     if (!checkout.ok) warnings.push(`git checkout main failed: ${checkout.out.slice(0, 300)}`);
@@ -373,20 +518,57 @@ function foldMerged(pr: number, oldMain: string, batchTip: string): void {
   } catch (e) {
     warnings.push(redactGitSecrets(String((e as Error)?.message ?? e)).slice(0, 300));
   } finally {
-    const postMergeWarning = warnings.length ? warnings.join('; ') : undefined;
-    emit({
-      ok: true,
-      pr,
-      sha: newSha,
-      pathMandated: gate.pathMandated,
-      effects: gate.effects,
-      boxVerifyOwed: gate.boxVerifyOwed,
-      ...(postMergeWarning ? { postMergeWarning } : {}),
-      detail: gate.boxVerifyOwed
-        ? `Merged PR #${pr} → ${newSha}; box_verify=owed (${gate.detail})`
-        : `Merged PR #${pr} → ${newSha}; neither path-mandated nor a durable-state effect (box_verify stays clear unless a unit's gate=verify)`,
-    });
+    emit(mergedResult({ pr, sha: newSha, gate, postMergeWarning: warnings.length ? warnings.join('; ') : undefined }));
   }
+}
+
+/**
+ * Preconditions + push, up to the point where a PR can exist. Returns the
+ * pre-merge `origin/main` — the `from` of the gate's range.
+ *
+ * Every git call is `shSafe` + an explicit `fail(2, …)` rather than the throwing
+ * `sh` (#2938): the documented contract is one AUTOLOOP_SEAL_RESULT line on
+ * EVERY exit path, and an orchestrator handed a bare stack trace has to fold the
+ * batch by hand.
+ */
+function pushBatch(branch: string): string {
+  const status = shSafe('git', ['status', '--porcelain']);
+  if (!status.ok) fail(2, { detail: `git status failed: ${status.out.slice(0, 300)}` });
+  if (status.out) fail(2, { detail: 'working tree is dirty — refusing to seal' });
+  if (!shSafe('git', ['rev-parse', '--verify', branch]).ok) fail(2, { detail: `batch branch not found: ${branch}` });
+
+  // Pre-merge fetch: a failure here means nothing shipped, but it still has to
+  // leave a result line rather than an uncaught throw (#2761).
+  const fetched = shSafe('git', ['fetch', 'origin', '--quiet']);
+  if (!fetched.ok) fail(2, { detail: `git fetch failed: ${fetched.out.slice(0, 500)}` });
+  const oldMain = shSafe('git', ['rev-parse', 'origin/main']);
+  if (!oldMain.ok || !oldMain.out) fail(2, { detail: `cannot resolve origin/main: ${oldMain.out.slice(0, 300)}` });
+
+  // A checkout can legitimately fail — most often the batch branch is already
+  // checked out in another worktree — and that must exit 2 WITH a result line.
+  const checkedOut = shSafe('git', ['checkout', branch]);
+  if (!checkedOut.ok) fail(2, { detail: `git checkout ${branch} failed (checked out in another worktree?): ${checkedOut.out.slice(0, 300)}` });
+  // Push with --no-verify (structural: skip the slow/flaky local pre-push hook; CI is the gate).
+  const push = shSafe('git', ['push', '--no-verify', '-u', 'origin', branch]);
+  if (!push.ok) fail(2, { detail: `push failed: ${push.out.slice(0, 500)}` });
+  return oldMain.out;
+}
+
+/** Find the open PR for the batch branch, or create it. */
+function resolvePr(branch: string, title: string | undefined, bodyFile: string | undefined): number {
+  const openPr = () =>
+    Number(shSafe('gh', ['pr', 'list', '--head', branch, '--state', 'open', '--json', 'number', '--jq', '.[0].number']).out || 0);
+  const existing = openPr();
+  if (existing) return existing;
+  const prTitle = title ?? (shSafe('git', ['log', '-1', '--format=%s', branch]).out || `Autoloop batch seal for ${branch}`);
+  const args = ['pr', 'create', '--base', 'main', '--head', branch, '--title', prTitle];
+  if (bodyFile) args.push('--body-file', bodyFile);
+  else args.push('--body', `Autoloop batch seal for \`${branch}\`.`);
+  const created = shSafe('gh', args);
+  if (!created.ok) fail(2, { detail: `pr create failed: ${created.out.slice(0, 500)}` });
+  const pr = openPr();
+  if (!pr) fail(2, { detail: 'PR created but could not resolve its number' });
+  return pr;
 }
 
 function main(): void {
@@ -398,33 +580,8 @@ function main(): void {
   const bodyFile = bodyIdx >= 0 ? argv[bodyIdx + 1] : undefined;
   if (!branch) fail(2, { detail: 'usage: autoloop-seal.ts <batchBranch> [--title T] [--body-file F]' });
 
-  // Preconditions: clean tree, batch branch exists.
-  if (sh('git', ['status', '--porcelain'])) fail(2, { detail: 'working tree is dirty — refusing to seal' });
-  if (!shSafe('git', ['rev-parse', '--verify', branch!]).ok) fail(2, { detail: `batch branch not found: ${branch}` });
-
-  // Pre-merge fetch: a failure here means nothing shipped, but it still has to
-  // leave a result line rather than an uncaught throw (#2761).
-  const fetched = shSafe('git', ['fetch', 'origin', '--quiet']);
-  if (!fetched.ok) fail(2, { detail: `git fetch failed: ${fetched.out.slice(0, 500)}` });
-  const oldMain = sh('git', ['rev-parse', 'origin/main']);
-
-  // Push with --no-verify (structural: skip the slow/flaky local pre-push hook; CI is the gate).
-  sh('git', ['checkout', branch!]);
-  const push = shSafe('git', ['push', '--no-verify', '-u', 'origin', branch!]);
-  if (!push.ok) fail(2, { detail: `push failed: ${push.out.slice(0, 500)}` });
-
-  // Find or create the PR.
-  let pr = Number(shSafe('gh', ['pr', 'list', '--head', branch!, '--state', 'open', '--json', 'number', '--jq', '.[0].number']).out || 0);
-  if (!pr) {
-    const prTitle = title ?? sh('git', ['log', '-1', '--format=%s', branch!]);
-    const args = ['pr', 'create', '--base', 'main', '--head', branch!, '--title', prTitle];
-    if (bodyFile) args.push('--body-file', bodyFile);
-    else args.push('--body', `Autoloop batch seal for \`${branch}\`.`);
-    const created = shSafe('gh', args);
-    if (!created.ok) fail(2, { detail: `pr create failed: ${created.out.slice(0, 500)}` });
-    pr = Number(shSafe('gh', ['pr', 'list', '--head', branch!, '--state', 'open', '--json', 'number', '--jq', '.[0].number']).out || 0);
-    if (!pr) fail(2, { detail: 'PR created but could not resolve its number' });
-  }
+  const oldMain = pushBatch(branch!);
+  const pr = resolvePr(branch!, title, bodyFile);
 
   // Watch CI — hard-capped poll, always returns.
   const ci = watchCi(pr);
@@ -434,7 +591,9 @@ function main(): void {
   // The batch tip, captured BEFORE the merge: `--delete-branch` drops the local
   // ref, and this range (oldMain..batchTip) is exactly what the merge shipped —
   // so the gate still computes when the post-merge pull is throttled (#2761).
-  const batchTip = sh('git', ['rev-parse', branch!]);
+  const tip = shSafe('git', ['rev-parse', branch!]);
+  if (!tip.ok || !tip.out) fail(2, { pr, detail: `cannot resolve the batch tip ${branch} before merging: ${tip.out.slice(0, 300)}` });
+  const batchTip = tip.out;
 
   // Merge on green.
   const merge = shSafe('gh', ['pr', 'merge', String(pr), '--merge', '--delete-branch']);
@@ -444,7 +603,15 @@ function main(): void {
 }
 
 // Only run when invoked directly (so tests can import isPathMandated purely).
+// The catch is STRUCTURAL, not decorative: the contract is "every exit path
+// carries an AUTOLOOP_SEAL_RESULT line", and an orchestrator that gets a bare
+// stack trace has to fold the batch by hand (#2938). `fail()` uses
+// `process.exit`, which does not throw, so it is never swallowed here.
 const invokedPath = process.argv[1] ?? '';
 if (invokedPath.endsWith('autoloop-seal.ts') || invokedPath.endsWith('autoloop-seal.js')) {
-  main();
+  try {
+    main();
+  } catch (e) {
+    fail(2, { detail: `seal aborted: ${redactGitSecrets(String((e as Error)?.message ?? e)).slice(0, 500)}` });
+  }
 }

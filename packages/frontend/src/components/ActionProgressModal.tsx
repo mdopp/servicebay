@@ -4,7 +4,11 @@ import { X, Loader2, Minimize2, RotateCw, FileText, Wrench, Bot } from 'lucide-r
 import type { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useToast } from '@/providers/ToastProvider';
-import { humanizeError } from '@servicebay/api-client';
+import {
+  createActionStreamReader,
+  humanizeError,
+  type ServiceStreamAction,
+} from '@servicebay/api-client';
 import { Button } from '@/components/ui';
 // Secure-context-aware copy with an execCommand fallback: ServiceBay's default
 // deployment is a plain-http LAN origin, where navigator.clipboard silently
@@ -41,7 +45,7 @@ interface ActionProgressModalProps {
   onClose: () => void;
   serviceName: string;
   nodeName?: string;
-  action: 'start' | 'stop' | 'restart';
+  action: ServiceStreamAction;
   onComplete: () => void;
 }
 
@@ -123,6 +127,16 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
         signal
       });
 
+      // A non-2xx never carries the stream at all — it is an error envelope
+      // from the route gate (bad name, no session). Surface it as the failure
+      // it is instead of reading an empty body and calling it done.
+      if (!response.ok) {
+        const detail = (await response.text().catch(() => '')).trim();
+        term.writeln(`\r\n\x1b[31;1mError: HTTP ${response.status}${detail ? ` — ${detail}` : ''}\x1b[0m`);
+        setStatus('error');
+        return;
+      }
+
       if (!response.body) {
         term.writeln('\r\n\x1b[31;1mError: No response body\x1b[0m');
         setStatus('error');
@@ -131,15 +145,25 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      // The outcome comes from the stream's terminal marker, never from the
+      // stream ending (#2942). `createActionStreamReader` strips the marker out
+      // of the terminal text and fails closed when none arrives.
+      const stream = createActionStreamReader();
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        term.write(decoder.decode(value));
+        term.write(stream.push(decoder.decode(value, { stream: true })));
       }
-      
+
+      const outcome = stream.end();
+      if (outcome.type !== 'complete') {
+        term.writeln(`\r\n\x1b[31;1m✗ ${action} failed: ${outcome.message}\x1b[0m`);
+        setStatus('error');
+        return;
+      }
+
       term.writeln('\r\n\x1b[32;1mProcess exited.\x1b[0m');
-      // If we got here, we assume success or at least completion of stream
       setStatus('completed');
       if (onCompleteRef.current) {
         // Slight delay so logs are readable before closing

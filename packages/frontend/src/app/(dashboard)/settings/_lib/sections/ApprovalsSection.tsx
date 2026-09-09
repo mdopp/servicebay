@@ -63,7 +63,86 @@ interface ApprovalCardProps {
   onReject: (id: string, title: string) => void;
 }
 
+/** The plan an agent-filed install request carries (#2965, lib/install/installRequests). */
+interface InstallPlanView {
+  template?: unknown;
+  templateSource?: unknown;
+  serviceName?: unknown;
+  subdomain?: unknown;
+  mounts?: unknown;
+  ports?: unknown;
+  variables?: unknown;
+}
+
+/** The plan on this request, or null when it is not an install request. */
+function installPlanOf(payload: Record<string, unknown>): InstallPlanView | null {
+  if (payload?.kind !== 'install-request') return null;
+  const plan = payload.plan;
+  return plan && typeof plan === 'object' ? (plan as InstallPlanView) : null;
+}
+
+function planRow(label: string, value: string) {
+  return (
+    <div key={label} className="flex gap-2">
+      <dt className="w-28 shrink-0 text-text-subtle">{label}</dt>
+      <dd className="min-w-0 break-words font-mono text-text">{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * What an agent-filed install request would actually install (#2965).
+ *
+ * Rendered ALWAYS-VISIBLE, not behind the payload disclosure: approving an
+ * opaque operation is not an approval, and this is the one card where the
+ * operator's click is what deploys software onto the box. Template, target
+ * service name, subdomain, mounts and ports are exactly the reach the request
+ * declared — and, because the sealer copies the plan out of THIS record, they
+ * are exactly what runs.
+ */
+function InstallPlanSummary({ plan }: { plan: InstallPlanView }) {
+  const mounts = Array.isArray(plan.mounts) ? plan.mounts : [];
+  const ports = Array.isArray(plan.ports) ? plan.ports : [];
+  const variables = plan.variables && typeof plan.variables === 'object' ? plan.variables as Record<string, unknown> : {};
+  const varNames = Object.keys(variables);
+  const source = typeof plan.templateSource === 'string' ? ` (from ${plan.templateSource})` : '';
+  return (
+    <dl className="mt-2 space-y-1 rounded-card border border-border bg-surface-muted p-2 text-[11px]">
+      {planRow('Template', `${String(plan.template ?? '—')}${source}`)}
+      {planRow('Service name', String(plan.serviceName ?? '—'))}
+      {planRow('Subdomain', plan.subdomain ? String(plan.subdomain) : 'none')}
+      {planRow(
+        'Mounts',
+        mounts.length === 0
+          ? 'none'
+          : mounts
+            .map(m => {
+              const mount = m as { host?: unknown; container?: unknown; mode?: unknown };
+              return `${String(mount.host)} → ${String(mount.container)}${mount.mode ? ` (${String(mount.mode)})` : ''}`;
+            })
+            .join('  ·  '),
+      )}
+      {planRow(
+        'Ports',
+        ports.length === 0
+          ? 'none'
+          : ports
+            .map(p => {
+              const port = p as { host?: unknown; container?: unknown; protocol?: unknown };
+              return `${String(port.host)}→${String(port.container)}/${String(port.protocol ?? 'tcp')}`;
+            })
+            .join('  ·  '),
+      )}
+      {planRow(
+        'Variables',
+        varNames.length === 0 ? 'none' : varNames.map(n => `${n}=${String(variables[n])}`).join('  ·  '),
+      )}
+    </dl>
+  );
+}
+
 function ApprovalCardHeader({ request }: { request: ApprovalRequest }) {
+  const plan = installPlanOf(request.payload);
   return (
     <div className="flex-1 min-w-0">
       <div className="flex items-center gap-2 flex-wrap">
@@ -76,6 +155,7 @@ function ApprovalCardHeader({ request }: { request: ApprovalRequest }) {
       {request.description && (
         <p className="mt-1 text-xs text-text-muted">{request.description}</p>
       )}
+      {plan && <InstallPlanSummary plan={plan} />}
     </div>
   );
 }

@@ -61,6 +61,15 @@ function line(...parts) {
  *
  * Each entry declares everything a caller (or #2907's contract test) needs
  * without executing anything:
+ *   `effect`  WHAT THIS VERB IS ALLOWED TO DO, from a closed set of three
+ *             (#2965). `'read'` — it only inspects; `'own-credential'` — it
+ *             acts on the caller's own token lineage and nothing else;
+ *             `'request'` — it files a request an operator must approve, and
+ *             ServiceBay, not this CLI, executes what was approved. There is
+ *             deliberately no fourth value: a verb that would change the box
+ *             directly has nowhere to declare itself, and
+ *             `tests/scripts/agent_cli_mutation_gate.test.ts` walks this whole
+ *             table and fails on one.
  *   `auth`    how the route authenticates. Absent (the default) means the
  *             ServiceBay scope gate: the route carries `tokenScope` and the
  *             CLI quotes `scope` back in every auth error. `'parent-token'`
@@ -73,11 +82,17 @@ function line(...parts) {
  *   `reads`   the top-level response fields `text()` actually consumes, so a
  *             route that stops returning one is a red rather than a blank line
  *   `text`    the human rendering; `--json` bypasses it entirely
+ *   `exit`    optional: maps a SUCCESSFUL response to an exit code, for a verb
+ *             whose HTTP 200 does not mean the thing happened. Only
+ *             `request-status` has one — an agent that treats "still waiting
+ *             for the operator" as success is the failure #2965 exists to
+ *             prevent.
  */
 export const VERBS = {
   services: {
     summary: 'list the services installed on the box',
     usage: 'services [--node <name>]',
+    effect: 'read',
     scope: 'read',
     method: 'GET',
     positionals: [],
@@ -96,6 +111,7 @@ export const VERBS = {
   service: {
     summary: 'show one service — its unit file, pod manifest and config',
     usage: 'service <name> [--node <name>]',
+    effect: 'read',
     scope: 'read',
     method: 'GET',
     positionals: ['name'],
@@ -118,6 +134,7 @@ export const VERBS = {
     summary: 'run the box diagnosis and read the probe results',
     // A POST that writes nothing — it only inspects state, which is why `read`
     // is the right scope (same shape as /api/install/plan).
+    effect: 'read',
     scope: 'read',
     method: 'POST',
     usage: 'diagnose [--node <name>]',
@@ -138,6 +155,7 @@ export const VERBS = {
   logs: {
     summary: 'fetch a service’s unit and podman logs',
     usage: 'logs <service> [--node <name>]',
+    effect: 'read',
     scope: 'read',
     method: 'GET',
     positionals: ['service'],
@@ -155,6 +173,7 @@ export const VERBS = {
   health: {
     summary: 'read the configured health checks and their last result',
     usage: 'health',
+    effect: 'read',
     scope: 'read',
     method: 'GET',
     positionals: [],
@@ -173,6 +192,7 @@ export const VERBS = {
   assists: {
     summary: 'list the assist catalog (ADRs, recipes, guides, footguns)',
     usage: 'assists [--query <text>] [--kind <kind>]',
+    effect: 'read',
     scope: 'read',
     method: 'GET',
     positionals: [],
@@ -196,6 +216,7 @@ export const VERBS = {
   assist: {
     summary: 'print one assist in full (frontmatter + body)',
     usage: 'assist <id>',
+    effect: 'read',
     scope: 'read',
     method: 'GET',
     positionals: ['id'],
@@ -230,6 +251,7 @@ export const VERBS = {
   delegate: {
     summary: 'mint a delegated child of this token, never wider than it',
     usage: 'delegate <name> [--scopes read,lifecycle] [--expires <iso8601>]',
+    effect: 'own-credential',
     auth: 'parent-token',
     scope: null,
     method: 'POST',
@@ -257,6 +279,7 @@ export const VERBS = {
   revoke: {
     summary: 'revoke one child token this token delegated',
     usage: 'revoke <id>',
+    effect: 'own-credential',
     auth: 'parent-token',
     scope: null,
     method: 'DELETE',
@@ -271,7 +294,135 @@ export const VERBS = {
     // not the CLI's.
     text: body => `revoked ${Number(body?.revoked ?? 0)}: ${String(body?.id ?? '?')} (${String(body?.name ?? '?')})`,
   },
+
+  /* ── the request pair (#2965) ──────────────────────────────────────
+   *
+   * An agent that has finished building a template can ASK for it to be
+   * installed. It cannot install it — not before the operator approves, and
+   * not after. `request-install` writes ONE row into ServiceBay's durable
+   * approval store and returns a request id; the operator reads the plan on
+   * the approval card and approves or rejects it; ServiceBay then runs the
+   * plan THE OPERATOR APPROVED. Nothing in this file ever touches the box.
+   *
+   * That asymmetry is the point (operator decision, 2026-09-09): a direct
+   * install verb would mean anyone who reaches the pi web surface reaches
+   * deployment. A request verb means they reach @mdopp's inbox.
+   *
+   * Both speak the `propose` tier of the scope ladder — the ladder's
+   * independent "ask a human" capability, not part of read<…<exec. A
+   * read-scoped token cannot file a request; a propose-scoped token can file
+   * one and can do nothing else.
+   */
+
+  'request-install': {
+    summary: 'ASK the operator to install a template — files a request, installs nothing',
+    usage: 'request-install <template> --as <service> --reason <text> [--subdomain <label>] [--mount <host:container[:ro]>] [--port <host:container[/udp]>] [--var <NAME=value>] [--source <name>] [--node <name>]',
+    effect: 'request',
+    scope: 'propose',
+    method: 'POST',
+    positionals: ['template'],
+    options: ['as', 'reason', 'subdomain', 'mount', 'port', 'var', 'source', 'node'],
+    // Repeating a flag ACCUMULATES instead of overwriting: a request declares
+    // every mount and every port it wants, and a silently-dropped earlier
+    // `--mount` would file a request narrower than the agent believes it filed.
+    repeatable: ['mount', 'port', 'var'],
+    path: () => '/api/install/requests',
+    body: (args, opts) => ({
+      reason: opts.reason ?? '',
+      plan: {
+        template: args.template,
+        serviceName: opts.as ?? '',
+        ...(opts.source ? { templateSource: opts.source } : {}),
+        subdomain: opts.subdomain ?? null,
+        mounts: parseMounts(opts.mount),
+        ports: parsePorts(opts.port),
+        variables: parseVariables(opts.var),
+        ...(opts.node ? { node: opts.node } : {}),
+      },
+    }),
+    reads: ['id', 'status', 'detail'],
+    text: body => [
+      line('request', String(body?.id ?? '?')),
+      line('status ', String(body?.status ?? '?')),
+      String(body?.detail ?? ''),
+      `Poll it with: servicebay request-status ${String(body?.id ?? '<id>')}`,
+    ].join('\n'),
+  },
+
+  'request-status': {
+    summary: 'read what really happened to YOUR install request — waiting is not success',
+    usage: 'request-status <id>',
+    effect: 'request',
+    scope: 'propose',
+    method: 'GET',
+    positionals: ['id'],
+    options: [],
+    path: args => `/api/install/requests/${enc(args.id)}`,
+    reads: ['status', 'installed', 'detail'],
+    text: body => [
+      line('status   ', String(body?.status ?? '?')),
+      line('installed', body?.installed === true ? 'yes' : 'no'),
+      String(body?.detail ?? ''),
+      body?.jobId ? line('job      ', String(body.jobId)) : '',
+      body?.error ? line('error    ', String(body.error)) : '',
+    ].filter(Boolean).join('\n'),
+    // A 200 here means "the answer was read", never "it is installed". An
+    // agent scripting on `$?` must be able to tell the three apart, so:
+    //   0 installed · 4 still waiting on the operator · 5 decided against you.
+    exit: body => {
+      if (body?.installed === true) return 0;
+      return body?.status === 'denied' || body?.status === 'failed' ? 5 : 4;
+    },
+  },
 };
+
+/* ── option shapes for `request-install` ─────────────────────────────────
+ *
+ * These only SHAPE what the request says; they authorize nothing. ServiceBay
+ * re-validates every field (mounts are jailed to the service's own data root,
+ * privileged ports refused, secret-shaped variable names refused) and it is
+ * that validation, not this parsing, that bounds what an approval can grant.
+ */
+
+/** A repeated option arrives as an array; a single one as a string. */
+function many(value) {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+/** `--mount /mnt/data/stacks/foo/data:/data[:ro]` */
+export function parseMounts(value) {
+  return many(value).map(entry => {
+    const parts = String(entry).split(':');
+    const mode = parts.length > 2 ? parts.pop() : undefined;
+    return { host: parts[0] ?? '', container: parts[1] ?? '', ...(mode ? { mode } : {}) };
+  });
+}
+
+/** `--port 8080:80[/udp]` */
+export function parsePorts(value) {
+  return many(value).map(entry => {
+    const [pair, protocol] = String(entry).split('/');
+    const [host, container] = String(pair).split(':');
+    return {
+      host: Number(host),
+      container: Number(container === undefined ? host : container),
+      ...(protocol ? { protocol } : {}),
+    };
+  });
+}
+
+/** `--var TZ=Europe/Berlin` */
+export function parseVariables(value) {
+  const out = {};
+  for (const entry of many(value)) {
+    const text = String(entry);
+    const eq = text.indexOf('=');
+    if (eq === -1) { out[text] = ''; continue; }
+    out[text.slice(0, eq)] = text.slice(eq + 1);
+  }
+  return out;
+}
 
 /**
  * Read the ServiceBay token the way the container is given it.
@@ -312,6 +463,11 @@ export function usage() {
     ...rows,
     '',
     'Every verb accepts --json for machine-readable output.',
+    '',
+    'Exit codes:',
+    '  0 done  ·  1 failed  ·  2 usage  ·  3 no token / wrong scope',
+    '  4 the install request is still waiting for the operator (NOT installed)',
+    '  5 the operator rejected the request, or the approved install failed',
     '',
     'Environment:',
     '  SERVICEBAY_MCP_TOKEN_FILE  path to the token file (preferred; mode 0400)',
@@ -357,7 +513,14 @@ export function parseArgs(argv) {
       if (!verb.options.includes(name)) return { error: `\`${verbName}\` has no option \`--${name}\` (usage: ${verb.usage})` };
       const value = eq === -1 ? rest[++i] : token.slice(eq + 1);
       if (value === undefined) return { error: `--${name} needs a value (usage: ${verb.usage})` };
-      options[name] = value;
+      // A repeatable option accumulates; every other one keeps last-wins.
+      // Silently dropping an earlier `--mount` would file a request for less
+      // reach than the agent asked for and then report that as success.
+      if (verb.repeatable?.includes(name)) {
+        options[name] = [...(Array.isArray(options[name]) ? options[name] : options[name] === undefined ? [] : [options[name]]), value];
+      } else {
+        options[name] = value;
+      }
       continue;
     }
     positionals.push(token);
@@ -494,9 +657,13 @@ export async function run(argv, deps = {}) {
     }, json);
   }
 
-  const payload = { ok: true, verb: verbName, data: body };
+  // A 200 does not always mean the thing happened — `request-status` answers
+  // "still waiting for the operator" with one. `ok` follows the exit code so
+  // `--json` cannot read as success while nothing has been installed (#2965).
+  const exitCode = verb.exit ? verb.exit(body) : 0;
+  const payload = { ok: exitCode === 0, verb: verbName, data: body };
   return {
-    exitCode: 0,
+    exitCode,
     stdout: json ? `${JSON.stringify(payload, null, 2)}\n` : `${verb.text(body)}\n`,
     stderr: '',
   };

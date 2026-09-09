@@ -17,6 +17,7 @@
  */
 
 import { getConfig, type ProxyHostEntry } from '@/lib/config';
+import { normalizeExposure } from '@/lib/reverseProxy/proxyHostPolicy';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
@@ -117,6 +118,15 @@ async function callProxyHostsApi(node: string, entry: ProxyHostEntry): Promise<R
           domain: entry.domain,
           service: entry.service,
           forwardPort: entry.forwardPort,
+          // #2933 — forward the STORED exposure. Omitting it used to make
+          // the provisioner read `undefined` as "no access list", so one
+          // click on "Retry create" republished a LAN-only admin console
+          // (dns./ldap./nginx.<domain>) wide open while config still said
+          // `lan`. Forwarding the stored value verbatim also means the
+          // retry can never produce a WEAKER exposure than the entry it
+          // is retrying; an entry that pre-dates the field resolves to the
+          // conservative default, never to open.
+          exposure: normalizeExposure(entry.exposure),
         }],
       }),
       signal: AbortSignal.timeout(15_000),

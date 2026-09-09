@@ -205,3 +205,27 @@ export async function checkNginxOnline(
     return { online: true };
   }
 }
+
+/**
+ * #2933 — the `access_list_id` NPM ACTUALLY holds for a host, read back
+ * after the create/reconcile has settled.
+ *
+ * Deliberately fail-CLOSED, unlike `checkNginxOnline`: an unreadable row
+ * means we cannot say whether the host is IP-gated, and "cannot say" must
+ * never be reported as "restricted" (nor silently as "open"). The caller
+ * turns `{ ok: false }` into a loud host-level failure. A row with no
+ * `access_list_id` is `0` — NPM stores "no access list" that way.
+ */
+export async function readAccessListId(
+  apiUrl: string,
+  token: string,
+  hostId: number,
+): Promise<{ ok: true; accessListId: number } | { ok: false; reason: string }> {
+  try {
+    const r = await getProxyHost(apiUrl, token, hostId);
+    if (!r.ok) return { ok: false, reason: `NPM GET /proxy-hosts/${hostId} returned ${r.status}` };
+    return { ok: true, accessListId: r.data.access_list_id ?? 0 };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}

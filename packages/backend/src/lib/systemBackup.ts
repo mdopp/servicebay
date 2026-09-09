@@ -386,8 +386,13 @@ async function assertNoSymlinkEscape(dir: string): Promise<void> {
  *        --no-same-permissions — don't preserve setuid/setgid from the
  *                                archive
  *   3. Post-pass: walk the extracted tree and refuse any symlink whose
- *      resolved target escapes `destination`. On refusal, the partial
- *      extraction is cleaned up.
+ *      resolved target escapes `destination`.
+ *
+ * On refusal the CALLER'S data is never collateral (#2935). A destination that
+ * was absent or empty holds nothing the caller owned, so the partial extraction
+ * is simply removed. A destination that ALREADY HELD DATA is judged from a
+ * throwaway probe extraction instead: only what the archive writes is ever
+ * examined, and a refusal leaves the live directory byte-for-byte untouched.
  */
 export async function safeTarExtract(
     archivePath: string,
@@ -396,13 +401,61 @@ export async function safeTarExtract(
 ): Promise<void> {
     const gzip = opts.gzip ?? true;
     await assertSafeArchiveEntries(archivePath, gzip);
+    if (!(await destinationIsFresh(destination))) {
+        // #2935 — the destination is the caller's live directory. Judge the
+        // ARCHIVE on a probe extraction in a temp dir, so (a) only entries the
+        // archive wrote are judged (a symlink that was already there is not the
+        // archive's doing) and (b) a refusal cannot touch, let alone delete,
+        // what was already on disk.
+        const probe = await fs.mkdtemp(path.join(os.tmpdir(), 'sb-restore-probe-'));
+        try {
+            await runHardenedTarExtract(archivePath, probe, gzip);
+            await assertNoSymlinkEscape(probe);
+        } finally {
+            await fs.rm(probe, { recursive: true, force: true }).catch(() => {});
+        }
+        // The archive is clean — now extract it for real, with the same flags.
+        await runHardenedTarExtract(archivePath, destination, gzip);
+        return;
+    }
     await fs.mkdir(destination, { recursive: true });
-    // Note: GNU tar's default behaviour already strips leading `/` —
-    // an explicit `--no-absolute-names` flag doesn't exist (the opt-in
-    // counterpart is `-P, --absolute-names`). Same logic for `..`
-    // segments — tar's default refuses them. We rely on the
-    // `assertSafeArchiveEntries` pre-pass as the primary defence and
-    // the flags below as belt-and-suspenders.
+    await runHardenedTarExtract(archivePath, destination, gzip);
+    try {
+        await assertNoSymlinkEscape(destination);
+    } catch (e) {
+        // Refused after extraction into a destination that was empty/absent —
+        // nothing the caller owned is in there, so clearing the half-extracted
+        // tree destroys nothing the next restore would want.
+        await fs.rm(destination, { recursive: true, force: true }).catch(() => {});
+        throw e;
+    }
+}
+
+/**
+ * True when `dir` is absent or empty — i.e. a refusal may remove it, because
+ * the caller owns nothing inside it (#2935).
+ */
+async function destinationIsFresh(dir: string): Promise<boolean> {
+    try {
+        return (await fs.readdir(dir)).length === 0;
+    } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return true;
+        throw e;
+    }
+}
+
+/**
+ * The one hardened `tar -x` invocation both the probe and the real extraction
+ * use, so the tree that is JUDGED and the tree that LANDS can't diverge.
+ *
+ * Note: GNU tar's default behaviour already strips leading `/` — an explicit
+ * `--no-absolute-names` flag doesn't exist (the opt-in counterpart is
+ * `-P, --absolute-names`). Same logic for `..` segments — tar's default refuses
+ * them. We rely on the `assertSafeArchiveEntries` pre-pass as the primary
+ * defence and the flags below as belt-and-suspenders.
+ */
+async function runHardenedTarExtract(archivePath: string, destination: string, gzip: boolean): Promise<void> {
+    await fs.mkdir(destination, { recursive: true });
     await runTar([
         gzip ? '-xzf' : '-xf', archivePath,
         '-C', destination,
@@ -410,14 +463,6 @@ export async function safeTarExtract(
         '--no-overwrite-dir',
         '--no-same-permissions',
     ]);
-    try {
-        await assertNoSymlinkEscape(destination);
-    } catch (e) {
-        // Refused after extraction — clean up so we don't leave a
-        // half-extracted tree the next restore can stumble on.
-        await fs.rm(destination, { recursive: true, force: true }).catch(() => {});
-        throw e;
-    }
 }
 
 /**
@@ -449,24 +494,80 @@ export async function extractServiceConfigToNode(executor: Executor, tar: Buffer
         // Shell required: `>` redirection is the whole point of this step.
         await executor.exec(shellQuoteAll(['sh', '-c', 'base64 -d "$1" > "$2"', 'sh', hostTarB64, hostTar]), { timeoutMs: 120_000 });
         await executor.execSafe(['mkdir', '-p', destDir]);
-        await executor.execSafe(
-            ['tar', '-xf', hostTar, '-C', destDir, '--no-same-owner', '--no-overwrite-dir', '--no-same-permissions'],
-            { timeoutMs: 120_000 },
-        );
-        // Host-side symlink-escape walk (defense in depth): refuse any symlink
-        // that resolves outside destDir, cleaning up on refusal.
-        const realRoot = (await executor.execSafe(['readlink', '-f', destDir])).stdout.trim();
-        const links = (await executor.execSafe(['find', destDir, '-type', 'l'])).stdout
-            .split('\n').map(l => l.trim()).filter(Boolean);
-        for (const link of links) {
-            const resolved = (await executor.execSafe(['readlink', '-f', link]).catch(() => ({ stdout: '' }))).stdout.trim();
-            if (!resolved || (resolved !== realRoot && !resolved.startsWith(realRoot + '/'))) {
+        if (await hostDirIsFresh(executor, destDir)) {
+            // Absent/empty destination: nothing the caller owned is in there, so
+            // extract straight in and clear the partial tree if it's refused.
+            await hostHardenedTarExtract(executor, hostTar, destDir);
+            try {
+                await assertNoHostSymlinkEscape(executor, destDir);
+            } catch (e) {
                 await executor.execSafe(['rm', '-rf', destDir]).catch(() => {});
-                throw new Error(`Refused archive: symlink "${link}" → "${resolved}" escapes the extraction directory`);
+                throw e;
             }
+            return;
         }
+        // #2935 — destDir is the service's LIVE data dir. Judge the archive on a
+        // throwaway probe extraction: only entries the archive wrote are judged
+        // (a symlink that was already in the data dir is not the archive's
+        // doing), and a refusal never touches the live tree.
+        const probe = (await executor.execSafe(['mktemp', '-d', '-t', 'sb-svcprobe-XXXXXX'])).stdout.trim();
+        try {
+            await hostHardenedTarExtract(executor, hostTar, probe);
+            await assertNoHostSymlinkEscape(executor, probe);
+        } finally {
+            if (probe) await executor.execSafe(['rm', '-rf', probe]).catch(() => {});
+        }
+        // The archive is clean — extract it for real, with the same flags.
+        await hostHardenedTarExtract(executor, hostTar, destDir);
     } finally {
         await executor.execSafe(['rm', '-f', hostTarB64, hostTar]).catch(() => {});
+    }
+}
+
+/** Host-side `destinationIsFresh`: absent or empty (`ls -A` prints nothing). */
+async function hostDirIsFresh(executor: Executor, dir: string): Promise<boolean> {
+    const { stdout } = await executor.execSafe(['ls', '-A', dir]).catch(() => ({ stdout: '' }));
+    return stdout.trim().length === 0;
+}
+
+/** Host-side counterpart of `runHardenedTarExtract` — identical flags. */
+async function hostHardenedTarExtract(executor: Executor, hostTar: string, destDir: string): Promise<void> {
+    await executor.execSafe(['mkdir', '-p', destDir]);
+    await executor.execSafe(
+        ['tar', '-xf', hostTar, '-C', destDir, '--no-same-owner', '--no-overwrite-dir', '--no-same-permissions'],
+        { timeoutMs: 120_000 },
+    );
+}
+
+/**
+ * Host-side mirror of `assertNoSymlinkEscape` — walk `dir` on the node's own
+ * filesystem and refuse a symlink that escapes it.
+ *
+ * An EMPTY `readlink -f` result means the link is **dangling** on the host, not
+ * that it escapes (#2935): a link into a container-internal path (`/config/…`,
+ * an app's own `/data/…`) is dangling on the host by construction. Judge the
+ * RAW target the way the in-container walk does — absolute or traversing is
+ * still refused, but the reason says *dangling*, and an ordinary broken
+ * relative link inside the tree is not an escape at all.
+ */
+async function assertNoHostSymlinkEscape(executor: Executor, dir: string): Promise<void> {
+    const realRoot = (await executor.execSafe(['readlink', '-f', dir])).stdout.trim();
+    const links = (await executor.execSafe(['find', dir, '-type', 'l'])).stdout
+        .split('\n').map(l => l.trim()).filter(Boolean);
+    for (const link of links) {
+        const resolved = (await executor.execSafe(['readlink', '-f', link]).catch(() => ({ stdout: '' }))).stdout.trim();
+        if (!resolved) {
+            const raw = (await executor.execSafe(['readlink', link]).catch(() => ({ stdout: '' }))).stdout.trim();
+            if (raw.startsWith('/') || raw === '..' || raw.startsWith('../') || raw.includes('/../')) {
+                throw new Error(
+                    `Refused archive: dangling symlink "${link}" → "${raw}" points outside the extraction directory`,
+                );
+            }
+            continue; // dangling inside the tree — harmless, and not an escape
+        }
+        if (resolved !== realRoot && !resolved.startsWith(realRoot + '/')) {
+            throw new Error(`Refused archive: symlink "${link}" → "${resolved}" escapes the extraction directory`);
+        }
     }
 }
 

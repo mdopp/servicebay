@@ -7,12 +7,20 @@ import { ServiceManager } from '@/lib/services/ServiceManager';
 import { agentManager } from '@/lib/agent/manager';
 import { ServiceName } from '@/lib/api/schemas';
 import { withApiHandlerParams } from '@/lib/api/handler';
+import {
+  SERVICE_STREAM_ACTIONS,
+  encodeActionStreamResult,
+  type ActionStreamResult,
+} from '@servicebay/api-client';
 import yaml from 'js-yaml';
 
 export const dynamic = 'force-dynamic';
 
+// The action set is the shared one (`SERVICE_STREAM_ACTIONS`), not a literal
+// list — the modal's prop type and the class gate iterate the same const, so a
+// fourth streamed action is covered by both without an edit here (#2942).
 const Body = z.object({
-  action: z.enum(['start', 'stop', 'restart']).default('start'),
+  action: z.enum(SERVICE_STREAM_ACTIONS).default('start'),
 }).default({ action: 'start' });
 
 const Query = z.object({ node: z.string().optional() });
@@ -52,6 +60,14 @@ export const POST = withApiHandlerParams<z.infer<typeof Body>, z.infer<typeof Qu
       } catch {
         writerClosed = true;
       }
+    };
+
+    // Fail-closed default: unless the action below actually completes, the
+    // marker written in `finally` says the outcome is unknown, and the client
+    // renders the error state. "The stream ended" is never success (#2942).
+    let outcome: ActionStreamResult = {
+      type: 'error',
+      message: 'The action ended without completing.',
     };
 
     (async () => {
@@ -142,6 +158,12 @@ export const POST = withApiHandlerParams<z.infer<typeof Body>, z.infer<typeof Qu
             await write('✓ Service restarted.');
         }
 
+        // The systemctl call above throws on a non-zero exit (execSafe's
+        // `check` default), so reaching this line IS the success signal. The
+        // status dump below is diagnostic and its own failure is swallowed —
+        // it must not be able to downgrade an action that worked.
+        outcome = { type: 'complete', success: true };
+
         // Show status output
         await write('\r\n--- Service Status ---\r\n');
         try {
@@ -167,8 +189,13 @@ export const POST = withApiHandlerParams<z.infer<typeof Body>, z.infer<typeof Qu
         }
 
       } catch (e) {
-        await write(`Error: ${e instanceof Error ? e.message : String(e)}`);
+        const message = e instanceof Error ? e.message : String(e);
+        outcome = { type: 'error', message };
+        await write(`Error: ${message}`);
       } finally {
+        // The machine-readable terminal marker. The client reads its outcome
+        // from THIS, never from the stream ending.
+        await writeRaw(encodeActionStreamResult(outcome));
         if (!writerClosed) {
           try { await writer.close(); } catch { /* already closed */ }
         }

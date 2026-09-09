@@ -40,7 +40,7 @@
  * file is this test's own.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import os from 'os';
@@ -291,6 +291,46 @@ const textOf = (res: ToolCallResult) => res.content?.map(c => c.text ?? '').join
 const jsonOf = (res: ToolCallResult) => JSON.parse(textOf(res));
 
 let h: Harness;
+
+/**
+ * WHY THIS FILE WARMS ITS MODULE GRAPH UP FRONT (#2964).
+ *
+ * The cause of the flake was measured, not guessed: `callTool` does
+ * `await import('@/lib/mcp/server')` lazily — it has to, because the `vi.mock`s
+ * above only bind on a fresh graph and `beforeEach` calls `vi.resetModules()`.
+ * The FIRST of those imports is not the ~40 ms re-evaluation the later ones
+ * are: it is Vite transforming the entire MCP server graph — every registered
+ * tool and everything each of them pulls in — and it measured 1826 ms of the
+ * first test's 2418 ms on an idle machine. That is a one-time, file-wide cost
+ * charged to one test body, whose own work is ~50 ms. Under full-suite load,
+ * with workers competing for CPU, the same cost inflated past the 5000 ms
+ * default and turned the first case red at 5602 ms while the file passed
+ * green the moment it ran alone (batch/2026-09-09b seal, 2026-09-09).
+ *
+ * The other candidate cause is ruled out: nothing these tests await is
+ * duration-based. There is no sleep, no polling interval and no fixed delay in
+ * the test, in `templates/claude-dev/config-ui/server.mjs`, in `agent-cli/`
+ * or in `lib/claudeDev/projects.ts` — that module's single `setTimeout` is an
+ * AbortController deadline that only fires when the container does NOT answer,
+ * and every assertion here reads state (tmux windows, token rows, the written
+ * `~/.claude.json`) rather than waiting a while and hoping. So there is no wait
+ * to rebuild as a wait-on-state; there is a one-time cost sitting in the wrong
+ * budget.
+ *
+ * Paying it here moves it out of every test's timeout window and into the hook
+ * budget — vitest's default 10 s hookTimeout, ~5x the 1826 ms measured cold —
+ * so no explicit timeout is set and the default 5000 ms per-test timeout stands
+ * unchanged for every case in this file. Warming is the whole job: the imports
+ * are for their transform cost only, which survives `vi.resetModules()`.
+ */
+beforeAll(async () => {
+  await Promise.all([
+    import('@/lib/mcp/server'),
+    import('@/lib/auth/apiTokens'),
+    import('@/lib/api/apiTokenRoutes'),
+    import(/* @vite-ignore */ SERVER_MJS),
+  ]);
+});
 
 beforeEach(async () => {
   vi.resetModules();

@@ -11,6 +11,13 @@ import { approveApproval, getApproval, isSelfApproval } from '@/lib/approvals';
 // registration seam here makes the single generic /api/approvals approve path
 // run the tool, so Settings → Approvals "Approve" works for MCP approvals too.
 import '@/lib/mcp/server';
+// Same cross-bundle registration hazard, same fix, for the install sealer
+// (#2965): loading the install-request store runs its top-level
+// registerInstallSealer(...) call, so THIS route's bundle instance of
+// lib/approvals can run an on_approve.sealInstall action. Without it, approving
+// an agent-filed install request would fail with "Install sealer is not
+// registered" and nothing would install.
+import '@/lib/install/installRequests';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';

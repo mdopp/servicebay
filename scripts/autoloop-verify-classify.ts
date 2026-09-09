@@ -255,6 +255,14 @@ export function classifyTemplateFile(file: ChangedFile): string | null {
   }
   if (!TEMPLATE_MANIFEST.test(file.path)) return null;
   if (file.status.startsWith('D')) return null; // a removed template can't be upgrade-verified
+  // A rename of a template manifest is a rename of the template DIRECTORY —
+  // TEMPLATE_MANIFEST pins the filename, so the id itself moved (#2939). That id
+  // does not exist in the `:latest` image at all: semantically the `before ===
+  // null` case below, not a content edit. Comparing the old file's content
+  // against the new one sees no version change and wrongly says LIGHT.
+  if (file.status.startsWith('R')) {
+    return 'renamed template manifest — the new template id does not exist in the :latest image, so nothing can install it there';
+  }
   const before = file.before ?? null;
   if (before === null) {
     return 'new template manifest — it does not exist in the :latest image, so nothing can install it there';
@@ -343,7 +351,10 @@ export function collectChangedFiles(base: string, head: string, cwd = process.cw
     // edit, and an inert `package.json` key change from a real one — don't pay
     // for `git show` on anything else.
     if (TEMPLATE_MANIFEST.test(path) || PACKAGE_JSON.test(path)) {
-      file.before = status.startsWith('A') ? null : showOrNull(base, parts[1], cwd);
+      // `A`dded has no before. Neither does an `R`enamed template manifest, in
+      // the sense that matters: reading the OLD path's content and comparing it
+      // to the new one hides the fact that the template id moved (#2939).
+      file.before = status.startsWith('A') || status.startsWith('R') ? null : showOrNull(base, parts[1], cwd);
       file.after = status.startsWith('D') ? null : showOrNull(head, path, cwd);
     }
     changes.push(file);

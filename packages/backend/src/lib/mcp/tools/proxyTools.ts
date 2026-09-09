@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { getStoreSnapshot } from '@/lib/store/repository';
 import { getConfig, updateConfig } from '@/lib/config';
 import { AUTHELIA_FORWARD_AUTH_SENTINEL } from '@/lib/stackInstall/forwardAuth';
+import { validateAuthSkipPath } from '@/lib/stackInstall/authSkipPaths';
 // #2654 — a route mutation reconciles the auto-managed `domain:<host>` checks
 // immediately instead of leaving them to the 60s timer, so `get_health_checks`
 // reflects the change the caller just made. `create_proxy_route` needs no call
@@ -26,6 +27,24 @@ import { AUTHELIA_FORWARD_AUTH_SENTINEL } from '@/lib/stackInstall/forwardAuth';
 import { syncDomainChecks } from '@/lib/health/domainChecks';
 import { listLiveProxyHosts, provisionProxyHosts, removeProxyHost } from '@/lib/reverseProxy/proxyHostProvisioning';
 import { nodeParam, textResult, errorResult, type ToolRegistration } from './context';
+
+/**
+ * #2932 — first of the two independent refusals for an `authSkipPaths`
+ * entry. A `mutate`-scoped token used to be able to pass `"/"` here and
+ * publish a host that reads as SSO-gated in `get_proxy_routes` and in the
+ * UI while every request bypassed Authelia. The renderer
+ * (`buildAuthSkipLocations`) refuses the same class independently, so
+ * tightening this schema is defence in depth, not the only guard.
+ */
+const authSkipPathSchema = z.string().superRefine((value, ctx) => {
+  const verdict = validateAuthSkipPath(value);
+  if (!verdict.ok) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `invalid authSkipPaths entry: it ${verdict.reason}`,
+    });
+  }
+});
 
 const NPM_NOT_FOUND = 'Nginx Proxy Manager not found or not running';
 const NPM_AUTH_FAILED = 'Could not authenticate with NPM. Please provide your NPM admin credentials.';
@@ -77,7 +96,7 @@ export function registerProxyTools({ server }: ToolRegistration) {
       sslForced: z.boolean().optional().describe('Force HTTPS redirect (default true for public/internal once a cert binds).'),
       websocket: z.boolean().optional().describe('Enable WebSocket upgrade on the host.'),
       advancedConfig: z.string().optional().describe('Custom nginx directives to inject into the server block (appended after any forward-auth snippet).'),
-      authSkipPaths: z.array(z.string().startsWith('/')).optional().describe('#2210 — path prefixes that skip forward-auth while the rest of the host stays gated, e.g. ["/.well-known/", "/static/"]. Each becomes an `auth_request off` location that still proxies upstream (TWA assetlinks, ACME, PWA assets). Only meaningful with forwardAuth=true.'),
+      authSkipPaths: z.array(authSkipPathSchema).optional().describe('#2210 — path prefixes that skip forward-auth while the rest of the host stays gated, e.g. ["/.well-known/", "/static/"]. Each becomes an `auth_request off` location that still proxies upstream (TWA assetlinks, ACME, PWA assets). Only meaningful with forwardAuth=true. Must be a specific absolute prefix: "/" (or anything covering the whole host) is refused because it would switch SSO off everywhere, and so is any entry carrying nginx syntax.'),
       service: z.string().optional().describe('Logical service name (default: first label of the domain).'),
       node: nodeParam,
     },
@@ -123,6 +142,11 @@ export function registerProxyTools({ server }: ToolRegistration) {
           exposure,
           forwardAuth: !!forwardAuth,
           cert: d.certs.find(c => c.domain === domain) ?? null,
+          // #2933 — the kernel derives this from the access_list_id NPM
+          // holds after the call, and fails the host (→ `failedHere` above)
+          // when the live row disagrees with the requested exposure. So
+          // reaching this line already means NPM matches `exposure`; we are
+          // never echoing the request back as if it were the outcome.
           lanRestricted: d.lanRestricted.includes(domain),
           note: 'Route pushed to NPM. Poll get_proxy_routes to confirm nginx_online=true (a bad conf reverts silently otherwise).',
         });
