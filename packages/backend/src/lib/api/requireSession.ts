@@ -13,6 +13,20 @@ export interface RequireSessionOptions {
    * would let a narrowly-scoped token reach every route.
    */
   tokenScope?: ApiScope;
+  /**
+   * Hold a *scoped cookie session* to this scope **without** opening the Bearer
+   * branch (#2919).
+   *
+   * `tokenScope` does two things at once: it applies `cookieScopeRefusal` to a
+   * bridged cookie session AND it makes the route reachable with a raw
+   * `Authorization: Bearer sb_…`. On a credential-**minting** route the second
+   * half is a hole of its own — a short-lived token could mint an unparented,
+   * arbitrarily long-lived one, escaping both the TTL narrowing and the
+   * cascading revocation the delegation chain gives it (#2047/#2048). So the
+   * mint routes take the first half alone: still cookie/internal-only, but a
+   * session bridged from a token is held to that token's scopes.
+   */
+  cookieScope?: ApiScope;
 }
 
 /**
@@ -39,7 +53,8 @@ export interface RequireSessionOptions {
  *      (`POST /api/auth/session-from-token`) carries the source token's
  *      `scopes`, and is held to them on `tokenScope` routes exactly like the
  *      Bearer branch (#2768). A cookie without `scopes` (password login)
- *      means all scopes, for back-compat.
+ *      means all scopes, for back-compat. `options.cookieScope` applies that
+ *      same hold on routes that must stay cookie-only (#2919).
  *
  * This is intentionally a per-handler helper rather than a global
  * middleware: the broader hardening plan (PR1) layers a `middleware.ts`
@@ -101,7 +116,8 @@ export async function requireSession(
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
   }
-  return cookieScopeRefusal(session, options.tokenScope) ?? session;
+  // `cookieScope` is the same refusal without the Bearer opt-in (#2919).
+  return cookieScopeRefusal(session, options.tokenScope ?? options.cookieScope) ?? session;
 }
 
 /**

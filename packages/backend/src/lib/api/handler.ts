@@ -66,6 +66,14 @@ export interface ApiHandlerOptions<B, Q> {
    * with a scoped token (e.g. `tokenScope: 'mutate'` on config edits).
    */
   tokenScope?: ApiScope;
+  /**
+   * Hold a scoped cookie session (one minted by the token→session bridge) to
+   * this scope, WITHOUT making the route Bearer-reachable (#2919). This is what
+   * a credential-minting route wants: `tokenScope` would also let a token call
+   * the mint directly and hand itself an unparented, longer-lived twin. See
+   * `RequireSessionOptions.cookieScope`.
+   */
+  cookieScope?: ApiScope;
 }
 
 export interface ParsedRequest<B, Q> {
@@ -107,12 +115,16 @@ async function runHandler<B, Q>(
     let auth: SessionPayload | undefined;
     const hasBearer = (request.headers.get('authorization') ?? '').startsWith('Bearer ');
     const needsAuth = !options.skipAuth
-      && (MUTATING_METHODS.has(request.method) || options.tokenScope !== undefined || hasBearer);
+      && (MUTATING_METHODS.has(request.method) || options.tokenScope !== undefined
+        || options.cookieScope !== undefined || hasBearer);
     if (needsAuth) {
       // Lazy import to keep handler.ts free of the cookie-parse import
       // chain when the module is loaded by middleware-adjacent code.
       const { requireSession } = await import('./requireSession');
-      const result = await requireSession(request, { tokenScope: options.tokenScope });
+      const result = await requireSession(request, {
+        tokenScope: options.tokenScope,
+        cookieScope: options.cookieScope,
+      });
       if (result instanceof NextResponse) return result;
       auth = result;
     }
