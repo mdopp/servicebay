@@ -331,6 +331,19 @@ function isExcluded(relPath: string, excludes: string[]): boolean {
 }
 
 /**
+ * The two filesystem primitives `resolveIncludeGlob` needs. Kept narrower than
+ * `BackupFileBackend` on purpose: the RESTORE side's wipe backend (restore.ts)
+ * satisfies this shape too, so both sides of a manifest's `include` field run
+ * through the SAME expander instead of disagreeing about what a pattern means
+ * (#2921 — the wipe treated `.storage/lovelace*` as a filename and removed
+ * nothing while reporting it cleared).
+ */
+export interface IncludeGlobFs {
+  exists(target: string): Promise<boolean>;
+  readdirTypes(dir: string): Promise<{ name: string; isDir: boolean; isFile: boolean }[]>;
+}
+
+/**
  * Resolve a manifest include that may carry a trailing-`*` glob in its leaf
  * component (e.g. `.storage/lovelace*`, `.storage/hacs*`) to the concrete
  * relative paths that exist under `serviceDataDir`. HA names its dashboards
@@ -339,9 +352,12 @@ function isExcluded(relPath: string, excludes: string[]): boolean {
  * (no `*`) resolves to itself. Only a single trailing-`*` on the leaf is
  * supported — that's all the manifest needs, and it keeps the match a cheap
  * prefix test rather than a full glob engine.
+ *
+ * Used by BOTH the backup walk (`stageServiceBackup`) and the restore-side
+ * wipe (`wipeServiceForReinstall`) — see `IncludeGlobFs` (#2921).
  */
-async function resolveIncludeGlob(
-  backend: BackupFileBackend,
+export async function resolveIncludeGlob(
+  backend: IncludeGlobFs,
   serviceDataDir: string,
   include: string,
 ): Promise<string[]> {

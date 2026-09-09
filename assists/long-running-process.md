@@ -39,6 +39,11 @@ the **server owns the process**; the frontend is only a view + remote control.
 7. **Test the contract:** progress, cancel, done/error, **reload-reconnect**, and
    **restart-resume**.
 
+Reference implementation of the shape: a job module that owns the job record
+(owner + spec + a `resume()` entry point), a `GET` endpoint the UI polls for the
+latest state, and a per-item result cache so a resumed run skips what already
+succeeded — see `mdopp/solaris-import-google` (`app/jobs.py`).
+
 Related: the `testing-and-ci-gate` standard (which requires these tests) and the
 `cross-service-uid-writes` footgun (when the long job writes another service's
 store).

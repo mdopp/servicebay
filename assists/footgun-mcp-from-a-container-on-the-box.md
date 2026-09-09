@@ -77,9 +77,11 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
   `~/.claude.json` on its own.
 - **Self-check before doing anything else**, once you're pointed at the right
   URL and token: a `tools/call get_channel` (or `npm run autoloop:box --
-  channel`, which additionally needs `SB_BOX_URL=http://host.containers.internal:5888`
-  set explicitly — without it `channel` reports `{"channel":null}` even with a
-  correct token) must return `{"channel": "latest"|"dev"}`. A `null` channel or
+  channel`, which since #2922 resolves the endpoint itself — it tries
+  `$SB_BOX_URL`/`$SB_BOX`, then the installed LAN address, then
+  `http://host.containers.internal:5888`, and uses the first that answers, so
+  no env var is needed on the box) must return `{"channel": "latest"|"dev"}`.
+  A `null` channel or
   a `-32001` error means the token or URL is wrong, not that the box is
   unreachable — go back to the diagnostic above rather than concluding the box
   is down.

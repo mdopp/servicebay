@@ -262,10 +262,27 @@ async function readDirAssists(dir: string): Promise<string[]> {
   }
 }
 
+/**
+ * The ONE searchable text of an assist — lower-cased, one field per line.
+ *
+ * Both search paths read this: `query` (ranking, `scoreAssist`) and `q` (the
+ * hard substring filter, `applyAssistFilters`). They used to carry two separate
+ * field lists 29 lines apart, so `q` could hide an entry `query` would rank
+ * first — `q: "overview"` returned [] while both `*-overview` assists were
+ * sitting in the catalog tagged `overview` (#2917). One helper, one field list:
+ * a field added here is searchable through both, or through neither.
+ *
+ * Fields are joined with `\n` (never a space) so a needle cannot straddle two
+ * fields, and each tag gets its own line so a whole tag is a matchable run.
+ */
+export function assistHaystack(a: AssistSummary): string {
+  return [a.id, a.title, a.whenToUse, a.kind, ...a.tags].join('\n').toLowerCase();
+}
+
 /** Score an assist against free-text query tokens. 0 = no match. */
 function scoreAssist(a: AssistSummary, tokens: string[]): number {
   if (tokens.length === 0) return 1;
-  const hay = [a.id, a.title, a.whenToUse, a.kind, a.tags.join(' ')].join(' ').toLowerCase();
+  const hay = assistHaystack(a);
   let score = 0;
   for (const t of tokens) if (hay.includes(t)) score++;
   return score;
@@ -278,15 +295,20 @@ export interface ListAssistsOptions {
   kind?: AssistKind;
   /** Restrict to entries carrying this tag (case-insensitive, whole-tag match). */
   tag?: string;
-  /** Substring filter over title + whenToUse (case-insensitive). */
+  /**
+   * Case-insensitive substring filter over the same text `query` ranks on —
+   * id, title, whenToUse, kind and tags (`assistHaystack`, #2917).
+   */
   q?: string;
 }
 
 /**
  * Apply the hard filters (`kind` / `tag` / `q`) — as opposed to `query`, which
  * ranks. Split out of `listAssists` so the scan loop stays readable (#2813).
+ * Exported so the field-coverage test can sweep the whole catalog against the
+ * real filter without re-scanning the catalog dir once per probe (#2917).
  */
-function applyAssistFilters(entries: AssistSummary[], opts: ListAssistsOptions): AssistSummary[] {
+export function applyAssistFilters(entries: AssistSummary[], opts: ListAssistsOptions): AssistSummary[] {
   let out = entries;
   if (opts.kind) out = out.filter(e => e.kind === opts.kind);
 
@@ -294,7 +316,7 @@ function applyAssistFilters(entries: AssistSummary[], opts: ListAssistsOptions):
   if (tag) out = out.filter(e => e.tags.some(t => t.toLowerCase() === tag));
 
   const needle = opts.q?.trim().toLowerCase();
-  if (needle) out = out.filter(e => `${e.title}\n${e.whenToUse}`.toLowerCase().includes(needle));
+  if (needle) out = out.filter(e => assistHaystack(e).includes(needle));
 
   return out;
 }

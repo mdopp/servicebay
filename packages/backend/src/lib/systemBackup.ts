@@ -480,6 +480,26 @@ function pushLog(logs: BackupLogEntry[], progress: ProgressCallback | undefined,
 }
 
 /**
+ * The RESOLVED ABSOLUTE data dir a service's config restores back into — the
+ * meaning `ServiceDataEntry.sourcePath` has always documented.
+ *
+ * It used to record the BARE SERVICE NAME, which the restore side then handed
+ * to `tar -C` as a RELATIVE target: the extraction landed under the node
+ * agent's own cwd, the real data dir was never touched, and the restore logged
+ * "Restored" anyway (#2920). Volume-held config (#2596) has no DATA_DIR dir at
+ * all, so it resolves to the empty string — the restore side refuses an
+ * unresolvable target loudly instead of inventing a bare name for it.
+ */
+async function resolveRestoreTargetDir(service: string): Promise<string> {
+    const { resolveServiceDataDir } = await import('./externalBackup/producer');
+    try {
+        return await resolveServiceDataDir(service);
+    } catch {
+        return '';
+    }
+}
+
+/**
  * Stage every installed service's CONFIG (not bulk DATA) into the archive's
  * `service-config/<svc>/` tree, reusing the per-service producer so the bytes
  * are identical to the NAS atom (epic #1607/#1608 — the same include/exclude/
@@ -537,7 +557,7 @@ export async function stageServiceConfig(
                     (metadata.serviceData as ServiceDataEntry[]).push({
                         label: svc,
                         service: svc,
-                        sourcePath: svc,
+                        sourcePath: await resolveRestoreTargetDir(svc),
                         nodeName,
                     });
                     stagedAny = true;
@@ -1388,6 +1408,12 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                 typeof item === 'string' ? { name: item } : item
             );
 
+            // Entries we refused to extract (#2920). Collected rather than thrown
+            // on the spot so one bad entry doesn't strand the rest, then surfaced
+            // to the caller below — a refused entry is NOT restored, and must
+            // never be reported as one.
+            const refused: string[] = [];
+
             for (const sdSelection of normalizedSelections) {
                 const dirName = sdSelection.name;
                 const localDir = path.join(serviceConfigDir, dirName);
@@ -1421,14 +1447,39 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                     );
                     continue;
                 }
+                if (targetPath && !path.isAbsolute(targetPath)) {
+                    // #2920 — v2/v3 snapshots recorded the BARE SERVICE NAME here,
+                    // and a relative `tar -C` target extracts into the agent's own
+                    // cwd while the real data dir stays untouched. Never honour a
+                    // relative recorded target: drop it and re-resolve below (which
+                    // is what the fallback was always meant to do).
+                    logger.warn(
+                        'SystemBackup',
+                        `service-config "${dirName}": ignoring the non-absolute recorded target ` +
+                        `"${targetPath}" — re-resolving the service data dir`,
+                    );
+                    targetPath = undefined;
+                }
                 if (!targetPath) {
-                    // No metadata (legacy/missing) — re-resolve from the manifest.
+                    // No usable metadata (legacy/missing/relative) — re-resolve from the manifest.
                     try {
                         targetPath = await resolveServiceDataDir(serviceName);
                     } catch {
                         logger.warn('SystemBackup', `No target path for service-config "${dirName}", skipping`);
                         continue;
                     }
+                }
+                if (!targetPath || !path.isAbsolute(targetPath)) {
+                    // Still not an absolute dir: refuse. Extracting to a relative
+                    // path lands the config somewhere the service never reads, and
+                    // the old code logged "Restored" for it anyway (#2920).
+                    const detail =
+                        `service-config "${dirName}": refusing to extract to ` +
+                        (targetPath ? `the non-absolute target "${targetPath}"` : 'an empty target path') +
+                        ' — the service data dir could not be resolved to an absolute path';
+                    logger.error('SystemBackup', detail);
+                    refused.push(detail);
+                    continue;
                 }
 
                 // If specific files requested, create a filtered staging directory.
@@ -1465,6 +1516,12 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                 } finally {
                     if (filteredDir) await fs.rm(filteredDir, { recursive: true, force: true });
                 }
+            }
+
+            if (refused.length > 0) {
+                throw new Error(
+                    `${refused.length} service-config selection(s) were NOT restored — ${refused.join('; ')}`,
+                );
             }
         }
     } finally {

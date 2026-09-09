@@ -334,6 +334,107 @@ describe('wipeServiceForReinstall (#1585)', () => {
     await wipeServiceForReinstall('not-a-service', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
     expect(logs.some(l => l.includes('no backup manifest'))).toBe(true);
   });
+
+  /**
+   * #2921 — the wipe ran each `manifest.include` through `path.join` and handed
+   * the result to `rm -rf`, so a trailing-`*` entry matched nothing; the counter
+   * was bumped anyway. Both sides of the manifest now use the SAME expander
+   * (`resolveIncludeGlob`), and the count is measured, not counted.
+   */
+  describe('#2921 — glob includes are expanded, and the count is measured', () => {
+    /** Every relative file path under `dataDir`, sorted. */
+    async function listFiles(dir: string, base = dir): Promise<string[]> {
+      const out: string[] = [];
+      for (const ent of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) out.push(...(await listFiles(full, base)));
+        else out.push(path.relative(base, full));
+      }
+      return out.sort();
+    }
+    async function seed(files: Record<string, string>) {
+      for (const [rel, content] of Object.entries(files)) {
+        const full = path.join(dataDir, rel);
+        await fs.mkdir(path.dirname(full), { recursive: true });
+        await fs.writeFile(full, content);
+      }
+    }
+    const clearedCount = (logs: string[]) =>
+      Number(/cleared (\d+) config path\(s\)/.exec(logs.join('\n'))?.[1] ?? NaN);
+
+    it("expands `.storage/lovelace*` and `.storage/hacs*` and deletes the leaves they match", async () => {
+      await seed({
+        // Matching leaves for the two glob includes (HA names each dashboard
+        // `.storage/lovelace.<url_path>`; HACS writes `.storage/hacs.*`).
+        '.storage/lovelace.overview': 'dash-1',
+        '.storage/lovelace_resources': 'resources',
+        '.storage/hacs.repositories': 'hacs',
+        // Non-matching leaves in the SAME dir: not covered by any include.
+        '.storage/core.restore_state': 'keep-me',
+        '.storage/auth': 'keep-me-too',
+        // A plain (non-glob) include, and a DATA path.
+        'configuration.yaml': 'cfg',
+        'home-assistant_v2.db': 'RECORDER',
+      });
+      const logs: string[] = [];
+      await wipeServiceForReinstall('home-assistant', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
+
+      // The glob-matched leaves are gone …
+      for (const gone of ['.storage/lovelace.overview', '.storage/lovelace_resources', '.storage/hacs.repositories']) {
+        await expect(fs.access(path.join(dataDir, gone))).rejects.toThrow();
+      }
+      // … the non-matching leaves in the same dir survive, and so does DATA.
+      expect(await fs.readFile(path.join(dataDir, '.storage/core.restore_state'), 'utf8')).toBe('keep-me');
+      expect(await fs.readFile(path.join(dataDir, '.storage/auth'), 'utf8')).toBe('keep-me-too');
+      expect(await fs.readFile(path.join(dataDir, 'home-assistant_v2.db'), 'utf8')).toBe('RECORDER');
+    });
+
+    it('reports the number of paths it ACTUALLY removed, not the loop length', async () => {
+      const seeded = {
+        '.storage/lovelace.overview': 'd1',
+        '.storage/hacs.repositories': 'h',
+        'configuration.yaml': 'cfg',
+        'home-assistant_v2.db': 'RECORDER',
+      };
+      await seed(seeded);
+      const before = await listFiles(dataDir);
+      const logs: string[] = [];
+      await wipeServiceForReinstall('home-assistant', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
+      const after = await listFiles(dataDir);
+
+      const actuallyRemoved = before.filter(f => !after.includes(f));
+      // Ground truth, measured off the disk — 3 config files, DB kept.
+      expect(actuallyRemoved.sort()).toEqual(['.storage/hacs.repositories', '.storage/lovelace.overview', 'configuration.yaml']);
+      expect(clearedCount(logs)).toBe(actuallyRemoved.length);
+      // …and the manifest has far more entries than that, so the old
+      // count-the-iterations bug would have reported a much bigger number.
+      expect(clearedCount(logs)).toBeLessThan(11);
+    });
+
+    it('names the manifest entries that matched nothing instead of counting them as cleared', async () => {
+      await seed({ 'configuration.yaml': 'cfg' }); // ONE include exists; the rest do not
+      const logs: string[] = [];
+      await wipeServiceForReinstall('home-assistant', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
+      const line = logs.find(l => l.includes('wipe-config')) ?? '';
+
+      expect(clearedCount(logs)).toBe(1);
+      expect(line).toMatch(/pattern\(s\) matched nothing/);
+      // The two glob entries had no leaves on disk here, so they are named …
+      expect(line).toContain('.storage/lovelace*');
+      expect(line).toContain('.storage/hacs*');
+      // … and the one that DID clear something is not.
+      expect(line).not.toContain('configuration.yaml,');
+      expect(line).not.toMatch(/nothing:[^\n]*\bconfiguration\.yaml\b/);
+    });
+
+    it('reports cleared 0 and names every entry when nothing is on disk', async () => {
+      await fs.mkdir(dataDir, { recursive: true });
+      const logs: string[] = [];
+      await wipeServiceForReinstall('home-assistant', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
+      expect(clearedCount(logs)).toBe(0);
+      expect(logs.join('\n')).toMatch(/pattern\(s\) matched nothing/);
+    });
+  });
 });
 
 describe('#2596 — volume-held config is backed up, and says plainly that it is not auto-restorable', () => {

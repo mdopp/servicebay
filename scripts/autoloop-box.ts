@@ -22,14 +22,36 @@
  * supplies `SB_USERNAME`/`SB_PASSWORD` in the environment — the pipeline never
  * derives them from the box.
  *
- * The box address is deployment-specific and secret-adjacent — NEVER hardcoded
- * here. Resolved, in order, from
- *   `$SB_BOX_URL`  full origin, e.g. `https://admin.example.tld` — use this when
- *                  the LAN address is not routable from the agent sandbox (the
- *                  public reverse-proxy origin usually is; #2532),
- *   `$SB_BOX`      "host:port" (assumed plain `http://`), or
- *   the gitignored `build/fcos/install-settings.env` (`STATIC_IP` + `SERVICEBAY_PORT`).
- * The `sb_` token comes from `$SB_TOKEN` or `~/.claude.json`.
+ * The box address is deployment-specific and secret-adjacent — no *deployment*
+ * address is hardcoded here. It is resolved as an ORDERED LIST of candidates
+ * (#2922), and the first one that actually answers wins:
+ *   1. `$SB_BOX_URL`  full origin, e.g. `https://admin.example.tld` — use this
+ *                     when the LAN address is not routable from the agent
+ *                     sandbox (the public reverse-proxy origin usually is; #2532),
+ *      or `$SB_BOX`   "host:port" (assumed plain `http://`),
+ *   2. the gitignored `build/fcos/install-settings.env` (`STATIC_IP` + `SERVICEBAY_PORT`),
+ *   3. `INTERNAL_BOX_ORIGIN` — the container-to-host app port. This is the one
+ *      address that is a *constant*, not a deployment value: an agent container
+ *      running ON the box reaches the app only there, because 80/443 are the
+ *      reverse proxy and ServiceBay's own vhost is LAN-only `deny all` (assist
+ *      `footgun-mcp-from-a-container-on-the-box`, ADR 0007). Without it the
+ *      harness inside `claude-dev` could never ask the box anything, and
+ *      `--recover` reported `channel-unknown` forever (#2922).
+ *
+ * Two properties of that resolution are load-bearing and must not be traded away:
+ *  - **The token goes only to a candidate that answered.** Each candidate is
+ *    probed with an UNAUTHENTICATED `GET /api/health` first (a 401 counts as
+ *    "alive" — the route is auth-gated); the `sb_` Bearer is attached only to
+ *    the origin that came back. Candidates come from the operator's own env,
+ *    the gitignored install settings, or the baked-in constant — never from
+ *    box output or any other untrusted input.
+ *  - **"No candidate answered" stays its own outcome.** `resolveReachableBoxUrl`
+ *    throws `BoxUnreachableError` naming what it tried; it never degrades into
+ *    a silent success. Collapsing that into a green result is worse than the
+ *    blindness it replaces, because the loop reads exit 0 as "the safety net is up".
+ *
+ * The `sb_` token comes from `$SB_TOKEN` or `~/.claude.json`. It is never
+ * logged, printed or embedded in an error message anywhere in this module.
  *
  *   tsx scripts/autoloop-box.ts exec "<shell cmd>"    # /mcp exec_command → {code,stdout,stderr}
  *   tsx scripts/autoloop-box.ts channel               # /mcp get_channel
@@ -67,6 +89,80 @@ export function extractToken(jsonText: string): string | null {
 export function normaliseBoxUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, '');
   return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+}
+
+/** A box origin rendered safe to print. A configured address *could* carry
+ *  `user:password@` userinfo, and candidate lists end up in log lines and in the
+ *  `--recover` reason string — strip the credential rather than trust that
+ *  nobody ever sets one. Pure. */
+export function redactBoxUrl(url: string): string {
+  return url.replace(/:\/\/[^@/]*@/, '://');
+}
+
+/**
+ * The container-to-host origin of the box's own app port — a **constant**, not
+ * a deployment value.
+ *
+ * `host.containers.internal` is the podman-provided name for the host from
+ * inside a container on it (it resolves to the link-local gateway); the app port
+ * is where `/mcp` and `/api` live, because ports 80/443 are nginx-proxy-manager
+ * and ServiceBay's admin vhost ends in `deny all` (assist
+ * `footgun-mcp-from-a-container-on-the-box`). Per ADR 0007 the *name* is used,
+ * never a literal IP.
+ */
+export const INTERNAL_BOX_ORIGIN = 'http://host.containers.internal:5888';
+
+/** Where the candidate list gets its inputs — injectable so the ORDER can be
+ *  unit-tested without an env or a real settings file. */
+export interface BoxUrlSources {
+  env?: Record<string, string | undefined>;
+  /** the raw `build/fcos/install-settings.env` body, or null when absent */
+  readSettings?: () => string | null;
+}
+
+/**
+ * The ordered box origins to try, most-specific first.
+ *
+ * Order is the contract: an explicitly configured address wins (an operator
+ * pointing the harness at the public origin must not be silently overridden),
+ * then the installed LAN address, then the on-box internal endpoint as the
+ * last resort that is always present. De-duplicated, so a configured address
+ * that already IS the internal one is tried once.
+ */
+export function boxUrlCandidates(sources: BoxUrlSources = {}): string[] {
+  const env = sources.env ?? process.env;
+  const readSettings =
+    sources.readSettings ??
+    (() => {
+      try {
+        return readFileSync('build/fcos/install-settings.env', 'utf8');
+      } catch {
+        return null;
+      }
+    });
+
+  const out: string[] = [];
+  const add = (value: string | undefined | null) => {
+    if (!value || !value.trim()) return;
+    const url = normaliseBoxUrl(value);
+    if (!out.includes(url)) out.push(url);
+  };
+
+  add(env.SB_BOX_URL ?? env.SB_BOX);
+  const settings = readSettings();
+  const parsed = settings ? parseSettingsEnv(settings) : null;
+  if (parsed) add(`${parsed.host}:${parsed.port}`);
+  add(INTERNAL_BOX_ORIGIN);
+  return out;
+}
+
+/** No candidate answered. Its own error type so callers can keep "I could not
+ *  ask the box at all" distinguishable from every other failure (#2922). */
+export class BoxUnreachableError extends Error {
+  constructor(public readonly tried: string[]) {
+    super(`no box candidate answered — tried ${tried.map(redactBoxUrl).join(', ')}`);
+    this.name = 'BoxUnreachableError';
+  }
 }
 
 /** The JSON-RPC body for an MCP `tools/call`. */
@@ -126,21 +222,50 @@ export function backoffMs(attempt: number): number {
 
 // ---------- effectful (I/O) ----------
 
-/** The box's request origin (scheme included). `$SB_BOX_URL` wins so a sandbox
- *  that cannot route the LAN address can point the harness at the public
- *  reverse-proxy origin instead (#2532). */
-export function resolveBoxUrl(): string {
-  const configured = process.env.SB_BOX_URL ?? process.env.SB_BOX;
-  if (configured) return normaliseBoxUrl(configured);
+/** Does this origin answer as the ServiceBay app? Unauthenticated on purpose —
+ *  the probe decides where the token may go, so it must not carry it. `/api/health`
+ *  is auth-gated, so a 401 is proof the app answered; anything below 500 counts. */
+async function boxOriginAnswers(origin: string, timeoutMs: number): Promise<boolean> {
   try {
-    const s = parseSettingsEnv(readFileSync('build/fcos/install-settings.env', 'utf8'));
-    if (s) return normaliseBoxUrl(`${s.host}:${s.port}`);
+    const res = await fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(timeoutMs) });
+    return res.status > 0 && res.status < 500;
   } catch {
-    /* fall through */
+    return false;
   }
-  throw new Error(
-    'box address not found — set $SB_BOX_URL="https://host" (or $SB_BOX="host:port") or provide build/fcos/install-settings.env',
-  );
+}
+
+let cachedBoxOrigin: string | null = null;
+
+/** Drop the resolved-origin memo (tests; a long-lived process that moved boxes). */
+export function resetBoxUrlCache(): void {
+  cachedBoxOrigin = null;
+}
+
+/**
+ * The box's request origin: the first candidate that actually answers.
+ *
+ * Falling THROUGH is the point (#2922) — a configured address that no longer
+ * routes (or never did, from inside a container on the box) must not end the
+ * search. Memoised per process so the probe costs one extra request per run.
+ * Throws `BoxUnreachableError` when nothing answers — that case must stay loud
+ * and distinguishable, never a quiet fallback to some address.
+ */
+export async function resolveReachableBoxUrl(opts: { timeoutMs?: number } = {}): Promise<string> {
+  if (cachedBoxOrigin) return cachedBoxOrigin;
+  const candidates = boxUrlCandidates();
+  for (const candidate of candidates) {
+    if (await boxOriginAnswers(candidate, opts.timeoutMs ?? 8000)) {
+      cachedBoxOrigin = candidate;
+      return candidate;
+    }
+  }
+  throw new BoxUnreachableError(candidates);
+}
+
+/** The candidate list as safe-to-print strings — for the "I could not ask the
+ *  box" reason, which has to name what it tried. */
+export function describeBoxCandidates(): string[] {
+  return boxUrlCandidates().map(redactBoxUrl);
 }
 
 /** The `sb_` MCP token: `$SB_TOKEN` (operator-supplied) or `~/.claude.json`.
@@ -160,7 +285,7 @@ export async function api(
   path: string,
   opts: { body?: unknown; origin?: boolean; timeoutMs?: number } = {},
 ): Promise<{ status: number; text: string }> {
-  const box = resolveBoxUrl();
+  const box = await resolveReachableBoxUrl();
   const headers: Record<string, string> = { Authorization: `Bearer ${getToken()}` };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (opts.origin) headers['Origin'] = box;
@@ -179,7 +304,7 @@ async function mcpFetch(
   args: Record<string, unknown>,
   timeoutMs: number,
 ): Promise<{ status: number; body: string }> {
-  const res = await fetch(`${resolveBoxUrl()}/mcp`, {
+  const res = await fetch(`${await resolveReachableBoxUrl()}/mcp`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getToken()}`,
@@ -231,11 +356,15 @@ export async function getChannel(): Promise<string | null> {
 export async function waitHealth(timeoutSec = 300): Promise<boolean> {
   const deadline = Date.now() + timeoutSec * 1000;
   for (let attempt = 0; Date.now() < deadline; attempt++) {
-    try {
-      const res = await fetch(`${resolveBoxUrl()}/api/health`, { signal: AbortSignal.timeout(8000) });
-      if (res.status > 0 && res.status < 500) return true; // 200 or 401 → the app is up
-    } catch {
-      /* connection refused / timeout → mid-restart, keep trying */
+    // Re-resolve every pass: a box mid-flip can come back on a different
+    // candidate than the one that answered before, and the probe IS the health
+    // check — a 401 means the app is up.
+    resetBoxUrlCache();
+    for (const candidate of boxUrlCandidates()) {
+      if (await boxOriginAnswers(candidate, 8000)) {
+        cachedBoxOrigin = candidate;
+        return true;
+      }
     }
     await sleep(backoffMs(attempt));
   }

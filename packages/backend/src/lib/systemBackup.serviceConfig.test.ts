@@ -78,7 +78,10 @@ function wireWorker(status: ReturnType<typeof workerStatus>, tars: Record<string
 beforeEach(async () => {
     vi.clearAllMocks();
     tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'sysbackup-svccfg-'));
-    mockCfg.getConfig.mockResolvedValue({ installedTemplates: {} });
+    // DATA_DIR drives resolveServiceDataDir, which is what `sourcePath` records
+    // since #2920 — point it at the test's temp root so the expected absolute
+    // dirs are deterministic.
+    mockCfg.getConfig.mockResolvedValue({ templateSettings: { DATA_DIR: tmpRoot }, installedTemplates: {} });
 });
 
 afterEach(async () => {
@@ -108,12 +111,28 @@ describe('stageServiceConfig', () => {
         await expect(fs.access(path.join(tmpRoot, 'service-config', 'home-assistant.tar'))).rejects.toThrow();
         // The worker run's out dir is cleaned up.
         expect(mockWorker.cleanupBackupRun).toHaveBeenCalledTimes(1);
-        // Metadata records {label, service, sourcePath, nodeName}.
+        // Metadata records {label, service, sourcePath, nodeName}. `sourcePath` is
+        // the RESOLVED ABSOLUTE data dir (#2920) — the meaning the ServiceDataEntry
+        // doc comment always claimed, and what the restore hands to `tar -C`. It
+        // used to be the bare service name, i.e. a RELATIVE target. Note both
+        // values carry the manifest's `dataSubdir` (home-assistant/homeassistant,
+        // nginx-proxy-manager), so this pins the real resolver, not a path.join.
         const sd = metadata.serviceData;
         expect(sd).toEqual([
-            { label: 'home-assistant', service: 'home-assistant', sourcePath: 'home-assistant', nodeName: 'Local' },
-            { label: 'nginx', service: 'nginx', sourcePath: 'nginx', nodeName: 'Local' },
+            {
+                label: 'home-assistant',
+                service: 'home-assistant',
+                sourcePath: path.join(tmpRoot, 'home-assistant', 'homeassistant'),
+                nodeName: 'Local',
+            },
+            {
+                label: 'nginx',
+                service: 'nginx',
+                sourcePath: path.join(tmpRoot, 'nginx-proxy-manager'),
+                nodeName: 'Local',
+            },
         ]);
+        for (const entry of sd) expect(path.isAbsolute(entry.sourcePath)).toBe(true);
     });
 
     it('returns false when no installed service has a backup manifest', async () => {

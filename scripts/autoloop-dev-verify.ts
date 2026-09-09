@@ -98,7 +98,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { getChannel, setChannel, waitHealth, mcpCall, mcpExec } from './autoloop-box';
+import { getChannel, setChannel, waitHealth, mcpCall, mcpExec, describeBoxCandidates } from './autoloop-box';
 import { gitEnv, resolveFullSha } from './autoloop-git';
 
 /**
@@ -1084,6 +1084,10 @@ export interface ChannelRecoveryInputs {
   marker: DevVerifyMarker | null;
   harnessAlive: boolean;
   now: number;
+  /** The box origins the resolution would try, safe to print. Named in the
+   *  `channel-unknown` reason so "I could not ask the box" says *where* it
+   *  asked instead of being an unactionable shrug (#2922). */
+  triedCandidates?: string[];
 }
 
 export interface ChannelRecoveryDecision {
@@ -1102,9 +1106,10 @@ export interface ChannelRecoveryDecision {
  * (the box may just be mid-restart) — the recovery must not flip blind.
  */
 export function decideChannelRecovery(input: ChannelRecoveryInputs): ChannelRecoveryDecision {
-  const { channel, marker, harnessAlive, now } = input;
+  const { channel, marker, harnessAlive, now, triedCandidates } = input;
   if (channel === null) {
-    return { action: 'channel-unknown', reason: 'the box did not answer get_channel — no flip attempted', staleMarker: false };
+    const where = triedCandidates?.length ? ` (tried ${triedCandidates.join(', ')})` : '';
+    return { action: 'channel-unknown', reason: `the box did not answer get_channel — no flip attempted${where}`, staleMarker: false };
   }
   if (channel !== 'dev') {
     return {
@@ -1151,6 +1156,8 @@ export interface ChannelRecoveryDeps {
   clearMarker: () => void;
   isAlive: (marker: DevVerifyMarker) => boolean;
   now: () => number;
+  /** the ordered, printable box origins the resolution would try (#2922) */
+  boxCandidates?: () => string[];
 }
 
 export interface ChannelRecoveryResult extends ChannelRecoveryDecision {
@@ -1170,6 +1177,7 @@ export async function recoverStrandedChannel(deps: ChannelRecoveryDeps): Promise
     marker,
     harnessAlive: marker ? deps.isAlive(marker) : false,
     now: deps.now(),
+    triedCandidates: (deps.boxCandidates ?? describeBoxCandidates)(),
   });
 
   let repaired = false;

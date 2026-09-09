@@ -15,6 +15,7 @@ import {
   type ApiScope,
   type RevokeResult,
 } from '@/lib/auth/apiTokens';
+import { scopeSatisfiedBy } from '@/lib/auth/apiScope';
 import { revokeBootstrapToken } from '@/lib/mcp/bootstrapToken';
 import { requireSession } from '@/lib/api/requireSession';
 import { apiError } from '@/lib/api/errors';
@@ -67,6 +68,24 @@ function neverExpiresScopesAreReadOnly(scopes: ApiScope[]): boolean {
   return scopes.every(s => s === 'read');
 }
 
+/**
+ * Scopes the caller is asking for that its own session does not hold (#2919).
+ *
+ * `held === undefined` is a password/UI (or internal) session — "all scopes",
+ * per `SessionPayload.scopes` — so an admin keeps full minting power and
+ * nothing is missing. A session bridged from a token
+ * (`POST /api/auth/session-from-token`) carries `scopes = token.scopes`, and
+ * that is exactly the authority the mint may not exceed.
+ *
+ * The implication rule is the ONE in `apiScope.ts` (`destroy` ⇒ `reboot`, and
+ * `exec` implied by nothing, #2623) — the same `scopeSatisfiedBy` the delegated
+ * child-mint routes through (#2048), not a second copy.
+ */
+function scopesBeyondCaller(requested: ApiScope[], held: ApiScope[] | undefined): ApiScope[] {
+  if (!held) return [];
+  return requested.filter(s => !scopeSatisfiedBy(held, s));
+}
+
 export async function createTokenHandler({ request }: { request: Request }) {
   // requireSession is re-run here (the wrapper already gated POST) to
   // recover the session's user for the token's `createdBy` field.
@@ -74,6 +93,25 @@ export async function createTokenHandler({ request }: { request: Request }) {
   if (auth instanceof NextResponse) return auth;
   try {
     const body = CreateBody.parse(await request.json());
+
+    // PRIVILEGE-ESCALATION GUARD (#2919, SECURITY): a caller may never mint a
+    // token more privileged than itself. Without this, a `read`-only token —
+    // the tier documented as safe to hand out, and the one delegated to agent
+    // containers today — traded for a cookie at
+    // `POST /api/auth/session-from-token` could mint `exec`/`destroy` here in
+    // one more request. The delegated child-mint has enforced child ⊆ parent
+    // since #2048; this is its unguarded sibling. Named scopes in the refusal,
+    // not a bare 403, so the caller can see WHICH scope it lacks.
+    const overreach = scopesBeyondCaller(body.scopes, auth.scopes);
+    if (overreach.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Forbidden: cannot mint a token carrying '${overreach.join("', '")}' — `
+            + `your own session does not hold ${overreach.length > 1 ? 'those scopes' : 'that scope'}.`,
+        },
+        { status: 403 },
+      );
+    }
 
     // Fail-closed guard (#2299): a never-expiring token is restricted to the
     // read scope. Reject (403) before minting if it asks for anything more.

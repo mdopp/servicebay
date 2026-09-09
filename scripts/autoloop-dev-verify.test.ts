@@ -1334,6 +1334,18 @@ describe('decideChannelRecovery — a :dev box no live harness owns is stranded 
       action: 'channel-unknown',
     });
   });
+
+  it('names the box addresses it tried, so "could not ask" is actionable (#2922)', () => {
+    const d = decideChannelRecovery({
+      ...alive,
+      channel: null,
+      marker: null,
+      triedCandidates: ['https://admin.example.tld', 'http://host.containers.internal:5888'],
+    });
+    expect(d.action).toBe('channel-unknown');
+    expect(d.reason).toContain('https://admin.example.tld');
+    expect(d.reason).toContain('http://host.containers.internal:5888');
+  });
 });
 
 function makeRecoveryDeps(overrides: Partial<ChannelRecoveryDeps> = {}) {
@@ -1400,6 +1412,37 @@ describe('recoverStrandedChannel — the preflight repair pass', () => {
     expect(calls.setChannel).toEqual([]);
     expect(calls.cleared).toBe(1);
     expect(result.action).toBe('not-on-dev');
+  });
+
+  it('names the box addresses it tried in the reason when it could not ask (#2922)', async () => {
+    const { deps } = makeRecoveryDeps({
+      getChannel: async () => null,
+      readMarker: () => null,
+      boxCandidates: () => ['https://admin.example.tld', 'http://host.containers.internal:5888'],
+    });
+    const result = await recoverStrandedChannel(deps);
+    expect(result.action).toBe('channel-unknown');
+    expect(result.reason).toContain('https://admin.example.tld');
+    expect(result.reason).toContain('http://host.containers.internal:5888');
+    expect(recoverExitCode(result)).toBe(2);
+  });
+});
+
+describe('recoverExitCode — "I could not ask the box" must NOT be collapsed into a green (#2922)', () => {
+  const base = { channel: null, repaired: false, error: null, markerSha: null, staleMarker: false };
+
+  it('maps channel-unknown to 2 — the loop reads 0 as "the safety net is up"', () => {
+    expect(recoverExitCode({ ...base, action: 'channel-unknown', reason: 'no answer' })).toBe(2);
+  });
+
+  it('maps a SUCCESSFUL repair, harness-in-flight and not-on-dev to 0', () => {
+    expect(recoverExitCode({ ...base, action: 'repair', repaired: true, reason: 'r', channel: 'dev' })).toBe(0);
+    expect(recoverExitCode({ ...base, action: 'harness-in-flight', reason: 'r', channel: 'dev' })).toBe(0);
+    expect(recoverExitCode({ ...base, action: 'not-on-dev', reason: 'r', channel: 'latest' })).toBe(0);
+  });
+
+  it('keeps a FAILED repair at the hard-alert 5', () => {
+    expect(recoverExitCode({ ...base, action: 'repair', repaired: false, reason: 'r', channel: 'dev' })).toBe(5);
   });
 });
 

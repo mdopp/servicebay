@@ -14,7 +14,14 @@ import type { z } from 'zod';
 export const dynamic = 'force-dynamic';
 
 export const GET = withApiHandler({}, getTokensHandler);
-export const POST = withApiHandler({}, createTokenHandler);
+// Minting a credential is a privileged, mutating administrative act, so a
+// session bridged from a token must itself hold `mutate` to reach the handler
+// (#2919) — a `read`-only principal may not mint at all, not even another
+// `read` token that would outlive its own. `cookieScope`, not `tokenScope`:
+// this route must stay cookie/internal-only, or a token could call the mint
+// directly and hand itself an unparented, longer-lived twin. The handler then
+// holds the request to the caller's own scopes.
+export const POST = withApiHandler({ cookieScope: 'mutate' }, createTokenHandler);
 export const DELETE = withApiHandler<undefined, z.infer<typeof DeleteTokenQuery>>(
   { query: DeleteTokenQuery },
   deleteTokenHandler,
