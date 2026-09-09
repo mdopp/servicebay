@@ -17,12 +17,14 @@ exercises both worlds.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import importlib.util
 import io
 import json
 import os
 import re
+import stat
 import sys
 import tarfile
 import unittest
@@ -2803,6 +2805,359 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertTrue(m._yaml_is_effectively_empty(body), body)
         for body in ("- id: '1'\n", "morning:\n  sequence: []\n", "# c\n- alias: x\n"):
             self.assertFalse(m._yaml_is_effectively_empty(body), body)
+
+
+class HomeAssistantConfigSecretModes(unittest.TestCase):
+    """#2937 — the CLASS gate on Home Assistant's config dir.
+
+    Not "the long-lived token is 0600". The rule under test is: *no* file this
+    post-deploy leaves under HA's `/config` mount that carries a credential may
+    be readable by anything other than its owner. The sweep therefore finds its
+    subjects by CONTENT — it walks the whole directory after a scenario has run
+    and flags every file whose bytes contain one of the sentinel secrets — so a
+    future write site that drops a secret in that directory at 0644 fails here
+    without anyone remembering to add an assertion for it.
+
+    Why owner-only is the right mode rather than a compromise: the writer and
+    every reader are the same uid. This script and the token's only consumer
+    (`templates/mosquitto/post-deploy.py`) both run on the host as the user
+    that owns the rootless podman session; the `homeassistant` container is
+    `privileged` with no `runAsUser`, so its in-container root maps back to
+    that host uid; and the backup worker is launched with `podman run` and no
+    `--user`. `test_the_mosquitto_consumer_still_reads_an_owner_only_token`
+    pins the consumer end of that.
+    """
+
+    # Deliberately unmistakable non-secrets: the sweep needs a value it can
+    # grep the directory for, and nothing here may ever resemble a real token.
+    TOKEN = "sentinel-ha-long-lived-token-2937"
+    OIDC_SECRET = "sentinel-ha-oidc-client-secret-2937"
+    SECRETS = (TOKEN, OIDC_SECRET)
+
+    HA_SCRIPT = TEMPLATES_DIR / "home-assistant" / "post-deploy.py"
+
+    # ── the sweep ────────────────────────────────────────────────────────────
+
+    def sweep_config_dir(self, cfg_dir: str) -> dict[str, int]:
+        """Walk `cfg_dir`, fail every file carrying a sentinel secret whose
+        mode grants a group or other bit, and return {relpath: mode} for the
+        credential files it found.
+
+        The caller then asserts WHICH files were found — a sweep that silently
+        matched nothing would pass while proving nothing, which is the failure
+        shape this project keeps hitting ("Erfolg gemeldet, nichts getan")."""
+        found: dict[str, int] = {}
+        for root, _dirs, files in os.walk(cfg_dir):
+            for name in files:
+                full = os.path.join(root, name)
+                try:
+                    with open(full, "rb") as fh:
+                        blob = fh.read()
+                except OSError:
+                    continue
+                if not any(secret.encode() in blob for secret in self.SECRETS):
+                    continue
+                found[os.path.relpath(full, cfg_dir)] = stat.S_IMODE(os.stat(full).st_mode)
+        loose = {rel: oct(mode) for rel, mode in found.items() if mode & 0o077}
+        self.assertEqual(
+            loose, {},
+            f"credential files under HA's config dir readable beyond their owner: {loose}",
+        )
+        return found
+
+    def seed_cfg_dir(self, tmp: str) -> str:
+        """A config dir shaped like an installed box: the auth_oidc component
+        stamped as present (so no tarball download) and nothing else."""
+        cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+        oidc = os.path.join(cfg, "custom_components", "auth_oidc")
+        os.makedirs(oidc, exist_ok=True)
+        with open(os.path.join(oidc, ".sb_installed_version"), "w") as fh:
+            fh.write("v0.6.0\n")
+        return cfg
+
+    def write_world_readable(self, path: str, content: str) -> None:
+        """Put a file on disk exactly the way a pre-#2937 ServiceBay left it."""
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.chmod(path, 0o644)
+
+    @staticmethod
+    def ok_response_factory(overrides: dict[str, Any] | None = None):
+        """A urlopen stand-in that answers 200 to everything HA is asked, with
+        an optional per-URL-fragment JSON body."""
+        table = overrides or {}
+
+        def fake_urlopen(req, *_a, **_kw):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "github.com" in url:
+                raise AssertionError(f"unexpected download: {url}")
+            body = next((v for frag, v in table.items() if frag in url), None)
+
+            class _R:
+                status = 200
+
+                def read(self):
+                    return json.dumps(body).encode("utf-8") if body is not None else b"<html></html>"
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_a):
+                    return False
+
+            return _R()
+
+        return fake_urlopen
+
+    def env_for(self, tmp: str) -> dict[str, str]:
+        return {
+            "DATA_DIR": tmp,
+            "HA_OIDC_AUTH_VERSION": "v0.6.0",
+            "HA_OIDC_SECRET": self.OIDC_SECRET,
+            "PUBLIC_DOMAIN": "example.test",
+            "HA_OIDC_ADMIN_GROUP": "admins",
+            "HA_OIDC_USER_GROUP": "family",
+            "OSCAR_HA_ADMIN_USERNAME": "oscar",
+            "OSCAR_HA_ADMIN_PASSWORD": "unused-in-this-scenario",
+        }
+
+    # ── criterion 1 + 3: a fresh install writes both credentials tight ───────
+
+    def test_a_fresh_install_leaves_no_world_readable_credential_behind(self):
+        """Drives the real main() through onboarding: it mints and persists the
+        long-lived token AND appends the auth_oidc block (client secret) to
+        configuration.yaml. Both land in the config dir; neither may be
+        readable by anything but the owner."""
+        import tempfile
+        import urllib.request
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self.seed_cfg_dir(tmp)
+            # A restored configuration.yaml: real user content, no auth_oidc
+            # block, and the 0644 an older ServiceBay left it at.
+            self.write_world_readable(
+                os.path.join(cfg, "configuration.yaml"),
+                "default_config:\n\nfrontend:\n  themes: !include themes.yaml\n",
+            )
+            fake_urlopen = self.ok_response_factory({
+                "/api/onboarding/users": {"auth_code": "onboarding-auth-code"},
+                "/api/onboarding": [{"step": "user", "done": False}],
+                "/auth/token": {"access_token": "short-lived-access"},
+            })
+            with run_with_env(self.env_for(tmp)), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch.object(m, "_mint_long_lived_token", lambda *_a: self.TOKEN), \
+                    mock.patch.object(m, "_complete_remaining_onboarding_steps", lambda *_a, **_k: None), \
+                    mock.patch.object(m, "restart_home_assistant", lambda: True), \
+                    mock.patch.object(m, "verify_oidc_endpoint", lambda *_a, **_k: True), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+
+            self.assertEqual(rc, 0)
+            found = self.sweep_config_dir(cfg)
+            # The denominator: both credentials really were written this run.
+            self.assertEqual(
+                set(found), {"configuration.yaml", ".solaris-long-lived-token"},
+                f"the sweep did not see the credentials this run writes: {sorted(found)}",
+            )
+            self.assertEqual(found[".solaris-long-lived-token"], 0o600)
+            self.assertEqual(found["configuration.yaml"], 0o600)
+
+    # ── criterion 2: the rename chain re-tightens, it does not inherit ───────
+
+    def test_a_token_carried_across_the_rename_chain_is_retightened(self):
+        """`os.rename` carries the inode across untouched, so a token minted
+        by a pre-#2937 box would keep its 0644 through the
+        `.oscar → .solilos → .solaris` migration — and then never be rewritten,
+        because a token that still authenticates short-circuits the whole
+        onboarding step. The move itself has to tighten it."""
+        import tempfile
+        import urllib.request
+        m = load_script("home-assistant")
+
+        for legacy_name in (".oscar-long-lived-token", ".solilos-long-lived-token"):
+            with self.subTest(legacy=legacy_name), tempfile.TemporaryDirectory() as tmp:
+                cfg = self.seed_cfg_dir(tmp)
+                legacy_file = os.path.join(cfg, legacy_name)
+                new_file = os.path.join(cfg, ".solaris-long-lived-token")
+                self.write_world_readable(legacy_file, self.TOKEN + "\n")
+                self.assertEqual(stat.S_IMODE(os.stat(legacy_file).st_mode), 0o644)
+
+                with run_with_env(self.env_for(tmp)), \
+                        mock.patch.object(urllib.request, "urlopen", self.ok_response_factory()), \
+                        mock.patch.object(m, "restart_home_assistant", lambda: True), \
+                        mock.patch.object(m, "verify_oidc_endpoint", lambda *_a, **_k: True), \
+                        mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                    rc, out = capture_main(m)
+
+                self.assertEqual(rc, 0)
+                self.assertIn("Migrated legacy HA token", out)
+                self.assertFalse(os.path.exists(legacy_file))
+                # The token is REUSED, not re-minted — the whole point of the
+                # migration — and it is tight.
+                with open(new_file, encoding="utf-8") as fh:
+                    self.assertEqual(fh.read().strip(), self.TOKEN)
+                found = self.sweep_config_dir(cfg)
+                self.assertIn(".solaris-long-lived-token", found)
+                self.assertEqual(found[".solaris-long-lived-token"], 0o600)
+
+    # ── criterion 1 on an EXISTING box: the path no write ever revisits ──────
+
+    def test_a_token_already_at_the_current_path_is_tightened_in_place(self):
+        """The commonest box: the token is already at `.solaris-…`, still
+        authenticates, and every write path returns early. Fixing only the
+        write would leave every already-onboarded box exposed forever, so the
+        deploy has to converge the mode of a file it does not write."""
+        import tempfile
+        import urllib.request
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self.seed_cfg_dir(tmp)
+            token_file = os.path.join(cfg, ".solaris-long-lived-token")
+            self.write_world_readable(token_file, self.TOKEN + "\n")
+
+            with run_with_env(self.env_for(tmp)), \
+                    mock.patch.object(urllib.request, "urlopen", self.ok_response_factory()), \
+                    mock.patch.object(m, "restart_home_assistant", lambda: True), \
+                    mock.patch.object(m, "verify_oidc_endpoint", lambda *_a, **_k: True), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+
+            self.assertEqual(rc, 0)
+            # Proof we took the short-circuit branch — the one that writes
+            # nothing at all — rather than quietly re-minting.
+            self.assertIn("still authenticates — nothing to reconcile", out)
+            with open(token_file, encoding="utf-8") as fh:
+                self.assertEqual(fh.read().strip(), self.TOKEN)
+            found = self.sweep_config_dir(cfg)
+            self.assertEqual(found.get(".solaris-long-lived-token"), 0o600)
+
+    # ── criterion 3: the same rule on a path main() does not reach ───────────
+
+    def test_the_http_block_migration_leaves_no_readable_copy_of_the_secret(self):
+        """`remove_legacy_http_yaml_block` backs configuration.yaml up with
+        `shutil.copy2`, which PRESERVES the source's mode — so on a box whose
+        configuration.yaml is still 0644 the auth_oidc client secret gets a
+        second world-readable home. Class rule, second write site."""
+        import tempfile
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self.seed_cfg_dir(tmp)
+            cfg_file = os.path.join(cfg, "configuration.yaml")
+            self.write_world_readable(cfg_file, "\n".join([
+                "default_config:",
+                "",
+                "auth_oidc:",
+                f"  client_secret: {self.OIDC_SECRET}",
+                "",
+                "http:",
+                "  use_x_forwarded_for: true",
+                "  trusted_proxies:",
+                "    - 127.0.0.1",
+                "",
+                "frontend:",
+                "  themes: !include themes.yaml",
+                "",
+            ]))
+            with run_with_env({"DATA_DIR": tmp}):
+                removed = m.remove_legacy_http_yaml_block(cfg_file)
+
+            self.assertTrue(removed)
+            with open(cfg_file, encoding="utf-8") as fh:
+                remaining = fh.read()
+            self.assertNotIn("use_x_forwarded_for", remaining)
+            self.assertIn("frontend:", remaining)
+            found = self.sweep_config_dir(cfg)
+            self.assertEqual(
+                set(found), {"configuration.yaml", "configuration.yaml.pre-http-migration.bak"},
+                f"the backup copy of the secret-bearing config was not swept: {sorted(found)}",
+            )
+
+    # ── criterion 4: the consumer still reads it ─────────────────────────────
+
+    def test_the_mosquitto_consumer_still_reads_an_owner_only_token(self):
+        """A mode so tight the consumer breaks would be worse than the bug.
+        `templates/mosquitto/post-deploy.py` is the only reader, and it reads
+        the file from the host as the same user that wrote it — so this drives
+        the real writer and the real reader against one config dir, under all
+        three filenames the reader still supports."""
+        import tempfile
+        ha = load_script("home-assistant")
+        mosquitto = load_script("mosquitto")
+
+        for name in (".solaris-long-lived-token", ".solilos-long-lived-token", ".oscar-long-lived-token"):
+            with self.subTest(token_file=name), tempfile.TemporaryDirectory() as tmp:
+                cfg = self.seed_cfg_dir(tmp)
+                token_path = os.path.join(cfg, name)
+                with run_with_env({"DATA_DIR": tmp}):
+                    ha.write_config_secret(token_path, self.TOKEN + "\n")
+                    self.assertEqual(stat.S_IMODE(os.stat(token_path).st_mode), 0o600)
+                    self.assertEqual(mosquitto._ha_token(), self.TOKEN)
+
+    def test_the_writer_and_the_reader_agree_on_the_path(self):
+        """The two scripts resolve HA's config dir independently; if they ever
+        drift the consumer silently reads nothing and MQTT wiring stops —
+        which would look exactly like a permissions regression."""
+        import tempfile
+        ha = load_script("home-assistant")
+        mosquitto = load_script("mosquitto")
+        with tempfile.TemporaryDirectory() as tmp, run_with_env({"DATA_DIR": tmp}):
+            self.assertEqual(ha._ha_config_dir(), mosquitto._ha_config_dir())
+        self.assertEqual(
+            ha.HA_LONG_LIVED_TOKEN_PATH.lstrip("/"), mosquitto.HA_TOKEN_FILENAMES[0],
+            "the reader's preferred filename must be the one the writer persists",
+        )
+
+    # ── criterion 3, static axis: no permissive mode anywhere in the script ──
+
+    def test_the_script_contains_no_mode_that_grants_a_group_or_other_bit(self):
+        """The behavioural sweep can only judge the write sites a scenario
+        drives. This axis reads the script itself: every `chmod` and every
+        `os.open` create-mode in the Home Assistant post-deploy must be
+        owner-only, so a new call site is caught the moment it is added rather
+        than the first time someone happens to exercise it."""
+        tree = ast.parse(self.HA_SCRIPT.read_text(encoding="utf-8"))
+        inspected: list[int] = []
+        offenders: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            fname = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if fname == "chmod":
+                mode_arg = node.args[1] if len(node.args) > 1 else None
+            elif fname == "open" and isinstance(func, ast.Attribute):
+                # os.open(path, flags, mode) — the create mode is arg 3.
+                mode_arg = node.args[2] if len(node.args) > 2 else None
+                if mode_arg is None:
+                    continue
+            else:
+                continue
+            inspected.append(node.lineno)
+            if isinstance(mode_arg, ast.Name) and mode_arg.id == "HA_SECRET_FILE_MODE":
+                continue
+            if isinstance(mode_arg, ast.Constant) and isinstance(mode_arg.value, int) \
+                    and not mode_arg.value & 0o077:
+                continue
+            if isinstance(mode_arg, ast.Constant) and isinstance(mode_arg.value, int):
+                rendered = oct(mode_arg.value)
+            else:
+                rendered = ast.unparse(mode_arg) if mode_arg is not None else "<no mode>"
+            offenders.append(f"line {node.lineno}: {fname}(…, {rendered})")
+
+        self.assertEqual(
+            offenders, [],
+            "these file modes in templates/home-assistant/post-deploy.py grant a group or "
+            f"other bit (#2937): {offenders}",
+        )
+        # Denominator: the scan must actually have found the call sites.
+        self.assertGreaterEqual(len(inspected), 2, "the mode scan matched nothing — it proves nothing")
+        module = load_script("home-assistant")
+        self.assertEqual(module.HA_SECRET_FILE_MODE & 0o077, 0,
+                         "the named mode the scan exempts must itself be owner-only")
 
 
 class HomeAssistantHttpTrustedProxies(unittest.TestCase):
