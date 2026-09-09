@@ -7,6 +7,7 @@ import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/
 import { ServiceName } from '@/lib/api/schemas';
 import { apiError } from '@/lib/api/errors';
 import { withApiHandlerParams } from '@/lib/api/handler';
+import { serviceFilesForPrincipal } from '@/lib/api/principalRedaction';
 import crypto from 'crypto';
 
 const Query = z.object({ node: z.string().optional() });
@@ -39,10 +40,15 @@ function ensureServiceName(name: string): { ok: true; value: string } | { ok: fa
  * `tokenScope: 'read'` (#2906, same rationale as #2899 on the list route). This
  * GET only reads the service's files; DELETE and PUT below stay cookie/internal-
  * only, so opening the read branch does not widen them.
+ *
+ * The rendered files carry the wizard's secrets inline (`value: "<SHARE_PASSWORD>"`
+ * in the pod spec, `Environment=…_PASSWORD=…` in a `.container` unit), so a token
+ * principal gets them redacted — the same pass the MCP `get_service_files` twin has
+ * run since #321 (#2943). A cookie operator's view is unchanged.
  */
 export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { name: string }>(
   { query: Query, tokenScope: 'read' },
-  async ({ query, params }) => {
+  async ({ query, params, auth }) => {
   try {
     const decoded = decodeName(params.name);
     if (decoded === null) return NextResponse.json({ error: 'invalid name encoding' }, { status: 400 });
@@ -51,7 +57,7 @@ export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { name
     const nodeName = query.node || 'Local';
 
     const files = await ServiceManager.getServiceFiles(nodeName, guard.value);
-    return NextResponse.json(files);
+    return NextResponse.json(serviceFilesForPrincipal(auth, files));
   } catch {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
