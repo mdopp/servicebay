@@ -894,6 +894,12 @@ interface ProxyConfig {
    * `/.well-known/` (ACME, apple-app-site-association, security.txt), or
    * `/static/` (PWA icons/manifest for reproducible app builds). Only
    * meaningful together with the forward-auth sentinel `advanced_config`.
+   *
+   * #2932 — each entry must be a SPECIFIC absolute prefix. An entry that
+   * covers the whole host (`"/"`, and anything that normalizes to it) or
+   * that carries nginx syntax is refused by `validateAuthSkipPath` and
+   * dropped by the renderer: it would switch forward-auth off everywhere
+   * while the host still reads as SSO-gated.
    */
   authSkipPaths?: string[];
 }

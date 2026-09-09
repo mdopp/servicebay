@@ -24,6 +24,9 @@ describe('groupForProbe (#1534 problem-domain grouping)', () => {
       adguard_rewrites_missing: 'dns-network',
       cert_expiry: 'tls',
       sso_verify: 'sso',
+      // #2932 — a host that presents as SSO-gated and isn't belongs on the
+      // login card: the fault is the missing wall, not the route.
+      forward_auth_drift: 'sso',
       disk: 'storage-backups',
       // #2526 — a degraded array is a storage problem, so it rides the
       // prominent "Storage & backups" card, NOT the collapsed system-info

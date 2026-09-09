@@ -42,6 +42,7 @@ import {
   hasListener,
 } from '@/lib/diagnose/listenSnapshot';
 import { checkNginxOnlineFailed } from '@/lib/diagnose/probes/nginxOnlineFailed';
+import { checkForwardAuthDrift } from '@/lib/diagnose/probes/forwardAuthDrift';
 import { checkInstalledTemplatesDrift } from '@/lib/diagnose/probes/installedTemplatesDrift';
 import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
 import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailure';
@@ -138,6 +139,9 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   cert_expiry: 'tls',
   // Login / SSO
   sso_verify: 'sso',
+  // #2932 — a host that presents as SSO-gated and isn't. Belongs on the
+  // login card, not the reverse-proxy one: the fault is the missing wall.
+  forward_auth_drift: 'sso',
   // Maintenance-chat assistant (Hermes)
   hermes_chat: 'services',
   // Per-service, like hermes_chat: the claude-dev box's sign-in decides whether
@@ -994,6 +998,25 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     });
   } catch (e) {
     probes.push({ id: 'nginx_online_failed', label: 'Reverse-proxy nginx load', status: 'info', detail: `Skipped: ${e instanceof Error ? e.message : String(e)}` });
+  }
+
+  // 11c) #2932 — a host whose live config presents as SSO-gated but no
+  //      longer gates anything (the `auth_request` is gone, or an
+  //      `auth_request off` location covers "/"). Every other signal —
+  //      nginx_online, the route list, get_proxy_routes — stays green for
+  //      exactly this failure, which is why it needs its own row.
+  try {
+    const fad = await checkForwardAuthDrift(nodeName);
+    probes.push({
+      id: 'forward_auth_drift',
+      label: 'Forward-auth (SSO) gating',
+      status: fad.status,
+      detail: fad.detail,
+      hint: fad.hint,
+      _items: fad.items && fad.items.length > 0 ? fad.items : undefined,
+    });
+  } catch (e) {
+    probes.push({ id: 'forward_auth_drift', label: 'Forward-auth (SSO) gating', status: 'info', detail: `Skipped: ${e instanceof Error ? e.message : String(e)}` });
   }
 
   // 12) NPM admin credentials staleness — probe-action handlers
