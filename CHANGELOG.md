@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.35.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.34.0...servicebay-v5.35.0) (2026-09-09)
+
+
+### Features
+
+* **agents:** give the CLI the token verbs and fold the claude-dev UI onto it ([c51f94b](https://github.com/mdopp/servicebay/commit/c51f94b35c55b9935e459dbb9c2f44a8c1775626)), closes [#2910](https://github.com/mdopp/servicebay/issues/2910)
+
+
+### Bug Fixes
+
+* **install:** fall through to every source when filling template variable defaults ([7cd5ea0](https://github.com/mdopp/servicebay/commit/7cd5ea0fbc5fdada25c728aa67b32f8e0830a3ca)), closes [#2913](https://github.com/mdopp/servicebay/issues/2913)
+* **install:** fill template variable defaults from any source, and fold the claude-dev UI onto the agent CLI ([#2913](https://github.com/mdopp/servicebay/issues/2913), [#2910](https://github.com/mdopp/servicebay/issues/2910)) ([ac06ffe](https://github.com/mdopp/servicebay/commit/ac06ffe92556b6fed0f99a563dcc8e0f5141daaf))
+
 ## [5.34.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.33.8...servicebay-v5.34.0) (2026-09-08)
 
 
