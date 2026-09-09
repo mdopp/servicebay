@@ -22,7 +22,9 @@ import {
   fetchServiceBackup,
   latestServiceBackupName,
   listServiceBackups,
+  resolveIncludeGlob,
   resolveServiceDataDir,
+  type IncludeGlobFs,
   type ServiceBackupMeta,
 } from './producer';
 import { resolveServiceBackupManifest } from './templateManifests';
@@ -57,7 +59,7 @@ type WipeMode = 'install' | 'wipe-config' | 'wipe-all';
  * nothing and the restore wrote into a container-only path the real service
  * never reads (the #1600 silent failure).
  */
-interface RestoreFsBackend {
+interface RestoreFsBackend extends IncludeGlobFs {
   /** True if `dir` is empty or doesn't exist — the safe-to-seed condition. */
   isFreshDir(dir: string): Promise<boolean>;
   /** Count regular files under `dir`, recursively — for the restore summary. */
@@ -65,6 +67,9 @@ interface RestoreFsBackend {
   mkdirp(dir: string): Promise<void>;
   /** Recursive force-remove (a file, dir, or absent path). */
   rmrf(target: string): Promise<void>;
+  /* `exists` + `readdirTypes` come from IncludeGlobFs: the wipe MEASURES what it
+   * removed (existence before + after) and expands the manifest's glob includes
+   * through the producer's expander instead of passing `*` to `rm -rf` (#2921). */
   /**
    * Extract `tar` into `destDir`, preserving safeTarExtract's traversal guard
    * (#580/#590). The traversal/symlink-escape pre-pass always runs in-container
@@ -75,6 +80,18 @@ interface RestoreFsBackend {
 
 /** Local-filesystem backend — the in-container path (tests / explicit dir). */
 const localRestoreBackend: RestoreFsBackend = {
+  async exists(target) {
+    try {
+      await fs.access(target);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  async readdirTypes(dir) {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    return entries.map(e => ({ name: e.name, isDir: e.isDirectory(), isFile: e.isFile() }));
+  },
   async isFreshDir(dir) {
     try {
       return (await fs.readdir(dir)).length === 0;
@@ -119,6 +136,18 @@ const localRestoreBackend: RestoreFsBackend = {
  */
 function agentRestoreBackend(executor: Executor): RestoreFsBackend {
   return {
+    exists: dir => executor.exists(dir),
+    async readdirTypes(dir) {
+      if (!(await executor.exists(dir))) return [];
+      // Two depth-1 `find`s rather than a GNU-only `-printf`: the agent's shell
+      // is whatever the host ships, and the expander only needs names + type.
+      const at = async (type: 'd' | 'f') =>
+        (await executor.execSafe(['find', dir, '-mindepth', '1', '-maxdepth', '1', '-type', type])).stdout
+          .split('\n').map(l => l.trim()).filter(Boolean).map(l => path.basename(l));
+      const dirs = new Set(await at('d'));
+      const files = new Set(await at('f'));
+      return [...dirs, ...files].map(name => ({ name, isDir: dirs.has(name), isFile: files.has(name) }));
+    },
     async isFreshDir(dir) {
       if (!(await executor.exists(dir))) return true;
       // `ls -A` lists entries (incl. dotfiles, excl. . and ..); empty stdout → fresh.
@@ -270,6 +299,47 @@ export async function restoreServiceBackup(
 }
 
 /**
+ * Delete a manifest's CONFIG paths under `dataDir` and REPORT WHAT ACTUALLY
+ * WENT (#2921). Two things the inline loop used to get wrong, both of the
+ * "reports success, did nothing" shape:
+ *
+ *  1. it passed each include LITERALLY to `rm -rf`, so a trailing-`*` entry
+ *     (`.storage/lovelace*`, `.storage/hacs*`) matched nothing. The backup walk
+ *     already expands those through `resolveIncludeGlob`; the wipe now runs the
+ *     SAME expander over the SAME manifest field, so the two sides of
+ *     `manifest.include` cannot disagree about what a pattern means.
+ *  2. it counted loop ITERATIONS, not removals — "cleared 11" could mean eleven
+ *     no-ops. A path is counted here only if it existed before and is gone
+ *     after; an include that cleared nothing is named in `unmatched` instead.
+ */
+async function clearManifestConfigPaths(
+  backend: RestoreFsBackend,
+  dataDir: string,
+  includes: string[],
+): Promise<{ removed: number; unmatched: string[] }> {
+  let removed = 0;
+  const unmatched: string[] = [];
+  for (const include of includes) {
+    let removedForInclude = 0;
+    for (const rel of await resolveIncludeGlob(backend, dataDir, include)) {
+      const abs = path.join(dataDir, rel);
+      // Guard against traversal — the manifest is trusted static data, but keep
+      // the same invariant the restore path enforces.
+      if (!abs.startsWith(dataDir + path.sep)) continue;
+      if (!(await backend.exists(abs))) continue;
+      try {
+        await backend.rmrf(abs);
+      } catch { /* fall through to the post-check, which decides */ }
+      if (await backend.exists(abs)) continue; // the rm didn't take — not cleared
+      removed += 1;
+      removedForInclude += 1;
+    }
+    if (removedForInclude === 0) unmatched.push(include);
+  }
+  return { removed, unmatched };
+}
+
+/**
  * #1585 — per-service wipe before a (re)deploy, under the install `wipeMode`
  * model. Acts ONLY on this one service's on-disk data dir (never a system-wide
  * nuke — that's Factory Reset's job):
@@ -323,23 +393,26 @@ export async function wipeServiceForReinstall(
     const dataDir = await resolveServiceDataDir(service);
     if (mode === 'wipe-all') {
       await backend.rmrf(dataDir);
+      // Measure the effect before claiming it (#2920/#2921): an rm that didn't
+      // take must not be reported as a wipe, or the caller re-seeds config over
+      // a dir it believes is empty.
+      if (!(await backend.isFreshDir(dataDir))) {
+        await log(`(note) ${service}: wipe-all did NOT clear ${dataDir} — it still has contents; nothing was wiped.`);
+        return;
+      }
       await log(`🧹 ${service}: wipe-all — cleared the service data dir (config + data).`);
       return;
     }
     // wipe-config: delete only the manifest's CONFIG paths, keep everything else.
-    const configPaths = manifest.include;
-    let removed = 0;
-    for (const rel of configPaths) {
-      const abs = path.join(dataDir, rel);
-      // Guard against traversal — the manifest is trusted static data, but keep
-      // the same invariant the restore path enforces.
-      if (!abs.startsWith(dataDir + path.sep)) continue;
-      try {
-        await backend.rmrf(abs);
-        removed += 1;
-      } catch { /* path absent — fine */ }
-    }
-    await log(`🧹 ${service}: wipe-config — cleared ${removed} config path(s), kept the service data on disk.`);
+    // `removed` is MEASURED by clearManifestConfigPaths (existed before, gone
+    // after); `unmatched` names the entries that cleared nothing (#2921).
+    const { removed, unmatched } = await clearManifestConfigPaths(backend, dataDir, manifest.include);
+    const missNote = unmatched.length
+      ? ` ${unmatched.length} pattern(s) matched nothing: ${unmatched.join(', ')}.`
+      : '';
+    await log(
+      `🧹 ${service}: wipe-config — cleared ${removed} config path(s), kept the service data on disk.${missNote}`,
+    );
   } catch (e) {
     await log(`(note) ${service}: ${mode} wipe skipped — ${e instanceof Error ? e.message : String(e)}.`);
   }
