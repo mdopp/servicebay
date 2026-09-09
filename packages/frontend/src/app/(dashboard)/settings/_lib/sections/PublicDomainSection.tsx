@@ -105,7 +105,7 @@ export default function PublicDomainSection() {
         } else {
           setPhase('idle');
         }
-      } catch (e) {
+      } catch {
         // Ignore errors on load
       }
     })();
@@ -187,7 +187,7 @@ export default function PublicDomainSection() {
         try {
           const modeRes = await fetchSystemMode();
           setInfo(modeRes as ModeInfo);
-        } catch (e) {
+        } catch {
           // Ignore mode refresh errors
         }
       }

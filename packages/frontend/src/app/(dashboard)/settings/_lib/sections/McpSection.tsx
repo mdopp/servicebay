@@ -228,7 +228,7 @@ export default function McpSection() {
     try {
       const data = await fetchMcpAudit(50);
       setAudit(data.entries ?? []);
-    } catch (_e) {
+    } catch {
       setAudit([]);
     } finally {
       setAuditLoading(false);
@@ -252,7 +252,7 @@ export default function McpSection() {
         // that predate the flag — same semantics the server uses.
         setAllowMutations(data.mcp?.allowMutations !== false);
         setAllowDangerousExec(data.mcp?.allowDangerousExec === true);
-      } catch (_e) {
+      } catch {
         // Leave nulls so spinner stays
       }
     })();

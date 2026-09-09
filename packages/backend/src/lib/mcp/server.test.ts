@@ -95,7 +95,7 @@ describe('MCP tool consolidation (#2324)', () => {
   it('exposes the discriminator param on each merged tool', async () => {
     const { client } = await connectClient();
     const { tools } = await client.listTools();
-    const prop = (name: string, key: string) => {
+    const prop = (name: string, _key: string) => {
       const t = tools.find(x => x.name === name);
       return (t?.inputSchema?.properties ?? {}) as Record<string, unknown>;
     };
