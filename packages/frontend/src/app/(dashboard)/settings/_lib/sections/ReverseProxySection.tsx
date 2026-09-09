@@ -32,7 +32,7 @@ export default function ReverseProxySection() {
     try {
       const data = await fetchNginxCredentials();
       setState(data);
-    } catch (_e) {
+    } catch {
       // Ignore errors
     } finally {
       setBusy(null);
