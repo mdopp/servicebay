@@ -39,7 +39,15 @@
  *   AUTOLOOP_DEV_VERIFY_RESULT {"reachedDev":true,"probeExit":0,"flippedBack":true,"channel":"latest",
  *                               "devImage":{"revision":"…","reads":3,"readFailures":1,"detail":"…"},
  *                               "devPush":{"runId":123,"status":"completed","conclusion":"success","detail":"…"},
- *                               "flipTimeout":null,"failure":null,"probeOutput":"…"}
+ *                               "flipTimeout":null,"failure":null,
+ *                               "probeTranscript":".claude/state/probe-transcripts/…","probeOutput":"…"}
+ *
+ * **A failing probe must be diagnosable from its FIRST run (#2927).** The
+ * COMPLETE probe stdout/stderr is written to `probeTranscript` on the persistent
+ * volume; the inline `probeOutput` stays capped for context economy, but it now
+ * keeps the **tail** (the failing assertion is at the END) and says so with an
+ * explicit truncation marker naming that path. Probe scripts should tee their
+ * own full log as well — see the box-verify stage playbook.
  *
  * **Nothing is flipped until the SHA's `:dev` image is actually on the registry
  * (#2820).** The old first step was the flip, so a run started minutes after the
@@ -96,10 +104,47 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { getChannel, setChannel, waitHealth, mcpCall, mcpExec, describeBoxCandidates } from './autoloop-box';
+import { getChannel, setChannel, waitHealth, mcpCall, mcpExec } from './autoloop-box';
 import { gitEnv, resolveFullSha } from './autoloop-git';
+import {
+  buildDevVerifyMarker,
+  clearDevVerifyMarker,
+  describeError,
+  recoverMain,
+  writeDevVerifyMarker,
+  HEALTH_WAIT_SEC,
+  PROBE_TIMEOUT_SEC,
+} from './autoloop-dev-verify-recovery';
+
+// The #2826 recovery block lives in its own module since #2926 (this file was at
+// exactly 800/800 code lines), and is re-exported here so every call site and
+// test keeps importing it from the harness it belongs to.
+export {
+  buildDevVerifyMarker,
+  clearDevVerifyMarker,
+  decideChannelRecovery,
+  describeError,
+  isHarnessProcessAlive,
+  markerBudgetSec,
+  readDevVerifyMarker,
+  readProcCmdline,
+  recoverExitCode,
+  recoverStrandedChannel,
+  writeDevVerifyMarker,
+  DEV_VERIFY_MARKER_PATH,
+  HEALTH_WAIT_SEC,
+  PROBE_TIMEOUT_SEC,
+} from './autoloop-dev-verify-recovery';
+export type {
+  ChannelRecoveryAction,
+  ChannelRecoveryDecision,
+  ChannelRecoveryDeps,
+  ChannelRecoveryInputs,
+  ChannelRecoveryResult,
+  DevVerifyMarker,
+} from './autoloop-dev-verify-recovery';
 
 /**
  * Does the running image's OCI revision label identify `sha`?
@@ -691,21 +736,6 @@ export interface DevVerifyFailure {
   message: string;
 }
 
-/** A thrown value rendered as a one-line reason. An `Error` with an empty
- *  message (some `fetch`/abort rejections) still has to name *something* —
- *  returning `''` here would put the blind failure straight back. */
-export function describeError(e: unknown): string {
-  if (e instanceof Error) return e.message.trim() || e.name || 'Error (no message)';
-  if (typeof e === 'string' && e.trim()) return e.trim();
-  try {
-    const s = JSON.stringify(e);
-    if (s && s !== '{}' && s !== 'null') return s;
-  } catch {
-    /* fall through to the generic shape below */
-  }
-  return `non-Error thrown: ${Object.prototype.toString.call(e)}`;
-}
-
 /** Box I/O the run needs, injected so every abort path is unit-testable without
  *  a real box (the flip-back guarantee included). */
 export interface DevVerifyRunDeps {
@@ -724,6 +754,12 @@ export interface DevVerifyRunDeps {
   markFlipped?: (sha: string) => void;
   /** Drop that marker — only ever after a CONFIRMED flip-back. */
   clearMark?: () => void;
+  /** Persist the probe's COMPLETE stdout/stderr and return the path it landed
+   *  at (`null` = the write failed, which must never fail the run). The inline
+   *  `probeOutput` is capped, so this is the copy that keeps a failing probe
+   *  diagnosable from its FIRST run (#2927). Optional so the existing dep
+   *  fixtures stay valid. */
+  writeTranscript?: (output: string) => string | null;
 }
 
 export interface DevVerifyOutcome {
@@ -737,13 +773,15 @@ export interface DevVerifyOutcome {
   flipTimeout: string | null;
   probeExit: number;
   probeOutput: string;
+  /** Where the COMPLETE probe transcript was written, or `null` when the run
+   *  never probed (or the write failed). `probeOutput` is capped for context
+   *  economy; this is the copy that keeps the evidence (#2927). */
+  probeTranscript?: string | null;
   /** `null` on a clean run *and* on a clean "image never landed" verdict; a
    *  named `{step,message}` whenever the run aborted instead. */
   failure: DevVerifyFailure | null;
   flipBack: FlipBackResult;
 }
-
-const HEALTH_WAIT_SEC = 180;
 
 /** The mutable half of a run — what has been established so far, and the step
  *  the run is currently in (which names a `failure` if it aborts there). */
@@ -755,6 +793,7 @@ interface RunProgress {
   flipTimeout: string | null;
   probeExit: number;
   probeOutput: string;
+  probeTranscript: string | null;
 }
 
 /** The flip-back "result" of a run that never flipped, so `flippedBack:false`
@@ -792,7 +831,7 @@ export async function runDevVerify(
 ): Promise<DevVerifyOutcome> {
   // prettier-ignore
   const run: RunProgress =
-    { step: 'dev-image-not-pushed', reachedDev: false, devPush: null, devImage: null, flipTimeout: null, probeExit: -1, probeOutput: '' };
+    { step: 'dev-image-not-pushed', reachedDev: false, devPush: null, devImage: null, flipTimeout: null, probeExit: -1, probeOutput: '', probeTranscript: null };
   let failure: DevVerifyFailure | null = null;
   let flipBack: FlipBackResult;
 
@@ -847,8 +886,8 @@ export async function runDevVerify(
     }
   }
 
-  const { reachedDev, devPush, devImage, flipTimeout, probeExit, probeOutput } = run;
-  return { reachedDev, devPush, devImage, flipTimeout, probeExit, probeOutput, failure, flipBack };
+  const { reachedDev, devPush, devImage, flipTimeout, probeExit, probeOutput, probeTranscript } = run;
+  return { reachedDev, devPush, devImage, flipTimeout, probeExit, probeOutput, probeTranscript, failure, flipBack };
 }
 
 /**
@@ -902,6 +941,10 @@ async function flipAndProbe(
   const probe = await deps.runProbe();
   run.probeExit = probe.exit;
   run.probeOutput = probe.output;
+  // The transcript is written BEFORE anything can go wrong with the flip-back,
+  // and it is written for a green run too: a probe is only diagnosable from its
+  // first run if the evidence outlives the capped inline copy (#2927).
+  run.probeTranscript = deps.writeTranscript?.(probe.output) ?? null;
 }
 
 /**
@@ -962,7 +1005,11 @@ export function devVerifyResultLine(o: DevVerifyOutcome): Record<string, unknown
     // The named abort reason (#2622). null ⇒ the run completed its own steps.
     failure,
     flipBack: { reissues: o.flipBack.reissues, polls: o.flipBack.polls, detail: o.flipBack.detail },
-    probeOutput: probeOutput.slice(0, 4000),
+    // Where the COMPLETE probe output was kept (#2927). `probeOutput` below is
+    // the capped inline copy — when it says it truncated, this is the file that
+    // still has the failing assertion in context.
+    probeTranscript: o.probeTranscript ?? null,
+    probeOutput: capProbeOutput(probeOutput, o.probeTranscript ?? null),
   };
 }
 
@@ -975,265 +1022,71 @@ export function devVerifyExitCode(o: DevVerifyOutcome): number {
   return 0;
 }
 
-// ---------- the in-flight marker + recovery (#2826) ----------
+// ---------- the probe transcript (#2927) ----------
 
-/** Hard cap on the probe script, shared with the marker's expiry budget. */
-const PROBE_TIMEOUT_SEC = 15 * 60;
-/** Slack on top of the run's own budgets before a marker counts as abandoned. */
-const MARKER_GRACE_SEC = 300;
+/** The inline `probeOutput` budget in the emitted result line. */
+export const PROBE_OUTPUT_CAP = 4000;
 
 /**
- * Where the "a flip to `:dev` is in flight" marker lives.
+ * Where the COMPLETE probe transcript is kept.
  *
- * `.claude/state/` is gitignored (the existing `/.claude/*` rule) and lives in
- * the **repo checkout**, which for the agent running this harness is a
- * persistent volume — so the file survives the `claude-dev` container being
- * recreated, which is precisely what kills the harness (#2826). The marker is
- * the harness's own file: nothing else reads or writes it, and it is NOT the
- * broker cache (`autoloop-cache.json`) or box-verify's result file.
+ * Same reasoning as the in-flight marker: `.claude/state/` is gitignored and
+ * lives in the repo checkout, which for the agent running this harness is the
+ * persistent `/workspace` volume — so the evidence survives the `claude-dev`
+ * container being recreated by the very probes that produced it.
  */
-export const DEV_VERIFY_MARKER_PATH = '.claude/state/dev-verify-inflight.json';
+export const PROBE_TRANSCRIPT_DIR = '.claude/state/probe-transcripts';
 
-/** What a run records about the flip it is in the middle of. */
-export interface DevVerifyMarker {
-  /** the SHA being verified — carried so a recovery can say what it repaired */
-  sha: string;
-  /** the channel the box was flipped TO (always `dev` today) */
-  channel: 'dev';
-  flippedAt: string;
-  /** the flip time plus the run's own budgets: past this, the run cannot still
-   *  be honestly in flight even if a pid happens to match. */
-  expiresAt: string;
-  /** the harness process, so a later pass can ask "is that run still alive?" */
-  pid: number;
-  /** the argv fingerprint that pid must still carry — a bare pid is reused, and
-   *  a recreated container starts its pid numbering over. */
-  cmdlineMatch: string;
+/** The transcript file for this run — the sha plus the clock, so a re-run of the
+ *  same sha does not overwrite the transcript that explained the last red. */
+export function probeTranscriptPath(sha: string, now: number, dir = PROBE_TRANSCRIPT_DIR): string {
+  const stamp = new Date(now).toISOString().replace(/[:.]/g, '-');
+  return `${dir}/${sha.replace(/[^0-9a-zA-Z]/g, '')}-${stamp}.log`;
 }
 
-/** The total wall clock a run can legitimately hold the box on `:dev`. */
-export function markerBudgetSec(opts: { imageTimeout: number; flipBackTimeout: number }): number {
-  return opts.imageTimeout + opts.flipBackTimeout + PROBE_TIMEOUT_SEC + 2 * HEALTH_WAIT_SEC + MARKER_GRACE_SEC;
-}
-
-/** The marker for a run flipping `sha` now. Pure — the caller writes it. */
-export function buildDevVerifyMarker(
-  sha: string,
-  opts: { imageTimeout: number; flipBackTimeout: number },
-  ctx: { now: number; pid: number },
-): DevVerifyMarker {
-  return {
-    sha,
-    channel: 'dev',
-    flippedAt: new Date(ctx.now).toISOString(),
-    expiresAt: new Date(ctx.now + markerBudgetSec(opts) * 1000).toISOString(),
-    pid: ctx.pid,
-    cmdlineMatch: 'autoloop-dev-verify',
-  };
-}
-
-/** `null` = no marker (or an unreadable/corrupt one, which is the same thing:
- *  nothing can be proven in flight from it). */
-export function readDevVerifyMarker(path = DEV_VERIFY_MARKER_PATH, cwd = process.cwd()): DevVerifyMarker | null {
+/**
+ * Write the probe's whole stdout/stderr and return the path it landed at.
+ *
+ * Returns `null` instead of throwing: losing the transcript degrades a run to
+ * what it was before #2927, while a throw here would turn a merely-red probe
+ * into a harness abort — the opposite of the point.
+ */
+export function writeProbeTranscript(
+  output: string,
+  ctx: { sha: string; now: number; dir?: string; cwd?: string },
+): string | null {
   try {
-    const parsed = JSON.parse(readFileSync(resolve(cwd, path), 'utf8')) as DevVerifyMarker;
-    return typeof parsed?.sha === 'string' && typeof parsed?.pid === 'number' ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writeDevVerifyMarker(marker: DevVerifyMarker, path = DEV_VERIFY_MARKER_PATH, cwd = process.cwd()): void {
-  const file = resolve(cwd, path);
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(marker, null, 2)}\n`);
-}
-
-export function clearDevVerifyMarker(path = DEV_VERIFY_MARKER_PATH, cwd = process.cwd()): void {
-  rmSync(resolve(cwd, path), { force: true });
-}
-
-/** `/proc/<pid>/cmdline` with the NUL separators flattened, or null if the pid
- *  is gone (the container-recreated case, and the ordinary exited case). */
-export function readProcCmdline(pid: number): string | null {
-  try {
-    return readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+    const file = resolve(ctx.cwd ?? process.cwd(), probeTranscriptPath(ctx.sha, ctx.now, ctx.dir));
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, output);
+    return file;
   } catch {
     return null;
   }
 }
 
 /**
- * Is the process that took the flip still running?
+ * The inline copy of the probe output — capped, and **keeping the TAIL**.
  *
- * The cmdline check is load-bearing, not belt-and-braces: after the container is
- * recreated, pid numbering starts over, so the recorded pid is very likely to be
- * *some* live process in the new container — matching on the pid alone would
- * report a dead harness as in flight and skip the repair.
+ * The cap is right (a result line is read into an agent's context); keeping the
+ * HEAD was not. A probe that fails prints its failing assertion LAST, so the old
+ * `slice(0, 4000)` threw away exactly the sentence the reader needs and left a
+ * red nobody could attribute — the 2026-09-09 `2743411f` run, which cost a
+ * second `:dev` flip of the live box to find out the probe itself was wrong
+ * (#2927). Truncation is now explicit and names where the whole thing is, and
+ * the marker is budgeted INSIDE the cap so the result line stays bounded.
  */
-export function isHarnessProcessAlive(marker: DevVerifyMarker, readCmdline: (pid: number) => string | null): boolean {
-  const cmdline = readCmdline(marker.pid);
-  return cmdline !== null && cmdline.includes(marker.cmdlineMatch);
+export function capProbeOutput(text: string, transcriptPath: string | null, cap = PROBE_OUTPUT_CAP): string {
+  if (text.length <= cap) return text;
+  const where = transcriptPath ? `full transcript at ${transcriptPath}` : 'full transcript unavailable';
+  const marker = `[truncated ${text.length - cap} of ${text.length} chars — kept the END, ${where}]\n`;
+  return marker.length >= cap ? marker.slice(0, cap) : marker + text.slice(-(cap - marker.length));
 }
 
-export type ChannelRecoveryAction = 'repair' | 'harness-in-flight' | 'not-on-dev' | 'channel-unknown';
-
-export interface ChannelRecoveryInputs {
-  /** MCP `get_channel`; `null` = the box did not answer. */
-  channel: string | null;
-  marker: DevVerifyMarker | null;
-  harnessAlive: boolean;
-  now: number;
-  /** The box origins the resolution would try, safe to print. Named in the
-   *  `channel-unknown` reason so "I could not ask the box" says *where* it
-   *  asked instead of being an unactionable shrug (#2922). */
-  triedCandidates?: string[];
-}
-
-export interface ChannelRecoveryDecision {
-  action: ChannelRecoveryAction;
-  reason: string;
-  /** the marker is dead weight and should be dropped whatever else happens */
-  staleMarker: boolean;
-}
-
-/**
- * Should this pass flip the box back to `:latest`?
- *
- * The whole class of #2826 in one pure function: **a box on `:dev` that no live
- * harness owns is stranded**, whether the owner exited, its session died, or its
- * container was recreated out from under it. A `null` channel is never a verdict
- * (the box may just be mid-restart) — the recovery must not flip blind.
- */
-export function decideChannelRecovery(input: ChannelRecoveryInputs): ChannelRecoveryDecision {
-  const { channel, marker, harnessAlive, now, triedCandidates } = input;
-  if (channel === null) {
-    const where = triedCandidates?.length ? ` (tried ${triedCandidates.join(', ')})` : '';
-    return { action: 'channel-unknown', reason: `the box did not answer get_channel — no flip attempted${where}`, staleMarker: false };
-  }
-  if (channel !== 'dev') {
-    return {
-      action: 'not-on-dev',
-      reason: `the box reports channel ${channel} — nothing to repair`,
-      // A marker left behind by a run that did flip back (or never flipped) is
-      // just litter once the box is off :dev.
-      staleMarker: marker !== null,
-    };
-  }
-  if (!marker) {
-    return {
-      action: 'repair',
-      reason: 'the box is on :dev with no in-flight marker — no run owns this flip',
-      staleMarker: false,
-    };
-  }
-  const expiry = Date.parse(marker.expiresAt);
-  if (!Number.isFinite(expiry) || now > expiry) {
-    return {
-      action: 'repair',
-      reason: `the in-flight marker for ${marker.sha} is past its budget (expiresAt ${marker.expiresAt}) — the run cannot still be flipping`,
-      staleMarker: true,
-    };
-  }
-  if (!harnessAlive) {
-    return {
-      action: 'repair',
-      reason: `the harness that flipped ${marker.sha} (pid ${marker.pid}) is gone — its process tree died, most likely with its container`,
-      staleMarker: true,
-    };
-  }
-  return {
-    action: 'harness-in-flight',
-    reason: `pid ${marker.pid} is still verifying ${marker.sha} until ${marker.expiresAt} — leave the box on :dev`,
-    staleMarker: false,
-  };
-}
-
-export interface ChannelRecoveryDeps {
-  getChannel: () => Promise<string | null>;
-  setChannel: (target: 'latest') => Promise<void>;
-  readMarker: () => DevVerifyMarker | null;
-  clearMarker: () => void;
-  isAlive: (marker: DevVerifyMarker) => boolean;
-  now: () => number;
-  /** the ordered, printable box origins the resolution would try (#2922) */
-  boxCandidates?: () => string[];
-}
-
-export interface ChannelRecoveryResult extends ChannelRecoveryDecision {
-  channel: string | null;
-  repaired: boolean;
-  /** why the repair flip itself failed, when it did */
-  error: string | null;
-  markerSha: string | null;
-}
-
-/** Read the channel + marker, decide, and flip back when the flip is orphaned. */
-export async function recoverStrandedChannel(deps: ChannelRecoveryDeps): Promise<ChannelRecoveryResult> {
-  const channel = await deps.getChannel();
-  const marker = deps.readMarker();
-  const decision = decideChannelRecovery({
-    channel,
-    marker,
-    harnessAlive: marker ? deps.isAlive(marker) : false,
-    now: deps.now(),
-    triedCandidates: (deps.boxCandidates ?? describeBoxCandidates)(),
-  });
-
-  let repaired = false;
-  let error: string | null = null;
-  if (decision.action === 'repair') {
-    try {
-      await deps.setChannel('latest');
-      repaired = true;
-    } catch (e) {
-      error = describeError(e);
-    }
-  }
-  // Drop the marker once the flip-back landed, or when it was pure litter on a
-  // box that is not on `:dev` at all. A FAILED repair keeps it: the box is still
-  // stranded, and the marker is the only record of which run left it there.
-  if (repaired || (decision.action !== 'repair' && decision.staleMarker)) {
-    try {
-      deps.clearMarker();
-    } catch {
-      /* litter, not a verdict */
-    }
-  }
-  return { ...decision, channel, repaired, error, markerSha: marker?.sha ?? null };
-}
-
-/** 5 = the box is on `:dev` and the repair flip FAILED (same hard-alert code as
- *  a failed flip-back), 2 = the channel could not be read, 0 = the box is known
- *  not to be stranded (repaired, off `:dev`, or legitimately in flight). */
-export function recoverExitCode(r: ChannelRecoveryResult): number {
-  if (r.action === 'repair') return r.repaired ? 0 : 5;
-  return r.action === 'channel-unknown' ? 2 : 0;
-}
-
-/** `--recover`: the preflight repair pass (#2826). Reads `get_channel` + the
- *  in-flight marker and flips an orphaned `:dev` back to `:latest`. */
-async function recoverMain(argv: string[]): Promise<void> {
-  const extra = argv.filter(a => a !== '--recover');
-  if (extra.length > 0) {
-    console.error(`--recover takes no other arguments (got ${extra.join(' ')})\n${DEV_VERIFY_USAGE}`);
-    process.exit(2);
-  }
-  const result = await recoverStrandedChannel({
-    getChannel,
-    setChannel: target => setChannel(target),
-    readMarker: () => readDevVerifyMarker(),
-    clearMarker: () => clearDevVerifyMarker(),
-    isAlive: marker => isHarnessProcessAlive(marker, readProcCmdline),
-    now: () => Date.now(),
-  });
-  console.log(`AUTOLOOP_DEV_VERIFY_RECOVER ${JSON.stringify(result)}`);
-  process.exit(recoverExitCode(result));
-}
 
 async function main(): Promise<void> {
   if (process.argv.slice(2).includes('--recover')) {
-    await recoverMain(process.argv.slice(2));
+    await recoverMain(process.argv.slice(2), DEV_VERIFY_USAGE);
     return;
   }
   const parsed = parseDevVerifyArgs(process.argv.slice(2));
@@ -1339,6 +1192,9 @@ async function main(): Promise<void> {
           buildDevVerifyMarker(s, { imageTimeout, flipBackTimeout }, { now: Date.now(), pid: process.pid }),
         ),
       clearMark: () => clearDevVerifyMarker(),
+      // The evidence half of the same idea: the transcript outlives both the
+      // 4000-char inline cap and this container (#2927).
+      writeTranscript: output => writeProbeTranscript(output, { sha, now: Date.now() }),
       flipBack: timeoutSec =>
         confirmFlipBack(
           {

@@ -32,6 +32,11 @@ import {
   isPullInProgressTimeout,
   pickReleaseRun,
   waitForDevPush,
+  capProbeOutput,
+  probeTranscriptPath,
+  writeProbeTranscript,
+  PROBE_OUTPUT_CAP,
+  PROBE_TRANSCRIPT_DIR,
   type DevImageDeps,
   type DevImageResult,
   type DevVerifyOutcome,
@@ -1536,5 +1541,148 @@ describe('the playbooks carry the #2826 rules', () => {
 
   it('both name the marker path, so a reader can find the state the recovery reads', () => {
     expect(`${skill}${boxVerify}`).toContain(DEV_VERIFY_MARKER_PATH);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A failing probe must be diagnosable from its FIRST run (#2927). The inline
+// `probeOutput` was `slice(0, 4000)` — the HEAD — so a probe that printed more
+// than that lost the assertion that failed, which is at the END. On 2026-09-09
+// that cost a second `:dev` flip of the live box to find out the probe itself
+// was wrong. The cap stays; the evidence no longer dies with it.
+// ---------------------------------------------------------------------------
+
+describe('capProbeOutput — the cap keeps the TAIL and says it truncated', () => {
+  it('leaves output within the cap completely alone', () => {
+    expect(capProbeOutput('short and green', '/w/t.log')).toBe('short and green');
+  });
+
+  it('keeps the END, marks the truncation, and names the transcript', () => {
+    const text = `${'head-noise\n'.repeat(1000)}FAIL: expected 3 services, saw 2`;
+    const capped = capProbeOutput(text, '/workspace/.claude/state/probe-transcripts/a1b2c3d4.log');
+    expect(capped.endsWith('FAIL: expected 3 services, saw 2')).toBe(true);
+    expect(capped).toContain('truncated');
+    expect(capped).toContain('/workspace/.claude/state/probe-transcripts/a1b2c3d4.log');
+    // the head was dropped, not the tail
+    expect(capped.startsWith('[truncated')).toBe(true);
+    expect(capped.split('head-noise').length - 1).toBeLessThan(500);
+    expect(capped).toHaveLength(PROBE_OUTPUT_CAP);
+  });
+
+  it('says so when there is no transcript to point at, rather than implying one', () => {
+    expect(capProbeOutput('x'.repeat(10_000), null)).toContain('full transcript unavailable');
+  });
+});
+
+describe('the probe transcript survives the cap (#2927)', () => {
+  it('writes the complete output to a per-run path under the state dir', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'probe-transcript-'));
+    try {
+      const body = `${'line\n'.repeat(5000)}FAIL: the assertion that matters`;
+      const file = writeProbeTranscript(body, { sha: SHORT, now: T0, cwd });
+      expect(file).not.toBeNull();
+      expect(readFileSync(file as string, 'utf8')).toBe(body);
+      expect(file).toContain(SHORT);
+      expect(probeTranscriptPath(SHORT, T0)).toContain('.claude/state/probe-transcripts');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null instead of throwing — losing the evidence must not fail the run', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'probe-transcript-'));
+    try {
+      // A path segment that cannot be a directory: the write must fail quietly.
+      expect(writeProbeTranscript('x', { sha: SHORT, now: T0, cwd, dir: '/dev/null/nope' })).toBeNull();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('an over-cap FAILING probe: the assertion is visible inline AND the full transcript is readable at the named path', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'probe-transcript-'));
+    try {
+      const chatter = 'checking service pihole … ok\n'.repeat(600); // well over 4000 chars
+      const failure = 'FAIL: proxy route dopp.cloud forwards to 127.0.0.1:9999 with no listener';
+      const output = `${chatter}${failure}`;
+      expect(output.length).toBeGreaterThan(PROBE_OUTPUT_CAP * 2);
+
+      const { deps } = makeRunDeps({
+        runProbe: async () => ({ exit: 1, output }),
+        writeTranscript: text => writeProbeTranscript(text, { sha: SHORT, now: T0, cwd }),
+      });
+      const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+      const line = devVerifyResultLine(outcome);
+
+      // The harness ran and flipped back; the RED is the probe's, and it is the
+      // reader's to attribute — which is only possible if the reason survived.
+      expect(devVerifyExitCode(outcome)).toBe(0);
+      expect(line.probeExit).toBe(1);
+
+      const inline = String(line.probeOutput);
+      expect(inline).toHaveLength(PROBE_OUTPUT_CAP);
+      expect(inline).toContain(failure); // the failing assertion, at the END, kept
+      expect(inline).toContain('truncated');
+
+      const transcript = String(line.probeTranscript);
+      expect(transcript).not.toBe('null');
+      expect(inline).toContain(transcript); // the truncation marker names the path
+      expect(existsSync(transcript)).toBe(true);
+      const full = readFileSync(transcript, 'utf8');
+      expect(full).toBe(output); // complete: the head AND the failing assertion
+      expect(full.length).toBeGreaterThan(PROBE_OUTPUT_CAP);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('a run that never probed reports probeTranscript:null rather than a stale path', async () => {
+    const { deps } = makeRunDeps({ waitForDevPush: async () => NOT_PUSHED });
+    const line = devVerifyResultLine(await runDevVerify(SHORT, deps, RUN_OPTS));
+    expect(line.probeTranscript).toBeNull();
+  });
+});
+
+describe('the --recover JSON carries triedCandidates as a machine-readable field (#2926)', () => {
+  it('names the candidates in a FIELD, not only inside the human reason string', async () => {
+    const tried = ['https://admin.example.tld', 'http://host.containers.internal:5888'];
+    const { deps } = makeRecoveryDeps({
+      getChannel: async () => null,
+      readMarker: () => null,
+      boxCandidates: () => tried,
+    });
+    const result = await recoverStrandedChannel(deps);
+    // The emitted line is JSON.stringify(result) — parse it back the way the
+    // orchestrator does, so a field that only exists on the object does not pass.
+    const emitted = JSON.parse(JSON.stringify(result)) as { triedCandidates?: string[]; reason: string };
+    expect(emitted.triedCandidates).toEqual(tried);
+    expect(recoverExitCode(result)).toBe(2); // still its own loud outcome
+  });
+
+  it('carries them on a repair too — the field is not a channel-unknown special case', async () => {
+    const { deps } = makeRecoveryDeps({ boxCandidates: () => ['http://host.containers.internal:5888'] });
+    const result = await recoverStrandedChannel(deps);
+    expect(result).toMatchObject({ action: 'repair', repaired: true });
+    expect(result.triedCandidates).toEqual(['http://host.containers.internal:5888']);
+  });
+});
+
+describe('box-verify.md states the probe-script expectation (#2927)', () => {
+  const boxVerify = readFileSync('.claude/skills/autoloop-issues/stages/box-verify.md', 'utf8');
+
+  it('tells probe authors to tee their own full log', () => {
+    expect(boxVerify).toMatch(/tee/i);
+    expect(boxVerify).toContain('#2927');
+  });
+
+  it('names the transcript the harness writes, so a truncated red is still attributable', () => {
+    expect(boxVerify).toContain('probeTranscript');
+    expect(boxVerify).toContain(PROBE_TRANSCRIPT_DIR);
+    expect(boxVerify).toMatch(/truncated/);
+  });
+
+  it('tells the stage to read the channel probe EXIT CODE, not just its line (#2940)', () => {
+    expect(boxVerify).toContain('#2940');
+    expect(boxVerify).toMatch(/exit 2/);
   });
 });
