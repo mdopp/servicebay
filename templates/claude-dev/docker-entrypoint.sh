@@ -206,6 +206,16 @@ SERVICEBAY_API_URL="${SERVICEBAY_API_URL:-http://host.containers.internal:5888}"
 CONFIG_UI_DIR=/usr/local/lib/claude-dev-config-ui
 CONFIG_UI_TOKEN_FILE=/run/claude-dev/servicebay-token
 
+# The delivered agent kit (#2908/#2910, ADR 0014), mounted read-only by the pod
+# manifest. `agent-cli/servicebay.mjs` is the ONE ServiceBay client: the
+# configuration UI calls it for token delegate/revoke instead of speaking the
+# routes itself (#2910), and a session in this container runs it as
+# `node "$SERVICEBAY_AGENT_CLI" services`. It is deliberately NOT in the image:
+# the kit is refreshed on the host, so a fix reaches this container without a
+# release — and an image copy would be the second source ADR 0014 forbids.
+AGENT_KIT_DIR="${SERVICEBAY_AGENT_KIT_DIR:-/opt/servicebay/agent-kit}"
+SERVICEBAY_AGENT_CLI="${SERVICEBAY_AGENT_CLI:-$AGENT_KIT_DIR/agent-cli/servicebay.mjs}"
+
 # pi (#2803) — the second coding agent in this container. `pi` itself is a CLI
 # on PATH for every SSH session; `pi-web-ui` is the remote chat pi does not
 # ship, run here as a second service on its own port. Both come from the image
@@ -303,9 +313,11 @@ start_config_ui() {
                  CLAUDE_DEV_LDAP_GROUP="$3" \
                  SERVICEBAY_MCP_TOKEN_FILE="$4" \
                  SERVICEBAY_API_URL="$5" \
+                 SERVICEBAY_AGENT_CLI="$7" \
                  node "$6"
       ' "$DEV_HOME" "$port" "${CLAUDE_DEV_LDAP_GROUP:-admins}" \
         "$CONFIG_UI_TOKEN_FILE" "$SERVICEBAY_API_URL" "$CONFIG_UI_DIR/server.mjs" \
+        "$SERVICEBAY_AGENT_CLI" \
         || echo "claude-dev: WARNING — configuration UI exited; restarting in 5s." >&2
       sleep 5
     done

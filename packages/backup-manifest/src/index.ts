@@ -396,6 +396,7 @@ export const EXCLUDED_BULK_VOLUMES: Readonly<Record<string, string>> = {
   'media/jellyfin-cache': 'Jellyfin transcode/artwork cache — regenerable.',
   'immich/model-cache': 'ML model cache — re-downloaded on demand.',
   'claude-dev/workspace': 'Ephemeral dev scratch workspace — not household config.',
+  'agent-kit/checkout': 'The delivered agent kit (assist catalog + agent CLI + AGENTS.md, ADR 0014/#2908) — a git checkout ServiceBay re-creates at boot and hourly, mounted read-only into the agent containers. Restoring an old copy would reintroduce exactly the second, ageing source that decision exists to prevent.',
   'mosquitto/data': 'Retained MQTT messages — the devices’ own last-published state, which they republish. The broker carries no config here: mosquitto.conf and the password file are re-rendered into the pod from the wizard variables on every deploy.',
   // Heavy household DATA (photos, media, shared files) — never in a tarball.
   JELLYFIN_MEDIA_PATH: 'The media library itself — multi-TB, lives on the RAID.',

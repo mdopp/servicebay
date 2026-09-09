@@ -44,6 +44,10 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CONFIG_UI_DIR = path.join(REPO_ROOT, 'templates', 'claude-dev', 'config-ui');
 const SERVER_MJS = path.join(CONFIG_UI_DIR, 'server.mjs');
 const PANEL_JS = path.join(CONFIG_UI_DIR, 'public', 'panels', 'projects.js');
+/* The ONE ServiceBay client the config UI delegates through (#2910). On the
+ * box it arrives as the pod's read-only agent-kit mount; here it is the
+ * checkout's own copy, so these cases exercise the real CLI. */
+const AGENT_CLI = path.join(REPO_ROOT, 'agent-cli', 'servicebay.mjs');
 
 const ADMIN: Record<string, string> = { 'Remote-User': 'mdopp', 'Remote-Groups': 'admins' };
 
@@ -235,7 +239,7 @@ async function setup() {
   const mod = await import(/* @vite-ignore */ SERVER_MJS);
   const ui = mod.createConfigUiServer({
     requiredGroup: 'admins',
-    servicebay: { url: servicebayUrl, token: parent.secret },
+    servicebay: { url: servicebayUrl, token: parent.secret, cli: AGENT_CLI },
     projects: { devHome: workspace, homeDir: workspace, tmuxSession: 'claude', runTmux, runCommand },
     log: () => {},
   });
@@ -541,6 +545,56 @@ describe('remove is bounded and loud', () => {
     expect(source).not.toMatch(/rmSync\([^)]*checkoutPath/);
     expect(source.match(/rmSync\(/g) ?? []).toHaveLength(1);
     expect(source).toMatch(/rmSync\(noAutostartMarker\(/);
+  });
+});
+
+// ───────── the consolidation itself: one client, not a second one (#2910) ────
+
+/**
+ * #2910's acceptance, checked as a CLASS rather than by reading the diff: the
+ * configuration UI must speak no ServiceBay route of its own, and the helpers
+ * it had for that must be GONE rather than left orphaned beside the new path.
+ *
+ * A structural check is the right instrument here because the failure mode is
+ * a *reappearance* — somebody adds "just one fetch" back — and no behavioural
+ * test would notice that as long as the fetch works. The behavioural half is
+ * the last case: point the CLI at nothing and delegation stops, which proves
+ * the CLI is really on the path and not decoration beside a surviving fetch.
+ */
+describe('the config UI speaks no ServiceBay route of its own (#2910)', () => {
+  const CLIENT_MJS = path.join(CONFIG_UI_DIR, 'servicebay-client.mjs');
+  const SERVICEBAY_ROUTES = /\/api\/(system|services|assists|health)\b|api-tokens/;
+
+  it('server.mjs names no ServiceBay route and keeps none of the helpers it used to reach them with', () => {
+    const source = fs.readFileSync(SERVER_MJS, 'utf-8');
+    expect(source).not.toMatch(SERVICEBAY_ROUTES);
+    // Gone, not orphaned: no dead definition left behind for the next reader
+    // to wire back up.
+    for (const helper of ['servicebayFetch', 'delegateProjectToken(', 'revokeProjectToken(']) {
+      expect(source.includes(`function ${helper}`), helper).toBe(false);
+    }
+  });
+
+  it('the client module names no route either — the paths live only in the CLI verb table', () => {
+    const source = fs.readFileSync(CLIENT_MJS, 'utf-8');
+    expect(source).not.toMatch(SERVICEBAY_ROUTES);
+    // What it does instead: run the delegate/revoke verbs of the delivered CLI.
+    expect(source).toMatch(/cli\.run\(/);
+    expect(source).toMatch(/'delegate'/);
+    expect(source).toMatch(/'revoke'/);
+  });
+
+  it('stops delegating when the delivered CLI is not there, naming the path it looked at', async () => {
+    const client = await import(/* @vite-ignore */ CLIENT_MJS) as {
+      delegateProjectToken: (sb: unknown, name: string, f: unknown) => Promise<unknown>;
+      AGENT_CLI_PATH: string;
+    };
+    const missing = path.join(h.workspace, 'no-agent-kit', 'servicebay.mjs');
+    await expect(client.delegateProjectToken(
+      { url: h.servicebayUrl, token: h.parent.secret, cli: missing }, 'alpha', fetch,
+    )).rejects.toMatchObject({ status: 503, message: expect.stringContaining(missing) });
+    // The default is the pod's read-only agent-kit mount, not a copy in the image.
+    expect(client.AGENT_CLI_PATH).toBe('/opt/servicebay/agent-kit/agent-cli/servicebay.mjs');
   });
 });
 

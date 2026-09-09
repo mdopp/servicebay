@@ -14,8 +14,12 @@
  *   1. the path the verb builds resolves to a real `route.ts` under
  *      `packages/frontend/src/app/api/` (dynamic `[segment]` dirs included);
  *   2. that module really exports the verb's HTTP method;
- *   3. the handler is `read`-token-scoped, because a route that drops
- *      `tokenScope` makes an otherwise-valid `sb_` token 401 (#2899);
+ *   3. the handler carries the auth shape the verb declares — either the
+ *      `tokenScope` the verb names (a route that drops it makes an otherwise
+ *      valid `sb_` token 401, #2899) or, for a `parent-token` verb, the
+ *      `skipAuth: true` mount AND no `tokenScope` at all (#2910: the delegate
+ *      route's credential is the presented token itself, so a `tokenScope`
+ *      appearing there would gate a route that must not be gated);
  *   4. every field in the verb's `reads` is really produced by that handler's
  *      success response.
  *
@@ -40,9 +44,15 @@
  * That is the safe direction — a resolver that quietly stopped working would
  * fail the suite rather than pass it, which is the substitution #2701 was.
  *
+ * A route may also name its handler instead of inlining it —
+ * `withApiHandler({ skipAuth: true }, delegateTokenHandler)`. That identifier is
+ * followed through the import to the function that really answers, so the
+ * fields come from where they are written there too; a handler this resolver
+ * cannot follow contributes no fields, which is again the safe direction.
+ *
  * The `describe('the check itself')` block at the bottom is the negative
- * control: three synthetic verbs — bad path, wrong method, invented field —
- * proving each acceptance criterion actually goes red.
+ * control: four synthetic verbs — bad path, wrong method, invented field,
+ * wrong auth shape — proving each acceptance criterion actually goes red.
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -55,7 +65,9 @@ const API_ROOT = path.join(REPO_ROOT, 'packages', 'frontend', 'src', 'app', 'api
 
 type Verb = {
   usage: string;
-  scope: string;
+  /** Absent = the ServiceBay scope gate; `'parent-token'` = the delegate pair. */
+  auth?: string;
+  scope: string | null;
   method: string;
   positionals: string[];
   options: string[];
@@ -178,27 +190,55 @@ function exportedMethods(sf: ts.SourceFile): string[] {
   return found;
 }
 
-type Handler = { fn: ts.FunctionLikeDeclaration; options: ts.ObjectLiteralExpression | null };
+/** `file` is where `fn` LIVES — not necessarily the route module (see below). */
+type Handler = { fn: ts.FunctionLikeDeclaration; options: ts.ObjectLiteralExpression | null; file: string };
+
+/**
+ * A handler named rather than inlined — `withApiHandler({…}, delegateTokenHandler)`
+ * — followed to the function that really answers, one import hop at a time.
+ * Returns the file it was found in so its own module is the resolution context
+ * for the response fields, not the route file that merely mounts it.
+ */
+function namedHandler(name: string, sf: ts.SourceFile, depth = 0): { fn: ts.FunctionLikeDeclaration; file: string } | null {
+  if (depth > 4) return null;
+  const ctx = ctxFor(sf.fileName);
+  const imported = ctx.imports.get(name);
+  if (imported) return namedHandler(imported.exported, parse(imported.file), depth + 1);
+  for (const decl of ctx.decls.get(name) ?? []) {
+    if (ts.isFunctionDeclaration(decl) && decl.body) return { fn: decl, file: sf.fileName };
+    if (ts.isVariableDeclaration(decl) && decl.initializer
+      && (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))) {
+      return { fn: decl.initializer as ts.FunctionLikeDeclaration, file: sf.fileName };
+    }
+  }
+  return null;
+}
 
 /**
  * The handler behind `export const GET = withApiHandler({…}, async ({…}) => …)`
  * — or a bare `export async function GET(…)`. Returns the function plus the
- * `withApiHandler` options object, which is where `tokenScope` lives.
+ * `withApiHandler` options object, which is where `tokenScope` and `skipAuth`
+ * live.
  */
 function handlerFor(sf: ts.SourceFile, method: string): Handler | null {
   for (const stmt of sf.statements) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name?.text === method && isExported(stmt)) {
-      return { fn: stmt, options: null };
+      return { fn: stmt, options: null, file: sf.fileName };
     }
     if (!ts.isVariableStatement(stmt) || !isExported(stmt)) continue;
     for (const decl of stmt.declarationList.declarations) {
       if (!ts.isIdentifier(decl.name) || decl.name.text !== method || !decl.initializer) continue;
       const init = decl.initializer;
-      if (ts.isFunctionExpression(init) || ts.isArrowFunction(init)) return { fn: init, options: null };
+      if (ts.isFunctionExpression(init) || ts.isArrowFunction(init)) {
+        return { fn: init, options: null, file: sf.fileName };
+      }
       if (ts.isCallExpression(init)) {
-        const fn = [...init.arguments].reverse().find(a => ts.isArrowFunction(a) || ts.isFunctionExpression(a));
         const options = init.arguments.find(ts.isObjectLiteralExpression) ?? null;
-        if (fn) return { fn: fn as ts.FunctionLikeDeclaration, options };
+        const inline = [...init.arguments].reverse().find(a => ts.isArrowFunction(a) || ts.isFunctionExpression(a));
+        if (inline) return { fn: inline as ts.FunctionLikeDeclaration, options, file: sf.fileName };
+        const named = [...init.arguments].reverse().find(ts.isIdentifier);
+        const resolved = named ? namedHandler(named.text, sf) : null;
+        if (resolved) return { ...resolved, options };
       }
     }
   }
@@ -212,6 +252,14 @@ function tokenScopeOf(options: ts.ObjectLiteralExpression | null): string | null
   );
   const value = prop && ts.isPropertyAssignment(prop) ? prop.initializer : null;
   return value && ts.isStringLiteral(value) ? value.text : null;
+}
+
+/** Whether the options object mounts the route `skipAuth: true` (#2910). */
+function skipAuthOf(options: ts.ObjectLiteralExpression | null): boolean {
+  return Boolean(options?.properties.some(
+    p => ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === 'skipAuth'
+      && p.initializer.kind === ts.SyntaxKind.TrueKeyword,
+  ));
 }
 
 /* ------------------------------------------------------------------ *
@@ -436,8 +484,11 @@ function resolveChain(chain: string[], ctx: Ctx, depth: number, seen: Set<string
 }
 
 /** The union of every success payload the handler can answer with. */
-function responseFields(handler: Handler, routeFile: string): Set<string> {
-  const ctx = ctxFor(routeFile);
+function responseFields(handler: Handler): Set<string> {
+  // The handler's OWN module is the context — a named handler mounted by the
+  // route lives elsewhere, and resolving its consts against the route file
+  // would find nothing.
+  const ctx = ctxFor(handler.file);
   const out = new Set<string>();
   for (const ret of ownReturns(handler.fn)) {
     if (ts.isCallExpression(ret)) {
@@ -467,19 +518,26 @@ function pathnameFor(verb: Verb): string {
   return verb.path(args, {}).split('?')[0];
 }
 
-type Finding = { file: string | null; methods: string[]; scope: string | null; fields: string[] };
+type Finding = {
+  file: string | null;
+  methods: string[];
+  scope: string | null;
+  skipAuth: boolean;
+  fields: string[];
+};
 
 function inspect(verb: Verb): Finding {
   const pathname = pathnameFor(verb);
   const file = resolveRouteFile(pathname);
-  if (!file) return { file: null, methods: [], scope: null, fields: [] };
+  if (!file) return { file: null, methods: [], scope: null, skipAuth: false, fields: [] };
   const sf = parse(file);
   const handler = handlerFor(sf, verb.method);
   return {
     file,
     methods: exportedMethods(sf),
     scope: handler ? tokenScopeOf(handler.options) : null,
-    fields: handler ? [...responseFields(handler, file)] : [],
+    skipAuth: handler ? skipAuthOf(handler.options) : false,
+    fields: handler ? [...responseFields(handler)] : [],
   };
 }
 
@@ -510,7 +568,30 @@ describe('agent CLI verb table ↔ ServiceBay routes', () => {
       ).toContain(verb.method);
     });
 
-    it(`is reachable with the \`${verb.scope}\` token scope`, () => {
+    // Two auth shapes, one criterion: the route must carry the one the verb
+    // declares. A `parent-token` verb (#2910) is the delegate pair, whose
+    // credential is the presented token itself — so `skipAuth: true` is what
+    // must be there, and a `tokenScope` appearing on it would be the
+    // regression (it would start gating a route that must not be gated).
+    const parentToken = verb.auth === 'parent-token';
+    it(parentToken
+      ? 'is mounted skipAuth, with no tokenScope gating it'
+      : `is reachable with the \`${verb.scope}\` token scope`, () => {
+      if (parentToken) {
+        expect(
+          found.skipAuth,
+          `verb \`${name}\` declares auth='parent-token', but ${verb.method} ${pathname} is not mounted ` +
+            `skipAuth: true — the presented token IS the delegation parent, verified inside the handler, ` +
+            `so a gate in front of it refuses the very credential the route exists to accept.`,
+        ).toBe(true);
+        expect(
+          found.scope,
+          `verb \`${name}\` declares auth='parent-token', but ${verb.method} ${pathname} now carries ` +
+            `tokenScope='${found.scope}'. A parent token may hold ANY scope; gating on a fixed one turns ` +
+            `a valid delegation into a 403.`,
+        ).toBeNull();
+        return;
+      }
       expect(
         found.scope,
         `verb \`${name}\` declares the \`${verb.scope}\` scope, but ${verb.method} ${pathname} carries ` +
@@ -545,6 +626,21 @@ describe('the check itself goes red on a broken verb (negative control)', () => 
 
   it('a verb reading a field the route never returns', () => {
     expect(inspect(real).fields).not.toContain('fieldTheRouteNeverReturns');
+  });
+
+  it('a parent-token verb pointed at a scope-gated route', () => {
+    const bogus = { ...real, auth: 'parent-token', scope: null } as Verb;
+    const found = inspect(bogus);
+    expect(found.skipAuth).toBe(false);
+    expect(found.scope).toBe('read');
+  });
+
+  it('resolves a NAMED handler through the import hop, not just an inline arrow', () => {
+    // `withApiHandler({ skipAuth: true }, delegateTokenHandler)` — the fields
+    // live in packages/backend/src/lib/api/apiTokenRoutes.ts, two hops away.
+    const found = inspect(VERBS.delegate);
+    expect(found.fields).toContain('secret');
+    expect(found.skipAuth).toBe(true);
   });
 
   it('resolves real fields through an import hop, so an empty set is never the reason', () => {

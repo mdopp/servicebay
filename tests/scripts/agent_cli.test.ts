@@ -25,7 +25,9 @@ const CLI = path.resolve(__dirname, '..', '..', 'agent-cli', 'servicebay.mjs');
 type Verb = {
   usage: string;
   summary: string;
-  scope: string;
+  /** Absent = the ServiceBay scope gate; `'parent-token'` = delegate/revoke. */
+  auth?: string;
+  scope: string | null;
   method: string;
   positionals: string[];
   options: string[];
@@ -53,6 +55,8 @@ let origin: string;
 
 /** A plausible-shaped, entirely fictional token — never a real `sb_` secret. */
 const FAKE_TOKEN = 'sb_deadbeef_not-a-real-secret';
+/** Likewise fictional: what the fake server "mints" for the delegate verb. */
+const FAKE_CHILD_TOKEN = 'sb_c0ffee12_also-not-a-real-secret';
 
 /** Sample bodies keyed by verb, shaped like the routes actually answer. */
 const SUCCESS_BODY: Record<string, unknown> = {
@@ -63,6 +67,10 @@ const SUCCESS_BODY: Record<string, unknown> = {
   health: [{ name: 'Link: jellyfin', lastResult: { status: 'ok' } }],
   assists: { assists: [{ id: 'adr-0007-naming', kind: 'adr', whenToUse: 'you are wiring two services' }] },
   assist: { id: 'adr-0007-naming', content: '---\ntitle: Naming\n---\nbody' },
+  // The two writes (#2910). The delegate secret here is fictional, and shaped
+  // like one only so the renderer has something to render.
+  delegate: { token: { id: 'c0ffee12', name: 'claude-dev project alpha', scopes: ['read'] }, secret: FAKE_CHILD_TOKEN },
+  revoke: { ok: true, revoked: 1, id: 'c0ffee12', name: 'claude-dev project alpha' },
 };
 
 /** The positional arguments each verb needs, for the table-driven cases. */
@@ -74,10 +82,23 @@ const ARGV: Record<string, string[]> = {
   health: ['health'],
   assists: ['assists'],
   assist: ['assist', 'adr-0007-naming'],
+  delegate: ['delegate', 'claude-dev project alpha'],
+  revoke: ['revoke', 'c0ffee12'],
 };
 
 function envWith(extra: Record<string, string> = {}) {
   return { SERVICEBAY_API_URL: origin, SERVICEBAY_MCP_TOKEN: FAKE_TOKEN, ...extra };
+}
+
+/**
+ * What every auth message has to say for this verb: the scope for a
+ * scope-gated verb, and for the delegate pair (#2910) the fact that the token
+ * presented is itself the delegation parent — there is no scope to name.
+ */
+function needPhrase(verbName: string): string {
+  return cli.VERBS[verbName].auth === 'parent-token'
+    ? 'the token that is to be the delegation parent'
+    : `\`${cli.VERBS[verbName].scope}\` scope`;
 }
 
 beforeAll(async () => {
@@ -108,10 +129,16 @@ describe('agent CLI verb table', () => {
     for (const spec of imports) expect(spec.startsWith('node:')).toBe(true);
   });
 
-  it('declares a scope, a method and a path for every verb', () => {
+  it('declares an auth model, a method and a path for every verb', () => {
     for (const [name, verb] of Object.entries(cli.VERBS)) {
-      expect(['read', 'lifecycle', 'mutate', 'reboot', 'destroy', 'exec', 'propose'], name).toContain(verb.scope);
-      expect(['GET', 'POST'], name).toContain(verb.method);
+      if (verb.auth === 'parent-token') {
+        // No scope to declare: the presented token IS the credential (#2910),
+        // so naming one here would be a claim the route does not make.
+        expect(verb.scope, name).toBeNull();
+      } else {
+        expect(['read', 'lifecycle', 'mutate', 'reboot', 'destroy', 'exec', 'propose'], name).toContain(verb.scope);
+      }
+      expect(['GET', 'POST', 'DELETE'], name).toContain(verb.method);
       expect(verb.usage.startsWith(name), name).toBe(true);
       expect(verb.reads.length, name).toBeGreaterThan(0);
     }
@@ -185,11 +212,11 @@ describe.each(Object.keys(ARGV))('verb `%s`', verbName => {
     expect(payload.error.message).toContain('nginx');
   });
 
-  it('turns the opaque 401 into the scope this verb needs', async () => {
+  it('turns the opaque 401 into what this verb needs of a token', async () => {
     reply = { status: 401, body: JSON.stringify({ error: 'Authentication required' }) };
     const result = await cli.run(argv, { env: envWith() });
     expect(result.exitCode).toBe(3);
-    expect(result.stderr).toContain(`\`${cli.VERBS[verbName].scope}\` scope`);
+    expect(result.stderr).toContain(needPhrase(verbName));
     // The point of the issue: an agent must not be handed a bare 401.
     expect(result.stderr).not.toMatch(/^servicebay: 401/);
   });
@@ -200,15 +227,22 @@ describe.each(Object.keys(ARGV))('verb `%s`', verbName => {
     expect(result.exitCode).toBe(3);
     const payload = JSON.parse(result.stdout);
     expect(payload.error.code).toBe('SCOPE');
-    expect(payload.error.requiredScope).toBe('mutate');
-    expect(payload.error.message).toContain('under-scoped');
+    if (cli.VERBS[verbName].auth === 'parent-token') {
+      // Nothing to relay: this route has no scope gate, so quoting one back
+      // would send the agent off to widen a token that is already right.
+      expect(payload.error.requiredScope).toBeNull();
+      expect(payload.error.message).toContain('rejected as one');
+    } else {
+      expect(payload.error.requiredScope).toBe('mutate');
+      expect(payload.error.message).toContain('under-scoped');
+    }
   });
 
-  it('with no token at all, says what is missing and which scope it needed', async () => {
+  it('with no token at all, says what is missing and what it needed', async () => {
     const result = await cli.run(argv, { env: { SERVICEBAY_API_URL: origin } });
     expect(result.exitCode).toBe(3);
     expect(result.stderr).toContain('no ServiceBay API token found');
-    expect(result.stderr).toContain(`\`${cli.VERBS[verbName].scope}\` scope`);
+    expect(result.stderr).toContain(needPhrase(verbName));
     expect(result.stderr).toContain('SERVICEBAY_MCP_TOKEN_FILE');
   });
 });
@@ -223,6 +257,51 @@ describe('agent CLI request shaping', () => {
     await cli.run(['diagnose', '--node', 'Local'], { env: envWith() });
     expect(seen.url).toBe('/api/system/diagnose');
     expect(JSON.parse(seen.body)).toEqual({ node: 'Local' });
+  });
+
+  it('sends delegate as a JSON body, read-scoped by default, and revoke as a DELETE with the id on the query (#2910)', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.delegate) };
+    await cli.run(['delegate', 'claude-dev project alpha'], { env: envWith() });
+    expect(seen.method).toBe('POST');
+    expect(seen.url).toBe('/api/system/api-tokens/delegate');
+    // Least privilege by default: a caller must ASK for more than `read`.
+    expect(JSON.parse(seen.body)).toEqual({ name: 'claude-dev project alpha', scopes: ['read'] });
+
+    await cli.run(['delegate', 'wider', '--scopes', 'read, lifecycle', '--expires', '2027-01-01T00:00:00Z'],
+      { env: envWith() });
+    expect(JSON.parse(seen.body)).toEqual({
+      name: 'wider', scopes: ['read', 'lifecycle'], expiresAt: '2027-01-01T00:00:00Z',
+    });
+
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.revoke) };
+    await cli.run(['revoke', 'c0ffee12'], { env: envWith() });
+    expect(seen.method).toBe('DELETE');
+    expect(seen.url).toBe('/api/system/api-tokens/delegate?id=c0ffee12');
+    expect(seen.body).toBe('');
+  });
+
+  it('reports a revoke of a child that is not this parent\u2019s as NOT_FOUND, not as a revoke (#2910)', async () => {
+    reply = { status: 404, body: JSON.stringify({ error: 'no such delegated token' }) };
+    const result = await cli.run(['revoke', 'c0ffee12', '--json'], { env: envWith() });
+    expect(result.exitCode).toBe(1);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.ok).toBe(false);
+    expect(payload.error.code).toBe('NOT_FOUND');
+    expect(payload.error.status).toBe(404);
+  });
+
+  it('prints the delegated secret only on stdout, and never accepts one as an argument', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.delegate) };
+    const result = await cli.run(['delegate', 'claude-dev project alpha'], { env: envWith() });
+    expect(result.exitCode, result.stderr).toBe(0);
+    // The secret is the whole product of the verb and is returned once, so it
+    // has to come out here — on a pipe, which /proc does not publish.
+    expect(result.stdout).toContain(FAKE_CHILD_TOKEN);
+    expect(result.stderr).toBe('');
+    // …and there is no way to push one back IN.
+    const refused = await cli.run(['delegate', 'x', '--token', FAKE_CHILD_TOKEN], { env: envWith() });
+    expect(refused.exitCode).toBe(2);
+    expect(refused.stderr).not.toContain(FAKE_CHILD_TOKEN);
   });
 
   it('percent-encodes a positional so a name can never escape the path', async () => {

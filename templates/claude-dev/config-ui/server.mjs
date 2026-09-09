@@ -39,7 +39,11 @@
  *     minted for this container at install time (`SERVICEBAY_MCP_TOKEN`,
  *     #2673), the SAME credential the entrypoint wires as Claude Code's MCP
  *     server. Do NOT mint a second one. It stays server-side: the browser is
- *     told only whether it is configured, never its value.
+ *     told only whether it is configured, never its value. Since #2910 this
+ *     file speaks NO ServiceBay route itself: every call goes through
+ *     `servicebay-client.mjs`, which calls the delivered agent CLI at
+ *     `ctx.servicebay.cli`. Do not add a `fetch` to an `/api/…` path here —
+ *     add a verb to the CLI's table instead, where #2907 will pin it.
  *
  * Run: `node server.mjs` (all configuration via env, see `configFromEnv`).
  */
@@ -50,6 +54,12 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  AGENT_CLI_PATH,
+  ProjectError,
+  delegateProjectToken,
+  revokeProjectToken,
+} from './servicebay-client.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -422,15 +432,6 @@ function defaultRunCommand(file, args, opts = {}) {
   });
 }
 
-/** One error shape for every CRUD step: an HTTP status plus a sayable reason. */
-class ProjectError extends Error {
-  constructor(status, message, detail = '') {
-    super(message);
-    this.status = status;
-    this.detail = detail;
-  }
-}
-
 /**
  * A project name is ONE path segment that is also a usable tmux window name.
  * Rejecting rather than sanitising is deliberate: a silently rewritten name
@@ -542,62 +543,6 @@ function readSessionState(tmuxSession, name, runTmux) {
   } catch (err) {
     return { session: null, error: String(err?.message || err).slice(0, 200) };
   }
-}
-
-/** ServiceBay's own API, reached with the container's read-only parent token. */
-async function servicebayFetch(servicebay, pathname, init, doFetch) {
-  if (!servicebay?.token) {
-    throw new ProjectError(503, 'this container holds no ServiceBay API token, so it cannot delegate one to a project');
-  }
-  const base = String(servicebay.url || '').replace(/\/+$/, '');
-  let res;
-  try {
-    res = await doFetch(`${base}${pathname}`, {
-      ...init,
-      headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${servicebay.token}` },
-    });
-  } catch (err) {
-    throw new ProjectError(502, `could not reach ServiceBay at ${base}: ${err?.message || err}`);
-  }
-  const text = await res.text().catch(() => '');
-  let body = null;
-  try { body = text ? JSON.parse(text) : null; } catch { body = null; }
-  return { status: res.status, ok: res.ok, body, text };
-}
-
-/** Mint a read-only child of this container's token, bound to one project. */
-async function delegateProjectToken(servicebay, name, doFetch) {
-  const res = await servicebayFetch(servicebay, '/api/system/api-tokens/delegate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    // Read-only, like the parent: a project session that genuinely needs more
-    // goes through `request_token`, which itself needs only `read`.
-    body: JSON.stringify({ name: `claude-dev project ${name}`, scopes: ['read'] }),
-  }, doFetch);
-  if (!res.ok || typeof res.body?.secret !== 'string') {
-    throw new ProjectError(502,
-      `ServiceBay refused to delegate a token for "${name}"`,
-      res.body?.error || res.text.slice(0, 200) || `HTTP ${res.status}`);
-  }
-  return { secret: res.body.secret, id: res.body.token?.id ?? '', scopes: res.body.token?.scopes ?? [] };
-}
-
-/**
- * Revoke one delegated child. `404` comes back as `alreadyGone` rather than an
- * error so a remove that failed halfway can be retried to completion — every
- * other refusal is surfaced, because "revoked nothing" must never read as
- * "revoked it".
- */
-async function revokeProjectToken(servicebay, tokenId, doFetch) {
-  const res = await servicebayFetch(servicebay,
-    `/api/system/api-tokens/delegate?id=${encodeURIComponent(tokenId)}`, { method: 'DELETE' }, doFetch);
-  if (res.status === 404) return { revoked: false, alreadyGone: true };
-  if (!res.ok) {
-    throw new ProjectError(502,
-      `ServiceBay refused to revoke this project's token (${tokenId})`,
-      res.body?.error || res.text.slice(0, 200) || `HTTP ${res.status}`);
-  }
-  return { revoked: true, alreadyGone: false };
 }
 
 /** The delegated token id recorded for one checkout, or `''`. Throws if the
@@ -1579,8 +1524,10 @@ export function createConfigUiServer({
   requiredGroup = '',
   publicDir = path.join(HERE, 'public'),
   // `appUrl` is the browser-facing ServiceBay origin the sign-in repair link
-  // is built on (#2682); `url` stays the container-side API address.
-  servicebay = { url: '', token: '', appUrl: null },
+  // is built on (#2682); `url` stays the container-side API address; `cli` is
+  // where the delivered agent CLI lies (#2910), overridable so a test can point
+  // at the checkout's own copy instead of the pod's mount.
+  servicebay = { url: '', token: '', appUrl: null, cli: AGENT_CLI_PATH },
   // Options for `collectProjects` (devHome, homeDir, tmuxSession, and the
   // injectable fs/tmux readers the tests drive it with).
   projects = {},
@@ -1691,6 +1638,10 @@ export function configFromEnv(env = process.env) {
       // renders to `https://admin.` on a box with no public domain — hence
       // the validation rather than a bare passthrough (#2682).
       appUrl: normalizeAppUrl(env.SERVICEBAY_APP_URL),
+      // The delivered agent CLI (#2910) — the only thing here that speaks a
+      // ServiceBay route. The pod mounts the kit read-only; the env var exists
+      // so the mount point can move without editing this file.
+      cli: (env.SERVICEBAY_AGENT_CLI || '').trim() || AGENT_CLI_PATH,
     },
     // The `dev` user's HOME *is* the shared workspace (docker-entrypoint.sh
     // exports HOME=$DEV_HOME), which is why both default to the same path —
@@ -1727,6 +1678,9 @@ export function startFromEnv(env = process.env, log = console.log) {
     log(`claude-dev config-ui: listening on ${cfg.host}:${cfg.port}, `
       + `requiring Authelia identity in group "${cfg.requiredGroup || '(any)'}"; `
       + `ServiceBay API token ${cfg.servicebay.token ? 'present' : 'ABSENT'}; `
+      // Said at boot for the same reason as the origin below: "add a project
+      // fails with 503" is otherwise a mystery with no log line behind it.
+      + `agent CLI ${fs.existsSync(cfg.servicebay.cli) ? cfg.servicebay.cli : `MISSING at ${cfg.servicebay.cli}`}; `
       // Said at boot because "the sign-in repair link is missing" is otherwise
       // a mystery with no log line behind it (#2682).
       + `browser-facing ServiceBay origin ${cfg.servicebay.appUrl || 'UNKNOWN (no sign-in repair link)'}.`);
