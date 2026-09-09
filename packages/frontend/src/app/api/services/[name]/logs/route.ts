@@ -5,6 +5,7 @@ import { getPodmanPs } from '@/lib/manager';
 import { listNodes } from '@/lib/nodes';
 import { ServiceName } from '@/lib/api/schemas';
 import { withApiHandlerParams } from '@/lib/api/handler';
+import { logTextForPrincipal } from '@/lib/api/principalRedaction';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,9 +13,14 @@ const Query = z.object({ node: z.string().optional() });
 
 // `tokenScope: 'read'` (#2906) — the agent CLI's `logs` verb reads this with the
 // container's delegated read token. Log retrieval writes nothing.
+//
+// Journals and `podman logs` catch every line a service prints at first run,
+// including the admin password some images dump to stdout, so a token principal
+// gets the text redacted — the same pass the MCP `get_logs` twin has run since
+// #321 (#2943). A cookie operator's view is unchanged.
 export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { name: string }>(
   { query: Query, tokenScope: 'read' },
-  async ({ query, params }) => {
+  async ({ query, params, auth }) => {
     const rawName = params?.name ?? '';
     let decoded = '';
     try { decoded = decodeURIComponent(rawName); } catch {
@@ -32,7 +38,7 @@ export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { name
           const client = new FritzBoxClient(config.gateway);
           const status = await client.getStatus();
           return NextResponse.json({
-            serviceLogs: status.deviceLog || 'No FritzBox logs available.',
+            serviceLogs: logTextForPrincipal(auth, status.deviceLog || 'No FritzBox logs available.'),
             podmanLogs: '',
             podmanPs: [],
           });
@@ -67,8 +73,14 @@ export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { name
     ]);
 
     return NextResponse.json({
-      serviceLogs: serviceLogsResult.status === 'fulfilled' ? serviceLogsResult.value : `Error: ${serviceLogsResult.reason}`,
-      podmanLogs: podmanLogsResult.status === 'fulfilled' ? podmanLogsResult.value : `Error: ${podmanLogsResult.reason}`,
+      serviceLogs: logTextForPrincipal(
+        auth,
+        serviceLogsResult.status === 'fulfilled' ? serviceLogsResult.value : `Error: ${serviceLogsResult.reason}`,
+      ),
+      podmanLogs: logTextForPrincipal(
+        auth,
+        podmanLogsResult.status === 'fulfilled' ? podmanLogsResult.value : `Error: ${podmanLogsResult.reason}`,
+      ),
       podmanPs: podmanPsResult.status === 'fulfilled' ? podmanPsResult.value : [],
     });
   },

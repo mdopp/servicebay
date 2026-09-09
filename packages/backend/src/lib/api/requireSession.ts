@@ -110,6 +110,11 @@ export async function requireSession(
   // expiring the token instantly kills the session (#2047 cascading revocation,
   // extended to the UI session). Password/internal sessions have no viaToken
   // and skip this entirely.
+  //
+  // #2931 moved this rule down into `getSessionFromCookieHeader` so that /mcp,
+  // Socket.IO and the proxy gate get it too — this repeat is belt-and-braces
+  // for a caller that hands `requireSession` a session from somewhere else, and
+  // costs nothing on the (overwhelmingly common) viaToken-less session.
   if (session.viaToken) {
     const { tokenIsLive } = await import('@/lib/auth/apiTokens');
     if (!(await tokenIsLive(session.viaToken))) {

@@ -163,6 +163,37 @@ The delegated-mint route `/api/system/api-tokens/delegate` is **not** in this ta
 it is `skipAuth` and authenticates by verifying the **parent Bearer token** itself
 (any scope), then enforces `child ⊆ parent` (#2048). It carries no fixed `tokenScope`.
 
+### Cookie-only scope holds — the token-administration surface
+
+A second, narrower guard: `cookieScope` (#2919) holds a **scoped session cookie**
+to a scope *without* opening the Bearer branch. These routes stay
+cookie/internal-only — a token may never administer credentials directly, which
+would escape the delegation chain's TTL narrowing and cascading revocation — but a
+cookie minted by the token→session bridge (`POST /api/auth/session-from-token`)
+carries `scopes = token.scopes` and is held to them. A cookie is **not** a scope:
+the proxy applies no scope check to a session, so this route-level hold is the
+only thing standing between a `read`-only token and these verbs.
+
+| Route | Method | Scope | Capability |
+|---|---|---|---|
+| `/api/system/{api,mcp}-tokens` | GET | `read` | list token metadata (`publicView`, no hash) |
+| `/api/system/{api,mcp}-tokens` | POST | `mutate` | mint a named token — plus a caller-subset check in the handler (#2919) |
+| `/api/system/{api,mcp}-tokens` | DELETE | `destroy` | revoke one token (#2944) |
+| `/api/system/api-tokens/revoke` | POST | `destroy` | bulk-revoke up to 200 tokens (#2944) |
+| `/api/system/mcp-bootstrap` | POST | `mutate` | re-open the bootstrap reconnect window (#2944) |
+| `/api/system/mcp-bootstrap` | DELETE | `destroy` | deactivate the bootstrap token (#2944) |
+
+`GET` staying at `read` is a **deliberate decision** (#2944): the rows carry no
+secret material and the Settings → Security read-only view is built from them, so a
+`read` principal may enumerate token metadata. The hold still excludes an
+off-ladder principal — scopes are not nested, so a `propose`-only session cannot
+inventory the box's credentials.
+
+`tests/backend/token_admin_scope_gate.test.ts` walks this surface **per verb** and
+fails on any token-administration verb added without a hold; the per-file variant
+(`credential_mint_scope_gate.test.ts`, #2919) is what let the DELETE side of these
+same files ship ungated.
+
 ## Audit findings (#2050)
 
 One under-scoped destructive endpoint was found and corrected; the rest of the

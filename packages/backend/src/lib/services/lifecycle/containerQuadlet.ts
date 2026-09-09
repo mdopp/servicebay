@@ -85,6 +85,33 @@ export async function decideContainerQuadletRecreate(nodeName: string, name: str
 }
 
 /**
+ * Force-remove every plausible container name for this service.
+ *
+ * #2928 — the names come out of the caller's pod manifest (`metadata.name` /
+ * `spec.containers[].name`), so they must never be spliced into a shell
+ * command string. `safe_exec` hands the argv to the host verbatim; the
+ * `isSafeShellName` guard this file already applies in
+ * `decideContainerQuadletRecreate` stays as a second layer, and a
+ * non-existent container is a non-zero exit we ignore exactly as the old
+ * `2>/dev/null || true` did.
+ */
+async function forceRemoveContainers(
+    agent: import('../../agent/handler').AgentHandler,
+    name: string,
+    candidates: string[],
+): Promise<void> {
+    for (const cname of candidates) {
+        if (!isSafeShellName(cname)) {
+            logger.warn('ServiceManager', `${name}: refusing to force-remove container "${cname}" — unsafe name`);
+            continue;
+        }
+        try {
+            await agent.sendCommand('safe_exec', { argv: ['podman', 'rm', '-f', cname] });
+        } catch { /* container may not exist — same as the old `|| true` */ }
+    }
+}
+
+/**
  * Reconcile a `.container` GPU Quadlet against the shadowing `.kube`/`.yml`
  * that `deployKubeService` writes on every deploy (#2174).
  *
@@ -174,10 +201,7 @@ export async function reconcileContainerQuadletShadow(
         try {
             podDocs = (yaml.loadAll(yamlContent) as PodLikeDoc[]).filter(Boolean);
         } catch { /* malformed yaml → fall back to the standard name shapes */ }
-        const candidates = buildExpectedContainerNames(name, podDocs);
-        for (const cname of candidates) {
-            await agent.sendCommand('exec', { command: `podman rm -f ${cname} 2>/dev/null || true` });
-        }
+        await forceRemoveContainers(agent, name, buildExpectedContainerNames(name, podDocs));
 
         try {
             await agent.sendCommand('exec', { command: `systemctl --user reset-failed ${name}.service` });

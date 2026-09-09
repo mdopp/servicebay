@@ -1,5 +1,28 @@
 # auth template changelog
 
+## Unversioned — the admin-only rule now covers the claude-dev surfaces (#2936)
+
+No schema bump: nothing on disk moves and no variable changes, so this reaches
+an installed box on the next **Reconfigure / redeploy of `auth`**, which
+re-renders `configuration.yml`. Until then the running rules are whatever is on
+disk — on a box that already publishes `pi.<domain>` or `claude.<domain>`, edit
+the two rules by hand first and let the redeploy converge later.
+
+`claude.<domain>` (claude-dev's own configuration UI) and `pi.<domain>` (its pi
+web chat) were named in neither the admins-only rule nor its explicit-deny twin,
+so both fell to the `*.<domain>` `one_factor` catch-all: **any** household
+`family` account reached them from the internet with a password and no second
+factor. `pi` carries no sign-in of its own, so that verdict was the entire
+authorization decision for an interactive coding agent with a bash tool running
+as `dev` inside the claude-dev container — beside the box's ServiceBay token and
+the operator's Claude and GitHub credentials. Both hosts are now in the
+admins-only `two_factor` rule **and** in the deny twin.
+
+The rule table is also now a checked contract rather than a remembered one: a
+template declares a subdomain's reach with `"audience": "admin" | "family" |
+"anonymous"` in its `variables.json`, and the build fails if a declaration and
+these rules disagree, or if a `subdomain` variable declares nothing at all.
+
 ## Unversioned — session lifetime is one month (#2830)
 
 No schema bump: nothing on disk moves and no variable changes, so this reaches

@@ -63,7 +63,10 @@ async function seedTargetExists(agent: FileWritingAgent, path: string): Promise<
         // `&& … || …` so the command exits 0 either way — a non-zero exit
         // would be indistinguishable from a transport failure here.
         raw = extractStdout(await agent.sendCommand('exec', {
-            command: `test -e ${path} && echo sb-present || echo sb-absent`,
+            // `path` is caller-supplied (extraFiles[].targetPath) and the scope
+            // guard only proves *where* it points, not that it is free of shell
+            // metacharacters — quote it (#2928).
+            command: `test -e ${shellQuote(path)} && echo sb-present || echo sb-absent`,
         }));
     } catch (err) {
         logger.warn('ServiceManager', `Seed-only existence probe for ${path} failed (${err instanceof Error ? err.message : String(err)}); treating the file as present and NOT writing it.`);

@@ -30,6 +30,26 @@ import { describe, it, expect } from 'vitest';
 import { renderPodYaml, renderTemplate } from '@/lib/template/render';
 import { findGpuMultiContainerError } from '@/lib/services/podSchema';
 import { buildProxyHosts } from '@/lib/stackInstall/postInstall';
+import {
+  ADMIN_ONLY_SUBDOMAINS,
+  type SubdomainAudience,
+} from '@/lib/reverseProxy/lanDeniedPage';
+import {
+  adminOnlyHostLabels,
+  authTemplateAccessControl,
+  isAllowed,
+  policyFor,
+  type Subject,
+} from '../fixtures/autheliaAccessControl';
+
+/** The subset of a `variables.json` entry this suite reasons about. */
+interface VariableDecl {
+  type?: string;
+  default?: unknown;
+  proxyPort?: string;
+  exposure?: string;
+  audience?: SubdomainAudience;
+}
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const TEMPLATES_DIR = path.join(REPO_ROOT, 'templates');
@@ -2033,6 +2053,104 @@ describe('Subdomain proxyPort references', () => {
       ).toEqual([]);
     });
   }
+});
+
+// ─── 4b. Every subdomain declares its Authelia audience, and admin surfaces
+//         are actually denied to family accounts (#2936) ────────────────────
+//
+// The class gate. `pi.<domain>` — an interactive coding agent with a bash tool
+// running inside claude-dev, with no sign-in of its own — was published to the
+// internet and authorized by the `*.<domain>` one_factor family catch-all,
+// because nothing ever forced anyone to say who was supposed to reach it. Two
+// hostnames added to a hard-coded list would have left the next such surface to
+// be found the same way.
+//
+// So: every `subdomain` variable in the catalog declares an `audience`, and
+// this suite evaluates the auth template's rendered access_control table the
+// way Authelia does (see tests/fixtures/autheliaAccessControl.ts) to check the
+// declaration against the enforcement. A new admin-grade surface that is only
+// covered by the family catch-all fails here, at build time.
+describe('Authelia audience: declared reach matches the enforced rules', () => {
+  const PUBLIC_DOMAIN = 'example.test';
+  const table = authTemplateAccessControl(REPO_ROOT, PUBLIC_DOMAIN);
+  const family: Subject = { user: 'resident', groups: ['family'] };
+  const admins: Subject = { user: 'operator', groups: ['admins'] };
+  /** A signed-in account in NO group — the subject-mismatch path of #878. */
+  const groupless: Subject = { user: 'stranger', groups: [] };
+
+  /** Every `subdomain` variable in the catalog, with its declaring template. */
+  const subdomainVars = templates.flatMap(t =>
+    (Object.entries(t.variables) as [string, VariableDecl][])
+      .filter(([, meta]) => meta?.type === 'subdomain')
+      .map(([varName, meta]) => ({ template: t.name, varName, meta })),
+  );
+
+  it('finds subdomain variables to check (guards against a vacuous pass)', () => {
+    expect(subdomainVars.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('every subdomain variable declares an audience', () => {
+    const valid: SubdomainAudience[] = ['admin', 'family', 'anonymous'];
+    const offenders = subdomainVars
+      .filter(v => !valid.includes(v.meta.audience as SubdomainAudience))
+      .map(v => `${v.template}/${v.varName}: audience=${JSON.stringify(v.meta.audience)}`);
+    expect(
+      offenders,
+      'A publicly-reachable subdomain with no declared audience is how #2936 happened.\n' +
+        'Add "audience": "admin" | "family" | "anonymous" to variables.json:\n  ' +
+        offenders.join('\n  '),
+    ).toEqual([]);
+  });
+
+  for (const { template, varName, meta } of subdomainVars) {
+    const label = typeof meta.default === 'string' ? meta.default : '';
+    const host = `${label}.${PUBLIC_DOMAIN}`;
+
+    if (meta.audience === 'admin') {
+      it(`${template}/${varName} (${host}): admin-only — family and groupless are DENIED`, () => {
+        // Not merely "not two_factor" — denied. A rule the subject does not
+        // match is SKIPPED, so an admin rule without its explicit-deny twin
+        // drops the user into the family catch-all and this assertion is the
+        // only thing that notices.
+        expect(isAllowed(policyFor(table, host, family))).toBe(false);
+        expect(isAllowed(policyFor(table, host, groupless))).toBe(false);
+        expect(isAllowed(policyFor(table, host, null))).toBe(false);
+        // …and the admins group does get through, or the host is simply broken.
+        expect(isAllowed(policyFor(table, host, admins))).toBe(true);
+      });
+    } else if (meta.audience === 'family') {
+      it(`${template}/${varName} (${host}): deliberately family-reachable`, () => {
+        expect(isAllowed(policyFor(table, host, family))).toBe(true);
+        expect(isAllowed(policyFor(table, host, admins))).toBe(true);
+        // Still never anonymous — only the auth portal bypasses sign-in.
+        expect(isAllowed(policyFor(table, host, null))).toBe(false);
+      });
+    } else if (meta.audience === 'anonymous') {
+      it(`${template}/${varName} (${host}): reachable without signing in (bypass)`, () => {
+        expect(policyFor(table, host, null)).toBe('bypass');
+      });
+    }
+  }
+
+  it('the code mirror ADMIN_ONLY_SUBDOMAINS names exactly the admin-only hosts', () => {
+    // lanDeniedPage's forward-auth 403 explainer tells the user WHICH group
+    // they need, from a hard-coded set. When it drifts from the rule table the
+    // page confidently names the wrong group.
+    expect(adminOnlyHostLabels(table, PUBLIC_DOMAIN)).toEqual(
+      [...ADMIN_ONLY_SUBDOMAINS].sort(),
+    );
+  });
+
+  it('every admin-declared subdomain is in the code mirror too', () => {
+    const declared = subdomainVars
+      .filter(v => v.meta.audience === 'admin')
+      .map(v => String(v.meta.default));
+    for (const label of declared) {
+      expect(ADMIN_ONLY_SUBDOMAINS.has(label), `${label} missing from ADMIN_ONLY_SUBDOMAINS`).toBe(
+        true,
+      );
+    }
+  });
 });
 
 // ─── 8. stacks/*/README.md `- [x] X` items resolve to real templates ──────

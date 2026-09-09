@@ -49,12 +49,18 @@
  *    throws `BoxUnreachableError` naming what it tried; it never degrades into
  *    a silent success. Collapsing that into a green result is worse than the
  *    blindness it replaces, because the loop reads exit 0 as "the safety net is up".
+ *    That rule reaches the `channel` CLI too (#2940): it distinguishes `latest`,
+ *    `dev` and **could-not-read**, and the third exits 2 naming the reason
+ *    (unreachable / unauthorized / timeout / malformed / refused) plus, for an
+ *    unreachable box, the candidate list. `getChannel()` keeps returning `null`
+ *    for the in-process pollers, where `null` means "not yet" — but nothing that
+ *    REPORTS a verdict is allowed to use that shape.
  *
  * The `sb_` token comes from `$SB_TOKEN` or `~/.claude.json`. It is never
  * logged, printed or embedded in an error message anywhere in this module.
  *
  *   tsx scripts/autoloop-box.ts exec "<shell cmd>"    # /mcp exec_command → {code,stdout,stderr}
- *   tsx scripts/autoloop-box.ts channel               # /mcp get_channel
+ *   tsx scripts/autoloop-box.ts channel               # /mcp get_channel; exit 2 = could NOT read it
  *   tsx scripts/autoloop-box.ts channel-set dev|latest # /mcp set_channel
  *   tsx scripts/autoloop-box.ts wait-health [sec]     # poll until the app answers (bounded)
  *   tsx scripts/autoloop-box.ts api <METHOD> <path> [jsonBody]
@@ -163,6 +169,89 @@ export class BoxUnreachableError extends Error {
     super(`no box candidate answered — tried ${tried.map(redactBoxUrl).join(', ')}`);
     this.name = 'BoxUnreachableError';
   }
+}
+
+/**
+ * An MCP call that reached the box but did not yield a usable payload.
+ *
+ * Its own type so a caller can act on WHY (#2940): a rejected token needs a new
+ * token, a refusal needs a scope, a malformed reply needs a look at the box. The
+ * message is unchanged from the plain `Error` it replaces — nothing that matches
+ * on the text breaks, and the token never appears in it.
+ */
+export class McpCallError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly kind: McpFailureKind,
+  ) {
+    super(message);
+    this.name = 'McpCallError';
+  }
+}
+
+/** `unauthorized` = the box rejected the credential, `refused` = it answered
+ *  with its own reason (scope denied, mutations disabled), `malformed` = it
+ *  answered something that is not a readable tool result. */
+export type McpFailureKind = 'unauthorized' | 'refused' | 'malformed';
+
+/** The three diagnostics `parseMcpToolResult` emits when the ENVELOPE itself
+ *  could not be read — as opposed to the box refusing in a well-formed reply. */
+const ENVELOPE_DIAGNOSTICS = ['no SSE data line', 'unparseable', 'no text content'];
+
+/** Which flavour of failure an unreadable `tools/call` reply is. Pure — the ONE
+ *  place that decides, so the classification cannot drift between callers. */
+export function mcpFailureKind(status: number, error: string): McpFailureKind {
+  if (status === 401 || status === 403) return 'unauthorized';
+  if (ENVELOPE_DIAGNOSTICS.some(d => error.includes(d))) return 'malformed';
+  return 'refused';
+}
+
+/** Why a channel read produced no channel. `unreachable` = no candidate origin
+ *  answered at all; the rest mean the box was reached and the reply was not a
+ *  channel. */
+export type ChannelReadFailure = 'unreachable' | 'unauthorized' | 'timeout' | 'malformed' | 'refused' | 'unknown';
+
+/** The channel, or the named reason there isn't one. Never `null` for both. */
+export type ChannelRead =
+  | { ok: true; channel: string }
+  | { ok: false; reason: ChannelReadFailure; detail: string; tried?: string[] };
+
+/** Is this the client-side deadline rather than an answer? `AbortSignal.timeout`
+ *  rejects with a `TimeoutError` DOMException, which is not an `McpCallError`. */
+function isTimeoutError(e: unknown): boolean {
+  const name = e instanceof Error ? e.name : '';
+  const message = e instanceof Error ? e.message : String(e);
+  return name === 'TimeoutError' || name === 'AbortError' || /timed? ?out|aborted/i.test(message);
+}
+
+/**
+ * A thrown channel-read failure, classified. Pure, so the class of failures is
+ * testable without a box: unreachable, unauthorized, timeout, malformed, refused.
+ * The unreachable case carries the candidate list — "I could not ask the box"
+ * has to say WHERE it asked to be actionable.
+ */
+export function classifyChannelFailure(e: unknown): { reason: ChannelReadFailure; detail: string; tried?: string[] } {
+  if (e instanceof BoxUnreachableError) {
+    return { reason: 'unreachable', detail: e.message, tried: e.tried.map(redactBoxUrl) };
+  }
+  if (e instanceof McpCallError) return { reason: e.kind, detail: e.message };
+  if (isTimeoutError(e)) return { reason: 'timeout', detail: e instanceof Error ? e.message : String(e) };
+  return { reason: 'unknown', detail: e instanceof Error ? e.message : String(e) };
+}
+
+/** The `channel` command's machine-readable line. `channel` stays the first key
+ *  and stays `null` on a failed read, so an existing reader keeps working — but
+ *  it now travels with `ok`/`reason`/`detail` instead of alone. Pure. */
+export function channelResultLine(r: ChannelRead): Record<string, unknown> {
+  if (r.ok) return { channel: r.channel, ok: true };
+  return { channel: null, ok: false, reason: r.reason, detail: r.detail, tried: r.tried ?? null };
+}
+
+/** 0 = the box said which channel it is on. 2 = it did not, whatever the reason
+ *  — the loop must never read "could not read the channel" as a green. Pure. */
+export function channelExitCode(r: ChannelRead): number {
+  return r.ok ? 0 : 2;
 }
 
 /** The JSON-RPC body for an MCP `tools/call`. */
@@ -318,15 +407,19 @@ async function mcpFetch(
 }
 
 /** Call an MCP tool whose payload is JSON, authorized by the `sb_` token.
- *  Throws with the box's own reason on a refusal (scope / mutations disabled). */
+ *  Throws with the box's own reason on a refusal (scope / mutations disabled) —
+ *  as an `McpCallError`, so a caller can tell a rejected token from a reply it
+ *  could not read without regexing the message (#2940). */
 export async function mcpCall<T>(tool: string, args: Record<string, unknown> = {}, timeoutMs = 30000): Promise<T> {
   const { status, body } = await mcpFetch(tool, args, timeoutMs);
   const parsed = parseMcpToolResult(body);
-  if (!parsed.ok) throw new Error(`mcp ${tool} failed (HTTP ${status}): ${parsed.error}`);
+  if (!parsed.ok) {
+    throw new McpCallError(`mcp ${tool} failed (HTTP ${status}): ${parsed.error}`, status, mcpFailureKind(status, parsed.error));
+  }
   try {
     return JSON.parse(parsed.text) as T;
   } catch {
-    throw new Error(`mcp ${tool}: payload was not JSON: ${parsed.text.slice(0, 200)}`);
+    throw new McpCallError(`mcp ${tool}: payload was not JSON: ${parsed.text.slice(0, 200)}`, status, 'malformed');
   }
 }
 
@@ -338,16 +431,40 @@ export async function mcpExec(command: string): Promise<{ code: number; stdout: 
   return parsed;
 }
 
-/** Current channel via the MCP `get_channel` tool (token-authorized, `read`
- *  scope), or null if the box didn't answer. `null` must stay reserved for "no
- *  answer" — `confirmFlipBack` treats it as "not yet", never as a verdict. */
-export async function getChannel(): Promise<string | null> {
+/**
+ * Read the release channel, keeping the CAUSE of a failed read (#2940).
+ *
+ * The old shape was `getChannel(): string | null` with a bare `catch` — which
+ * collapsed `BoxUnreachableError`, a 401 from a rotated token, an MCP refusal, a
+ * timeout and a parse failure into one `null`, and the CLI printed that `null`
+ * and exited **0**. That contradicts this module's own header ("no candidate
+ * answered" stays its own outcome) and it is how a box gets stranded on `:dev`:
+ * box-verify uses `channel` as its reachability probe, so an unreadable channel
+ * that exits 0 reads as "I have a path and the box is not on dev".
+ *
+ * `ok:false` is never "the box is on :latest". The reason is one of the ways the
+ * read can fail, and the detail carries the underlying message.
+ */
+export async function readChannel(): Promise<ChannelRead> {
   try {
     const r = await mcpCall<{ channel?: string }>('get_channel', {}, 15000);
-    return r.channel ?? null;
-  } catch {
-    return null;
+    if (typeof r.channel !== 'string' || r.channel.trim() === '') {
+      return { ok: false, reason: 'malformed', detail: 'the box answered get_channel without a channel field' };
+    }
+    return { ok: true, channel: r.channel };
+  } catch (e) {
+    return { ok: false, ...classifyChannelFailure(e) };
   }
+}
+
+/** Current channel via the MCP `get_channel` tool (token-authorized, `read`
+ *  scope), or null if the box didn't answer. `null` must stay reserved for "no
+ *  answer" — `confirmFlipBack` treats it as "not yet", never as a verdict. The
+ *  in-process pollers keep this shape on purpose; anything that REPORTS a
+ *  verdict (the CLI, `--recover`) uses `readChannel` so the cause survives. */
+export async function getChannel(): Promise<string | null> {
+  const r = await readChannel();
+  return r.ok ? r.channel : null;
 }
 
 /** Poll until the app answers (a 401 counts as UP — it's auth-gated but alive).
@@ -400,15 +517,37 @@ export async function setChannel(target: 'dev' | 'latest'): Promise<void> {
 
 // ---------- CLI ----------
 
+/**
+ * The `channel` command: print the machine line, return the process exit code.
+ *
+ * A function rather than three lines inside the `switch` so the test can drive
+ * the REAL command path for every way the read can fail (#2940) — a green here
+ * on an unreadable channel is what strands the box on `:dev`.
+ */
+export async function channelCommand(
+  out: (line: string) => void = console.log,
+  warn: (line: string) => void = console.error,
+): Promise<number> {
+  const result = await readChannel();
+  out(JSON.stringify(channelResultLine(result)));
+  if (!result.ok) warn(`could not read the channel (${result.reason}): ${result.detail}`);
+  return channelExitCode(result);
+}
+
+
 async function cli(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   switch (cmd) {
     case 'exec':
       console.log(JSON.stringify(await mcpExec(rest.join(' '))));
       break;
-    case 'channel':
-      console.log(JSON.stringify({ channel: await getChannel() }));
+    case 'channel': {
+      // Never a bare `{channel: …}` line with exit 0 again (#2940): the loop
+      // reads exit 0 as "the safety net is up".
+      const code = await channelCommand();
+      if (code !== 0) process.exit(code);
       break;
+    }
     case 'channel-set': {
       const target = rest[0];
       if (target !== 'dev' && target !== 'latest') {

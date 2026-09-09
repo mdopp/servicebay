@@ -218,8 +218,42 @@ const FORWARD_AUTH_DENIED_INTERNAL_URI = '/servicebay-forward-auth-denied';
 /** Sentinel marker for idempotent appends / detection. */
 const FORWARD_AUTH_DENIED_MARKER = '# servicebay-forward-auth-denied-explainer (#1684)';
 
-/** Admin-only subdomains per the auth template's access_control rules. */
-const ADMIN_ONLY_SUBDOMAINS = new Set(['admin', 'nginx', 'dns', 'ldap']);
+/**
+ * Who Authelia is meant to let through to a template-declared subdomain.
+ *
+ * A template declares this per `subdomain` variable as `"audience"` in its
+ * variables.json (see docs/TEMPLATE_AUTHORING.md); the ENFORCING artifact is
+ * the `access_control` table in `templates/auth/configuration.yml.mustache`.
+ * The type lives here, next to the set it constrains, because this file is the
+ * code-side mirror of that table.
+ *
+ *   - `admin`     — admins group only; must be in the admin rule AND its
+ *                   explicit-deny twin (a `subject` mismatch skips a rule
+ *                   rather than denying — the #878 trap).
+ *   - `family`    — deliberately reachable by every household account through
+ *                   the `*.<domain>` one-factor catch-all.
+ *   - `anonymous` — reachable without signing in; the auth portal only.
+ */
+export type SubdomainAudience = 'admin' | 'family' | 'anonymous';
+
+/**
+ * Admin-only subdomains per the auth template's access_control rules.
+ *
+ * Mirror of the admin-surface table in
+ * `templates/auth/configuration.yml.mustache` — every label a template
+ * declares with `"audience": "admin"` on its `subdomain` variable. The
+ * "Authelia audience" section of `tests/backend/template_consistency.test.ts`
+ * asserts this set and that table name the same hosts, so the mirror cannot
+ * drift silently (#2936).
+ */
+export const ADMIN_ONLY_SUBDOMAINS = new Set([
+  'admin',
+  'nginx',
+  'dns',
+  'ldap',
+  'claude',
+  'pi',
+]);
 
 /**
  * Derive the group(s) that grant access to a domain, from the Authelia
@@ -227,7 +261,7 @@ const ADMIN_ONLY_SUBDOMAINS = new Set(['admin', 'nginx', 'dns', 'ldap']);
  * configuration.yml.mustache). Pure + deterministic — mirrors the rule
  * table so the deny page can name the required group without reading the
  * live config:
- *   - admin / nginx / dns / ldap     → `['admins']`
+ *   - ADMIN_ONLY_SUBDOMAINS (above)  → `['admins']`
  *   - anything else                  → `['family', 'admins']`
  *
  * `domain` may be a bare host (`llama.dopp.cloud`) or just the leftmost

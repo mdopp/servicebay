@@ -29,9 +29,31 @@ const HA_TEMPLATE = path.join(REPO_ROOT, 'templates', 'home-assistant', 'templat
 const ADGUARD_TEMPLATE = path.join(REPO_ROOT, 'templates', 'adguard', 'template.yml');
 
 /** A shipped manifest with `{{VAR}}` placeholders substituted, i.e. what a
- *  real deploy hands to `deployKubeService`. */
+ *  real deploy hands to `deployKubeService`.
+ *
+ *  The substitution is type-aware (#2928): a path variable renders to an
+ *  absolute path and a port variable to a number, because `deployKubeService`
+ *  now runs `validatePodManifest` at the choke point and a manifest with
+ *  `path: x` / `containerPort: "x"` is not something a real render can produce.
+ *  Blanket-substituting `x` made this fixture diverge from the artifact the
+ *  install runner actually POSTs. */
 function renderedTemplate(templatePath: string): string {
-    return fs.readFileSync(templatePath, 'utf-8').replace(/\{\{[^}]*\}\}/g, 'x');
+    const seen = new Map<string, string>();
+    let nextPort = 18000;
+    return fs.readFileSync(templatePath, 'utf-8')
+        // Mustache section tags carry no value.
+        .replace(/\{\{[#^/][^}]*\}\}/g, '')
+        .replace(/\{\{\{?\s*([A-Z0-9_]+)\s*\}?\}\}/g, (_m, name: string) => {
+            const cached = seen.get(name);
+            if (cached !== undefined) return cached;
+            const value = /PORT/.test(name)
+                ? String(nextPort++)
+                : /(PATH|DIR|DEVICE|SOCKET)$/.test(name)
+                    ? `/mnt/data/${name.toLowerCase()}`
+                    : 'x';
+            seen.set(name, value);
+            return value;
+        });
 }
 
 function renderedHomeAssistantYaml(): string {
@@ -57,9 +79,11 @@ function stubAgent(filesOnBox: Set<string>) {
         if (action === 'write_file') return 'ok';
         if (action === 'read_file') return { content: '' };
         const command = params?.command ?? '';
-        const probe = /^test -e (\S+) &&/.exec(command);
+        // The probe shell-quotes the path (#2928), so strip the quoting.
+        const probe = /^test -e (?:'([^']*)'|(\S+)) &&/.exec(command);
         if (probe) {
-            return { code: 0, stdout: filesOnBox.has(probe[1]) ? 'sb-present\n' : 'sb-absent\n', stderr: '' };
+            const probed = probe[1] ?? probe[2];
+            return { code: 0, stdout: filesOnBox.has(probed) ? 'sb-present\n' : 'sb-absent\n', stderr: '' };
         }
         return { code: 0, stdout: '', stderr: '' };
     });

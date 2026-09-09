@@ -28,6 +28,7 @@
     "description": "Subdomain for LLDAP Web UI. Gated by Authelia forward-auth (admin group, two-factor per Authelia's access_control rules). Without the forward-auth block, the LLDAP UI is reachable at the nginx layer by any logged-in family user — the admin-only Authelia rule never fires because nginx never makes the auth_request subrequest (#878). That case is about a misconfigured proxy; the separate direct-on-LAN bypass (a LAN host hitting <lan-ip>:LLDAP_PORT and never touching nginx at all) is closed in template v3 by binding LLDAP's HTTP server to 127.0.0.1 plus the loopbackOnly flag below (#2380). The raw LDAP port had the same direct-on-LAN shape; it cannot be loopback-bound, so it is closed one layer down instead — see LLDAP_LDAP_PORT's blockLanAccess flag (#2388).",
     "default": "ldap",
     "exposure": "internal",
+    "audience": "admin",
     "proxyPort": "LLDAP_PORT",
     "loopbackOnly": true,
     "proxyConfig": {
@@ -46,6 +47,7 @@
     "description": "Subdomain for Authelia portal",
     "default": "auth",
     "exposure": "public",
+    "audience": "anonymous",
     "proxyPort": "AUTHELIA_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,

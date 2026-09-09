@@ -47,6 +47,7 @@
     "description": "Subdomain for Jellyfin — the general media server (music + audiobooks + video), so `media` fits better than the old per-content `music`/`books`. Web UI + Symfonium/Findroid/Streamyfin endpoint. Quick Connect handles mobile-app pairing — the app shows a 6-digit code, you confirm it once in the web UI and the app is paired without a shared password.",
     "default": "media",
     "exposure": "public",
+    "audience": "family",
     "proxyPort": "JELLYFIN_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,

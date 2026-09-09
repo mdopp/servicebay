@@ -16,7 +16,14 @@ import {
   describeBoxCandidates,
   resolveReachableBoxUrl,
   resetBoxUrlCache,
+  readChannel,
+  channelCommand,
+  channelExitCode,
+  channelResultLine,
+  classifyChannelFailure,
+  mcpFailureKind,
   BoxUnreachableError,
+  McpCallError,
   INTERNAL_BOX_ORIGIN,
 } from './autoloop-box';
 
@@ -381,3 +388,149 @@ describe('no credential-derivation path in the box-verify pipeline', () => {
     expect(md).toMatch(/get_channel/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The `channel` CLI cannot report failure — #2940. It was the box-verify
+// stage's reachability probe and it exited 0 with `{"channel":null}` for an
+// unreachable box, a rejected token, a timeout and an unreadable reply alike.
+// The stage reads that as "I have a path and the box is not on :dev", skips the
+// flip-back, and the box stays stranded on `:dev` (the #2826 failure mode,
+// reached through the probe meant to prevent it). So the gate is the CLASS of
+// failures, not one of them.
+// ---------------------------------------------------------------------------
+
+describe('mcpFailureKind — one place decides what an unreadable reply was', () => {
+  it('a rejected credential is unauthorized, whatever the body looked like', () => {
+    expect(mcpFailureKind(401, 'no SSE data line in the /mcp response')).toBe('unauthorized');
+    expect(mcpFailureKind(403, 'unparseable /mcp response envelope')).toBe('unauthorized');
+  });
+  it("the box's own refusal text is a refusal, not a malformed reply", () => {
+    expect(mcpFailureKind(200, "Token scope 'lifecycle' required for set_channel")).toBe('refused');
+  });
+  it('the envelope diagnostics are malformed', () => {
+    expect(mcpFailureKind(200, 'no SSE data line in the /mcp response')).toBe('malformed');
+    expect(mcpFailureKind(200, 'unparseable /mcp response envelope')).toBe('malformed');
+    expect(mcpFailureKind(200, 'no text content in the tool result')).toBe('malformed');
+  });
+});
+
+describe('classifyChannelFailure — every way the read fails keeps its own name', () => {
+  it('an unreachable box names the candidates it tried', () => {
+    const c = classifyChannelFailure(new BoxUnreachableError(['https://admin:hunter2@box.example.tld', INTERNAL_BOX_ORIGIN]));
+    expect(c.reason).toBe('unreachable');
+    expect(c.tried).toEqual(['https://box.example.tld', INTERNAL_BOX_ORIGIN]);
+    expect(c.tried?.join(' ')).not.toContain('hunter2'); // userinfo is stripped before it is printed
+  });
+  it('an McpCallError keeps the kind the call site already knew', () => {
+    expect(classifyChannelFailure(new McpCallError('mcp get_channel failed (HTTP 401): x', 401, 'unauthorized')).reason).toBe('unauthorized');
+    expect(classifyChannelFailure(new McpCallError('mcp get_channel: payload was not JSON: <html>', 200, 'malformed')).reason).toBe('malformed');
+  });
+  it('the client-side deadline is a timeout, not a verdict about the box', () => {
+    const e = new Error('The operation was aborted due to timeout');
+    e.name = 'TimeoutError';
+    expect(classifyChannelFailure(e).reason).toBe('timeout');
+  });
+  it('anything else is still named, never swallowed', () => {
+    expect(classifyChannelFailure(new Error('ECONNRESET')).reason).toBe('unknown');
+  });
+});
+
+/** Drive the REAL `channel` command and capture what it printed + returned. */
+async function runChannelCommand(): Promise<{ code: number; line: string; warned: string[] }> {
+  const printed: string[] = [];
+  const warned: string[] = [];
+  const code = await channelCommand(
+    l => printed.push(l),
+    l => warned.push(l),
+  );
+  return { code, line: printed.join('\n'), warned };
+}
+
+describe('the channel CLI distinguishes latest / dev / could-not-read (#2940)', () => {
+  it('exits 0 and reports the channel when the box answers latest', async () => {
+    stubBox(() => ({ body: sseOf({ channel: 'latest' }) }));
+    const { code, line } = await runChannelCommand();
+    expect(code).toBe(0);
+    expect(JSON.parse(line)).toMatchObject({ channel: 'latest', ok: true });
+  });
+
+  it('exits 0 and reports :dev — a different answer, not a different outcome', async () => {
+    stubBox(() => ({ body: sseOf({ channel: 'dev' }) }));
+    const { code, line } = await runChannelCommand();
+    expect(code).toBe(0);
+    expect(JSON.parse(line)).toMatchObject({ channel: 'dev', ok: true });
+  });
+
+  // The class: EVERY way the read can fail must be non-zero. A single
+  // unreachable-box case is not the gate (#2940).
+  const FAILURE_MODES: Array<[ChannelReadFailureCase, () => void, string]> = [
+    [
+      'unreachable',
+      () => stubBox(() => ({ body: '' }), { health: () => 0 }),
+      'no box candidate answered',
+    ],
+    ['unauthorized', () => stubBox(() => ({ body: '', status: 401 })), 'HTTP 401'],
+    [
+      'timeout',
+      () =>
+        stubBox(() => {
+          const e = new Error('The operation was aborted due to timeout');
+          e.name = 'TimeoutError';
+          return Promise.reject(e) as Promise<never>;
+        }),
+      'timeout',
+    ],
+    ['malformed', () => stubBox(() => ({ body: 'event: message\ndata: not json' })), 'unparseable'],
+  ];
+
+  it.each(FAILURE_MODES)('exits non-zero on a %s read, naming the reason', async (reason, arrange, detailNeedle) => {
+    arrange();
+    const { code, line, warned } = await runChannelCommand();
+    expect(code).not.toBe(0);
+    const parsed = JSON.parse(line) as { channel: unknown; ok: boolean; reason: string; detail: string };
+    expect(parsed.channel).toBeNull(); // never laundered into "not on dev"
+    expect(parsed.ok).toBe(false);
+    expect(parsed.reason).toBe(reason);
+    expect(parsed.detail).toContain(detailNeedle);
+    expect(warned.join(' ')).toContain(reason);
+    expect(`${line}${warned.join(' ')}`).not.toContain('sb_test_token_value_0123');
+  });
+
+  it('names the candidate list when nothing answered — "could not ask" has to say where', async () => {
+    stubBox(() => ({ body: '' }), { health: () => 0 });
+    const { line } = await runChannelCommand();
+    const parsed = JSON.parse(line) as { tried: string[] };
+    expect(parsed.tried[0]).toBe('https://box.example.tld');
+    expect(parsed.tried.at(-1)).toBe(INTERNAL_BOX_ORIGIN);
+  });
+
+  it('a well-formed reply with no channel field is a failed read, not an empty channel', async () => {
+    stubBox(() => ({ body: sseOf({}) }));
+    const { code, line } = await runChannelCommand();
+    expect(code).toBe(2);
+    expect(JSON.parse(line)).toMatchObject({ ok: false, reason: 'malformed' });
+  });
+
+  it("a refusal carries the box's own reason", async () => {
+    stubBox(() => ({ body: sseOf("Token scope 'read' required for get_channel", true) }));
+    const r = await readChannel();
+    expect(r).toMatchObject({ ok: false, reason: 'refused' });
+    expect(channelExitCode(r)).toBe(2);
+  });
+
+  it('getChannel keeps its null for the in-process pollers — "not yet" is not a verdict', async () => {
+    stubBox(() => ({ body: '' }), { health: () => 0 });
+    await expect(getChannel()).resolves.toBeNull();
+    expect(channelResultLine({ ok: true, channel: 'latest' })).toEqual({ channel: 'latest', ok: true });
+  });
+
+  it('the CLI branch goes through channelCommand and exits on its code — not a bare exit 0', () => {
+    const src = readFileSync('scripts/autoloop-box.ts', 'utf8');
+    const branch = src.slice(src.indexOf("case 'channel': {"), src.indexOf("case 'channel-set'"));
+    expect(branch).toContain('channelCommand()');
+    expect(branch).toMatch(/process\.exit\(code\)/);
+    expect(branch).not.toContain('await getChannel()');
+  });
+});
+
+type ChannelReadFailureCase = 'unreachable' | 'unauthorized' | 'timeout' | 'malformed';

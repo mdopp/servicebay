@@ -26,7 +26,12 @@ process.env.AUTH_SECRET = 'test-auth-secret-for-2278-proxy';
 // apex-portal rewrite branch is never reached, but stub them defensively.
 vi.mock('@/lib/config', () => ({ getConfig: vi.fn(() => Promise.resolve({})) }));
 vi.mock('@/lib/mode', () => ({ getActiveDomain: vi.fn(() => '') }));
-vi.mock('@/lib/auth/session', () => ({ decrypt: vi.fn(() => Promise.resolve(null)) }));
+// #2931 — the proxy reads the cookie through the single chokepoint
+// (`getSessionFromCookieHeader`), which also re-checks `viaToken` liveness and
+// the computed expiry. These tests never present a cookie, so "no session".
+vi.mock('@/lib/auth/session', () => ({
+  getSessionFromCookieHeader: vi.fn(() => Promise.resolve(null)),
+}));
 // No Bearer is valid in these tests (the forged/token-less shapes) — a real
 // token verify would hit the token store; stub it to "invalid".
 vi.mock('@/lib/auth/apiTokens', () => ({ verifyToken: vi.fn(() => Promise.resolve(null)) }));

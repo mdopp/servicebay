@@ -75,11 +75,38 @@ access_control:
       policy: bypass
 
     # Admin services — admins group, two-factor.
+    #
+    # THIS IS THE ADMIN-SURFACE TABLE. A template declares one of its
+    # `subdomain` variables an admin surface with `"audience": "admin"` in its
+    # variables.json; that declaration has to appear BOTH here and in the
+    # explicit-deny twin below, or the host silently falls through to the
+    # `*.{{PUBLIC_DOMAIN}}` family catch-all at the bottom of this table and any
+    # household account reaches it at one factor (#2936).
+    #
+    # The two are kept in step by a test, not by memory: the "Authelia audience"
+    # section of tests/backend/template_consistency.test.ts evaluates these rules
+    # the way Authelia does (top to bottom, a `subject` mismatch SKIPS the rule)
+    # for a `group:family`-only subject and fails when a host declared `admin` is
+    # not denied. Code mirror: ADMIN_ONLY_SUBDOMAINS in
+    # packages/backend/src/lib/reverseProxy/lanDeniedPage.ts.
+    #
+    # The hostnames are the templates' DEFAULT subdomain labels. An operator who
+    # renames a subdomain in the wizard has to add the new name here by hand —
+    # same limitation the original four always had.
     - domain:
         - 'admin.{{PUBLIC_DOMAIN}}'
         - 'nginx.{{PUBLIC_DOMAIN}}'
         - 'dns.{{PUBLIC_DOMAIN}}'
         - 'ldap.{{PUBLIC_DOMAIN}}'
+        # claude-dev (#2936). Both hosts hand out the dev box itself: `pi` is an
+        # interactive coding agent with a bash tool running as `dev` inside the
+        # claude-dev container and carries NO sign-in of its own, so Authelia's
+        # verdict is the entire authorization decision; `claude` is that
+        # container's own configuration UI. Family-reachable, they gave any
+        # household LLDAP account a shell next to the box's ServiceBay token and
+        # the operator's Claude/GitHub credentials.
+        - 'claude.{{PUBLIC_DOMAIN}}'
+        - 'pi.{{PUBLIC_DOMAIN}}'
       policy: two_factor
       subject:
         - 'group:admins'
@@ -95,6 +122,8 @@ access_control:
         - 'nginx.{{PUBLIC_DOMAIN}}'
         - 'dns.{{PUBLIC_DOMAIN}}'
         - 'ldap.{{PUBLIC_DOMAIN}}'
+        - 'claude.{{PUBLIC_DOMAIN}}'
+        - 'pi.{{PUBLIC_DOMAIN}}'
       policy: deny
 
     # Everything else — family + admins, one-factor

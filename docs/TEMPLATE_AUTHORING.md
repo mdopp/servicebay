@@ -164,6 +164,8 @@ Map of variable name to metadata. Recognized fields:
     "options": ["a", "b"],   // for type=select
     "devicePath": "/dev/serial/by-id",  // for type=device
     "proxyPort": "MY_PORT",  // for type=subdomain — variable name OR literal port number
+    "exposure": "public",    // for type=subdomain — public | internal | lan
+    "audience": "family",    // for type=subdomain, REQUIRED — admin | family | anonymous
     "proxyConfig": {         // for type=subdomain — passed to NPM verbatim
       "block_exploits": true,
       "ssl_forced": true,
@@ -216,6 +218,22 @@ What each `type` does generically (no per-template code needed):
   `proxyConfig`. Mustache placeholders inside `advanced_config` are
   rendered against the user's variables, so cross-template wiring
   (`{{AUTHELIA_PORT}}`, `{{PUBLIC_DOMAIN}}`) works.
+- **`audience` on a `subdomain` var — required** — who Authelia is meant to
+  let through. `admin` (the admins group only), `family` (every household
+  account, via the `*.<domain>` one-factor catch-all), or `anonymous` (no
+  sign-in — only the auth portal itself). This is a *declaration*; the
+  enforcing artifact is the `access_control` table in
+  `templates/auth/configuration.yml.mustache`, so an `admin` host must also be
+  listed there **twice**: in the admins-only rule and in the explicit-deny twin
+  below it (a `subject` mismatch skips a rule rather than denying — #878).
+  The "Authelia audience" section of `tests/backend/template_consistency.test.ts`
+  evaluates that table the way Authelia does and fails the build when a
+  declaration and the rules disagree, or when a subdomain declares no audience
+  at all. Add it to `ADMIN_ONLY_SUBDOMAINS`
+  (`packages/backend/src/lib/reverseProxy/lanDeniedPage.ts`) too, so the
+  forward-auth 403 page names the right group. This gate exists because
+  `pi.<domain>` — an interactive coding agent with a bash tool and no sign-in
+  of its own — shipped on the family catch-all (#2936).
 - **`oidcClient` on any var** — collected across every selected
   template and registered with Authelia in one POST. When
   `clientSecretVar` is set, the secret is wired into the container

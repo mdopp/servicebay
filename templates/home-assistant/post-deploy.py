@@ -476,6 +476,60 @@ def _ha_config_dir() -> str:
     return os.path.join(base, "home-assistant", "homeassistant")
 
 
+# ── Credential files in HA's config dir (#2937) ───────────────────────────────
+#
+# EVERY file this post-deploy leaves under HA's /config mount that carries a
+# secret is owner-only. Not a rule about one path: the mount is an ordinary
+# host directory (`<DATA_DIR>/home-assistant/homeassistant`), so anything
+# readable there is readable by every local account on the box and by any
+# container that bind-mounts that tree or a parent. The two credentials that
+# live there are a Home Assistant long-lived access token — full API
+# authority, ~10-year lifespan, no refresh — and the `auth_oidc` client
+# secret inside configuration.yaml.
+#
+# 0600 costs nothing because the writer and every reader are the SAME uid:
+# this script and templates/mosquitto/post-deploy.py (the token's only
+# consumer) both run on the host as the user that owns the rootless podman
+# session, the `homeassistant` container is `privileged` with no `runAsUser`
+# so its in-container root maps back to that same host uid, and the backup
+# worker is launched with `podman run` and no `--user`, so it too reads as
+# that uid.
+HA_SECRET_FILE_MODE = 0o600
+
+
+def harden_config_secret(path: str) -> None:
+    """Tighten a credential file in HA's config dir down to owner-only.
+
+    Deliberately usable on a file this run did NOT write. A token minted by an
+    older ServiceBay is sitting there 0644 and no write path would ever touch
+    it again — the onboarding step returns as soon as the existing token
+    authenticates — so the boxes that have carried the token longest would keep
+    the exposure forever. Best-effort: a chmod failure is reported, never
+    fatal, and a missing file is simply nothing to do."""
+    try:
+        if os.path.exists(path):
+            os.chmod(path, HA_SECRET_FILE_MODE)
+    except OSError as e:
+        log(f"   ⚠️ Could not tighten permissions on {path}: {e}")
+
+
+def write_config_secret(path: str, content: str, *, append: bool = False) -> None:
+    """Write (or append) a credential-carrying file in HA's config dir,
+    leaving it owner-only.
+
+    The mode is handed to `os.open`, so a file this call creates is never
+    world-readable — not even for the instant between `open()` and a
+    follow-up `chmod`. `O_CREAT`'s mode is ignored when the file already
+    exists, which is the case on every box installed before #2937, so the
+    explicit chmod afterwards is what re-tightens those. Raises OSError like
+    `open()` does; callers keep their own failure reporting."""
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
+    fd = os.open(path, flags, HA_SECRET_FILE_MODE)
+    with os.fdopen(fd, "a" if append else "w", encoding="utf-8") as fh:
+        fh.write(content)
+    os.chmod(path, HA_SECRET_FILE_MODE)
+
+
 # ── auth_oidc configuration.yaml self-heal + value reconcile (#1687, #2597) ──
 #
 # A HA backup-restore replaces ServiceBay's base configuration.yaml with the
@@ -669,8 +723,9 @@ def ensure_auth_oidc_config_block() -> bool:
             log("   configuration.yaml's auth_oidc values already match this deploy — leaving it alone.")
             return False
         try:
-            with open(cfg, "w", encoding="utf-8") as fh:
-                fh.writelines(lines)
+            # configuration.yaml carries the auth_oidc client_secret, so it is
+            # one of this post-deploy's credential files (#2937).
+            write_config_secret(cfg, "".join(lines))
         except OSError as exc:
             log(f"   ⚠️ Could not update the auth_oidc values in {cfg}: {exc}")
             return False
@@ -682,8 +737,7 @@ def ensure_auth_oidc_config_block() -> bool:
         log("   HA_OIDC_SECRET / PUBLIC_DOMAIN unset — skipping auth_oidc re-seed.")
         return False
     try:
-        with open(cfg, "a", encoding="utf-8") as fh:
-            fh.write(block + "\n")
+        write_config_secret(cfg, block + "\n", append=True)
     except OSError as exc:
         log(f"   ⚠️ Could not re-add auth_oidc block to {cfg}: {exc}")
         return False
@@ -712,6 +766,34 @@ HA_LEGACY_LONG_LIVED_TOKEN_PATHS = [
 ]
 HA_CONTAINER_NAME = "home-assistant-homeassistant"
 HA_CLIENT_ID = "http://127.0.0.1:8123/"
+
+# Every credential-carrying file this post-deploy can leave under HA's config
+# dir (#2937), as names relative to that dir. configuration.yaml holds the
+# auth_oidc `client_secret` and — since #2597 made it seed-only — this script
+# is the only thing that rotates it; `.pre-http-migration.bak` is a verbatim
+# copy of it, made by `shutil.copy2`, which preserves the source's mode; the
+# token files hold the long-lived admin token under the current name and the
+# two pre-rename ones a not-yet-migrated box still uses.
+HA_CONFIG_SECRET_FILES = (
+    "configuration.yaml",
+    "configuration.yaml.pre-http-migration.bak",
+    HA_LONG_LIVED_TOKEN_PATH.lstrip("/"),
+    *(p.lstrip("/") for p in HA_LEGACY_LONG_LIVED_TOKEN_PATHS),
+)
+
+
+def enforce_config_secret_modes() -> None:
+    """Converge every credential file in HA's config dir on owner-only.
+
+    Runs on EVERY deploy, not only the ones that write something. The write
+    paths already create their files 0600, but a box installed before #2937
+    has credentials on disk that no write path revisits — the long-lived token
+    short-circuits the whole onboarding step as soon as it authenticates, and
+    a configuration.yaml whose auth_oidc values already match is left
+    byte-identical by design. Without this pass the fix would only ever reach
+    freshly written files."""
+    for name in HA_CONFIG_SECRET_FILES:
+        harden_config_secret(os.path.join(_ha_config_dir(), name))
 
 
 def _onboarding_state() -> dict[str, bool] | None:
@@ -951,9 +1033,9 @@ def _persist_long_lived_token(token: str) -> str | None:
     path. Returns the full path on success, None on failure."""
     target = os.path.join(_ha_config_dir(), HA_LONG_LIVED_TOKEN_PATH.lstrip("/"))
     try:
-        with open(target, "w", encoding="utf-8") as f:
-            f.write(token + "\n")
-        os.chmod(target, 0o644)
+        # Owner-only from the first byte (#2937) — this is a full-authority,
+        # ~10-year Home Assistant API token in a plain host directory.
+        write_config_secret(target, token + "\n")
     except OSError as e:
         log(f"   ⚠️ Could not persist HA long-lived token at {target}: {e}")
         return None
@@ -1249,6 +1331,12 @@ def configure_oscar_ha_onboarding() -> None:
             if os.path.exists(legacy_token_file):
                 try:
                     os.rename(legacy_token_file, token_file)
+                    # A rename carries the inode across untouched, so the moved
+                    # token would keep whatever mode the box that minted it used
+                    # — 0644 on anything installed before #2937. Re-tighten it at
+                    # the move, not just at a write that will never happen for a
+                    # token that still authenticates.
+                    harden_config_secret(token_file)
                     log(f"   Migrated legacy HA token {legacy_token_file} → {token_file} (rename chain).")
                 except OSError as e:
                     log(f"   ⚠️ Could not migrate legacy HA token to {token_file}: {e}")
@@ -1259,6 +1347,9 @@ def configure_oscar_ha_onboarding() -> None:
     # row no longer exists in HA's auth store → a 401 on every authenticated
     # call. Validate it; only short-circuit when it actually authenticates.
     if os.path.exists(token_file):
+        # The token that is about to short-circuit this whole function is the
+        # one no write path revisits (#2937) — tighten it here or never.
+        harden_config_secret(token_file)
         try:
             with open(token_file, encoding="utf-8") as f:
                 existing = f.read().strip()
@@ -1591,8 +1682,11 @@ def remove_legacy_http_yaml_block(cfg_path: str) -> bool:
     try:
         if not os.path.exists(backup):
             shutil.copy2(cfg_path, backup)
-        with open(cfg_path, "w", encoding="utf-8") as fh:
-            fh.writelines(lines[:start] + lines[end:])
+            # copy2 preserves the SOURCE's mode, so a configuration.yaml that
+            # was still 0644 would hand its auth_oidc client_secret to a second
+            # world-readable file (#2937).
+            harden_config_secret(backup)
+        write_config_secret(cfg_path, "".join(lines[:start] + lines[end:]))
     except OSError as exc:
         log(f"   ⚠️ Could not remove the migrated http: block from {cfg_path}: {exc}")
         return False
@@ -1628,8 +1722,7 @@ def ensure_legacy_http_yaml_block(cfg_path: str) -> bool:
         "  trusted_proxies:",
     ] + [f"    - {proxy}" for proxy in HA_TRUSTED_PROXIES])
     try:
-        with open(cfg_path, "a", encoding="utf-8") as fh:
-            fh.write(block + "\n")
+        write_config_secret(cfg_path, block + "\n", append=True)
     except OSError as exc:
         log(f"   ⚠️ Could not re-add the http: block to {cfg_path}: {exc}")
         return False
@@ -1939,6 +2032,13 @@ def main() -> int:
     if zwave_settings_changed:
         restart_zwave_js()
     log(f"✅ Connect Home Assistant to Z-Wave JS: ws://localhost:{ZWAVEJS_WS_PORT}")
+
+    # Before anything reads or rewrites them: pull every credential already in
+    # HA's config dir down to owner-only (#2937). An install that predates the
+    # fix keeps its long-lived token and its auth_oidc client_secret
+    # world-readable otherwise, because the paths that would rewrite them are
+    # exactly the paths a healthy box never takes.
+    enforce_config_secret_modes()
 
     configure_auth_oidc()
 

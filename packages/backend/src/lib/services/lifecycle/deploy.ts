@@ -39,6 +39,7 @@ import {
     waitForRestartSettled,
 } from './units';
 import { backupQuadlets, readExistingQuadletFile, writeFile } from './quadletFiles';
+import { validatePodManifest } from '../podSchema';
 
 /**
  * Validate that template config files match sent extraFiles (sanity check).
@@ -121,6 +122,21 @@ export async function deployKubeService(
      */
     completeDelivery = false,
 ) {
+    // #2928 — validate the manifest HERE, at the choke point, not only in the
+    // two HTTP routes. `deploy_service` and `update_service_yaml` call this
+    // function in-process over MCP and used to skip `validatePodManifest`
+    // entirely, so a `mutate`-scoped principal could hand the deploy path a
+    // `hostPath.path` carrying a shell metacharacter. Every kube write path
+    // goes through this function, so this is the one place the check cannot be
+    // routed around. (The HTTP routes still validate first so they can answer
+    // 400 with a structured path instead of a thrown error.)
+    const manifestCheck = validatePodManifest(yamlContent);
+    if (!manifestCheck.ok) {
+        throw new Error(
+            `Invalid Pod manifest at ${manifestCheck.error?.path ?? '$'}: ${manifestCheck.error?.message ?? 'validation failed'}`,
+        );
+    }
+
     // Migrate any pre-rename predecessor units first so their host-port
     // ownership is released before the port-collision pre-flight runs.
     await migratePredecessors(nodeName, name, onProgress);

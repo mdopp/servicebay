@@ -20,11 +20,15 @@ import { logger } from '@/lib/logger';
  *  - The session carries `scopes = token.scopes`, so a `read`-only token yields
  *    a read-only session — it can render the UI but mutating endpoints (which
  *    demand a higher scope) still reject it.
- *  - The session carries `viaToken = token.id`; `requireSession` re-checks the
- *    token is still live on every request, so **revoking the token instantly
- *    kills the session** (cascading revocation, #2047).
- *  - The cookie expiry is `min(token.expiresAt, now + 1h)` — it never outlives
- *    the token and is capped regardless.
+ *  - The session carries `viaToken = token.id`; `getSessionFromCookieHeader` —
+ *    the one chokepoint every cookie-accepting surface goes through — re-checks
+ *    the token is still live on every request, so **revoking the token
+ *    instantly kills the session** (cascading revocation, #2047) on `/api/*`,
+ *    `/mcp`, Socket.IO and the proxy gate alike (#2931).
+ *  - The expiry is `min(token.expiresAt, now + 1h)` — it never outlives the
+ *    token and is capped regardless. It is bound into the signed JWT `exp` by
+ *    `encryptSession`, not only into the cookie attribute a client may ignore
+ *    (#2931).
  *
  * `skipAuth: true`: the presented Bearer token IS the credential (mirrors
  * `/api/system/api-tokens/delegate`). No cookie/admin session is required —
