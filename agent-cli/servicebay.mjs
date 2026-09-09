@@ -61,7 +61,14 @@ function line(...parts) {
  *
  * Each entry declares everything a caller (or #2907's contract test) needs
  * without executing anything:
- *   `scope`   the ApiScope this verb requires; quoted back in every auth error
+ *   `auth`    how the route authenticates. Absent (the default) means the
+ *             ServiceBay scope gate: the route carries `tokenScope` and the
+ *             CLI quotes `scope` back in every auth error. `'parent-token'`
+ *             means the route is mounted `skipAuth: true` because the token
+ *             PRESENTED is itself the credential being acted on — see the
+ *             delegate/revoke pair below.
+ *   `scope`   the ApiScope this verb requires, or `null` for a `parent-token`
+ *             verb, which is gated on lineage rather than on a scope
  *   `method`  / `path(args, options)` the exact route it speaks
  *   `reads`   the top-level response fields `text()` actually consumes, so a
  *             route that stops returning one is a red rather than a blank line
@@ -197,6 +204,73 @@ export const VERBS = {
     reads: ['content'],
     text: body => (typeof body?.content === 'string' ? body.content : 'assist returned no content'),
   },
+
+  /* ── the two writes (#2910) ───────────────────────────────────────────────
+   *
+   * Everything above only reads. These two mint and revoke a DELEGATED CHILD
+   * of the token the caller already holds, and they are here because
+   * `templates/claude-dev/config-ui/server.mjs` needed exactly them in order to
+   * stop speaking the route itself — which is the consolidation #2910 is.
+   *
+   * They authenticate DIFFERENTLY from every read verb, and the difference is
+   * declared rather than left to be inferred. `POST`/`DELETE
+   * /api/system/api-tokens/delegate` is mounted `skipAuth: true`: there is no
+   * `tokenScope` to gate on, because the presented token IS the credential —
+   * it is the delegation parent, verified inside the handler, which refuses an
+   * unknown, expired or foreign-parent request itself. Hence `auth:
+   * 'parent-token'` and no `scope`; #2907's contract test asserts that shape
+   * against the route rather than a `tokenScope` string.
+   *
+   * This does NOT widen what an agent token can do. A child is never wider
+   * than its parent (`scopesAreSubset`, packages/backend/src/lib/auth/
+   * apiScope.ts), so a read-only container token mints read-only children and
+   * can revoke only what it minted.
+   */
+
+  delegate: {
+    summary: 'mint a delegated child of this token, never wider than it',
+    usage: 'delegate <name> [--scopes read,lifecycle] [--expires <iso8601>]',
+    auth: 'parent-token',
+    scope: null,
+    method: 'POST',
+    positionals: ['name'],
+    options: ['scopes', 'expires'],
+    path: () => '/api/system/api-tokens/delegate',
+    body: (args, opts) => ({
+      name: args.name,
+      scopes: String(opts.scopes ?? 'read').split(',').map(s => s.trim()).filter(Boolean),
+      ...(opts.expires ? { expiresAt: opts.expires } : {}),
+    }),
+    reads: ['token', 'secret'],
+    // The child secret is returned ONCE and exists nowhere else afterwards, so
+    // it has to leave through stdout. That is not the argv rule bending: argv
+    // is world-readable through /proc/<pid>/cmdline, a pipe to the caller is
+    // not. Nothing here ever puts a secret back into an argument.
+    text: body => [
+      line('id     ', String(body?.token?.id ?? '?')),
+      line('name   ', String(body?.token?.name ?? '?')),
+      line('scopes ', (Array.isArray(body?.token?.scopes) ? body.token.scopes : []).join(',') || '?'),
+      line('secret ', String(body?.secret ?? '')),
+    ].join('\n'),
+  },
+
+  revoke: {
+    summary: 'revoke one child token this token delegated',
+    usage: 'revoke <id>',
+    auth: 'parent-token',
+    scope: null,
+    method: 'DELETE',
+    positionals: ['id'],
+    options: [],
+    path: args => `/api/system/api-tokens/delegate?id=${enc(args.id)}`,
+    reads: ['revoked', 'id', 'name'],
+    // `revoked` is a COUNT and is printed as one: "revoked nothing" must never
+    // read as "revoked it" (why the route answers a denominator at all). A 404
+    // — not this parent's child, or already gone — stays a NOT_FOUND failure
+    // here; deciding that "already gone" is acceptable is the caller's call,
+    // not the CLI's.
+    text: body => `revoked ${Number(body?.revoked ?? 0)}: ${String(body?.id ?? '?')} (${String(body?.name ?? '?')})`,
+  },
 };
 
 /**
@@ -205,8 +279,11 @@ export const VERBS = {
  * `SERVICEBAY_MCP_TOKEN_FILE` is the path the entrypoint writes — a mode-0400
  * file, because the environment is readable by other accounts on the container.
  * The plain env var is the fallback for running by hand. One-for-one with
- * `readServicebayToken` in `templates/claude-dev/config-ui/server.mjs`; #2910
- * collapses the two.
+ * `readServicebayToken` in `templates/claude-dev/config-ui/server.mjs`, which
+ * deliberately keeps its own copy: that server must read the token
+ * synchronously at boot, before it can load this file at all. What #2910
+ * collapsed onto this file is the ROUTE knowledge — the thing that was ageing
+ * apart — not four lines of env reading.
  */
 export function readToken(env, readFile) {
   const file = env.SERVICEBAY_MCP_TOKEN_FILE;
@@ -295,14 +372,36 @@ export function parseArgs(argv) {
 }
 
 /**
+ * What this verb needs of a token, as a phrase — the one place the two auth
+ * models differ in wording, so every message below reads the same either way.
+ */
+function credentialNeed(verb) {
+  return verb.auth === 'parent-token'
+    ? 'the token that is to be the delegation parent (this verb carries no scope gate — the token it presents IS the credential)'
+    : `a token with the \`${verb.scope}\` scope`;
+}
+
+/**
  * Turn an auth refusal into a message that names the SCOPE.
  *
  * A bare `401 Authentication required` tells an agent nothing it can act on.
  * The verb knows the scope it needs; a 403 additionally carries the server's
  * own `Forbidden: '<scope>' scope required`, which we prefer when present.
+ *
+ * A `parent-token` verb (#2910) has no scope to name, so it says the thing
+ * that IS actionable there instead: the presented token was rejected *as a
+ * parent* — unknown, revoked, expired, or not the parent of that child.
  */
 function scopeRefusal(verbName, verb, status, body) {
   const serverSaid = typeof body?.error === 'string' ? body.error : '';
+  if (verb.auth === 'parent-token') {
+    return {
+      code: 'SCOPE',
+      status,
+      requiredScope: null,
+      message: `ServiceBay refused the token for \`${verbName}\`. This verb needs ${credentialNeed(verb)}, and the token presented was rejected as one: it is unknown, revoked, expired, or not the parent of that child. ServiceBay says: ${serverSaid || (status === 403 ? 'Forbidden' : 'Authentication required')}.`,
+    };
+  }
   const named = /'([a-z]+)' scope required/.exec(serverSaid);
   const required = named ? named[1] : verb.scope;
   const message = status === 403
@@ -341,7 +440,7 @@ export async function run(argv, deps = {}) {
     return fail(verbName, {
       code: 'NO_TOKEN',
       requiredScope: verb.scope,
-      message: `no ServiceBay API token found, so \`${verbName}\` cannot authenticate. This verb needs a token with the \`${verb.scope}\` scope. `
+      message: `no ServiceBay API token found, so \`${verbName}\` cannot authenticate. This verb needs ${credentialNeed(verb)}. `
         + 'Point SERVICEBAY_MCP_TOKEN_FILE at the token file this container was given (a mode-0400 file), or set SERVICEBAY_MCP_TOKEN. '
         + 'The token is never passed as an argument: /proc/<pid>/cmdline is world-readable.',
     }, json);

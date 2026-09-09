@@ -75,6 +75,8 @@ spell the `node …` form out.
 | `servicebay health` | Read the configured health checks and their last result. |
 | `servicebay assists [--query <text>] [--kind <kind>]` | List the assist catalog — ADRs, recipes, guides, footguns. |
 | `servicebay assist <id>` | Print one assist in full, frontmatter and body. |
+| `servicebay delegate <name> [--scopes read,lifecycle] [--expires <iso8601>]` | Mint a child of YOUR token, never wider than it. Prints the child secret once. |
+| `servicebay revoke <id>` | Revoke one child token you delegated. |
 
 `servicebay --help` prints the same table from the CLI itself. That table is the
 contract; a verb or an option that is not in it does not exist.
@@ -86,18 +88,28 @@ The token is **read-scoped**, and that is the whole story:
 - **It can** list and inspect services, read unit files and pod manifests, pull
   logs, read health checks, run the diagnosis (a POST that only inspects), and
   read the assist catalog.
+- **It can also hand a narrower copy of itself onward.** `delegate` mints a
+  CHILD of the token you are holding and `revoke` takes one back. This is not a
+  hole in the read scope: a child is never wider than its parent, so a
+  read-scoped token can only ever mint read-scoped children, and a parent may
+  revoke only what it minted. These two are gated on lineage rather than on a
+  scope — the token you present IS the credential being acted on — so a refusal
+  there means your token was rejected as a *parent*, not under-scoped. The
+  secret comes back once, on stdout; it is never accepted as an argument.
 - **It cannot** install, deploy, update, start, stop or restart anything, edit a
-  service's YAML, write files on the host, create or remove proxy routes, read
-  stored secrets, or mint tokens. Those need a write-scoped session, which is
-  the operator's, not yours.
+  service's YAML, write files on the host, create or remove proxy routes, or
+  read stored secrets. Those need a write-scoped session, which is the
+  operator's, not yours.
 - When a call is refused, the CLI names **the scope it needed**, not the bare
   status — ServiceBay's REST gate answers a refused Bearer with a flat `401
   Authentication required`, which is useless to act on. A `403` carries the
   server's own `'<scope>' scope required`, relayed verbatim.
 
-So: use the CLI to *observe*. If a task needs a change on the box, say what you
-need and why, and ask the operator — do not go looking for a side door such as
-`podman` on a host socket or a second credential lying around the container.
+So: use the CLI to *observe* (and, where a sub-agent or a project of its own
+needs its own narrower credential, to delegate one). If a task needs a change on
+the box, say what you need and why, and ask the operator — do not go looking for
+a side door such as `podman` on a host socket or a second credential lying
+around the container.
 
 ## How you test
 

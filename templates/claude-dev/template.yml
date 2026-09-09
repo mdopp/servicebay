@@ -217,8 +217,26 @@ spec:
       # here and survive a container restart.
       - mountPath: /workspace
         name: claude-dev-workspace
+      # The delivered agent kit (#2908/#2910, ADR 0014): the assist catalog,
+      # `agent-cli/servicebay.mjs` and AGENTS.md, as a git checkout ServiceBay
+      # refreshes on the HOST at boot and hourly. Mounted READ-ONLY, and never
+      # copied into the image: the whole point of ADR 0014 is that there is one
+      # source, so a `docs(assists):` commit or a CLI fix reaches this container
+      # without a release. The configuration UI calls the CLI from here for its
+      # token delegate/revoke, so this mount is load-bearing, not a convenience.
+      - mountPath: /opt/servicebay/agent-kit
+        name: servicebay-agent-kit
+        readOnly: true
   volumes:
   - name: claude-dev-workspace
     hostPath:
       path: {{DATA_DIR}}/claude-dev/workspace
+      type: DirectoryOrCreate
+  - name: servicebay-agent-kit
+    hostPath:
+      path: {{DATA_DIR}}/agent-kit/checkout
+      # DirectoryOrCreate, not Directory: the kit may not have landed yet on a
+      # first boot. An empty mount then means the config UI reports the CLI as
+      # missing (a 503 that names the path) rather than the pod refusing to
+      # start at all.
       type: DirectoryOrCreate

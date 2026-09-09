@@ -52,6 +52,10 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SERVER_MJS = path.join(REPO_ROOT, 'templates', 'claude-dev', 'config-ui', 'server.mjs');
+/* The ONE ServiceBay client the config UI delegates through (#2910). On the
+ * box it arrives as the pod's read-only agent-kit mount; here it is the
+ * checkout's own copy, so these cases exercise the real CLI. */
+const AGENT_CLI = path.join(REPO_ROOT, 'agent-cli', 'servicebay.mjs');
 
 // The real token store on a throwaway DATA_DIR — delegation and revocation are
 // counted off the rows that were actually written.
@@ -235,7 +239,7 @@ async function setup() {
   const mod = await import(/* @vite-ignore */ SERVER_MJS);
   const ui = mod.createConfigUiServer({
     requiredGroup: 'admins',
-    servicebay: { url: servicebayUrl, token: parent.secret },
+    servicebay: { url: servicebayUrl, token: parent.secret, cli: AGENT_CLI },
     projects: { devHome: workspace, homeDir: workspace, tmuxSession: 'claude', runTmux, runCommand },
     log: () => {},
   });
