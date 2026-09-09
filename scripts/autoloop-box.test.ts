@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -8,9 +8,16 @@ import {
   parseMcpExecResult,
   parseMcpToolResult,
   normaliseBoxUrl,
+  redactBoxUrl,
   backoffMs,
   setChannel,
   getChannel,
+  boxUrlCandidates,
+  describeBoxCandidates,
+  resolveReachableBoxUrl,
+  resetBoxUrlCache,
+  BoxUnreachableError,
+  INTERNAL_BOX_ORIGIN,
 } from './autoloop-box';
 
 describe('parseSettingsEnv', () => {
@@ -119,20 +126,39 @@ interface Captured {
   init: { method?: string; headers?: Record<string, string>; body?: string };
 }
 
-function stubBox(reply: (call: Captured) => { body: string; status?: number } | Promise<never>): Captured[] {
+/** Stub the box. `/api/health` is answered by the reachability probe (a 401 is
+ *  "alive"), everything else goes to `reply`. `health` lets a test make a given
+ *  origin refuse the probe — 0 means "connection refused". */
+function stubBox(
+  reply: (call: Captured) => { body: string; status?: number } | Promise<never>,
+  opts: { health?: (url: string) => number } = {},
+): Captured[] {
   const calls: Captured[] = [];
   vi.stubEnv('SB_BOX_URL', 'https://box.example.tld');
   vi.stubEnv('SB_TOKEN', 'sb_test_token_value_0123');
   vi.stubGlobal('fetch', async (url: string, init: Captured['init'] = {}) => {
     const call = { url: String(url), init };
     calls.push(call);
+    if (call.url.endsWith('/api/health')) {
+      const status = opts.health ? opts.health(call.url) : 401;
+      if (status === 0) throw new Error('ECONNREFUSED');
+      return { status, text: async () => '' } as unknown as Response;
+    }
     const res = await reply(call);
     return { status: res.status ?? 200, text: async () => res.body } as unknown as Response;
   });
   return calls;
 }
 
+/** Only the calls that carry the token — the probe deliberately does not. */
+const mcpCalls = (calls: Captured[]) => calls.filter(c => c.url.endsWith('/mcp'));
+
+beforeEach(() => {
+  resetBoxUrlCache();
+});
+
 afterEach(() => {
+  resetBoxUrlCache();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -141,8 +167,8 @@ describe('setChannel', () => {
   it('flips via the MCP set_channel tool with the Bearer token — never an admin login', async () => {
     const calls = stubBox(() => ({ body: sseOf({ ok: true, channel: 'dev' }) }));
     await setChannel('dev');
-    expect(calls).toHaveLength(1);
-    const [call] = calls as [Captured];
+    expect(mcpCalls(calls)).toHaveLength(1);
+    const [call] = mcpCalls(calls) as [Captured];
     expect(call.url).toBe('https://box.example.tld/mcp');
     expect(call.init.headers?.Authorization).toBe('Bearer sb_test_token_value_0123');
     expect(JSON.parse(call.init.body as string)).toMatchObject({
@@ -157,7 +183,7 @@ describe('setChannel', () => {
   it('flips back to :latest through the same call — symmetric authority', async () => {
     const calls = stubBox(() => ({ body: sseOf({ ok: true, channel: 'latest' }) }));
     await setChannel('latest');
-    expect(JSON.parse((calls[0] as Captured).init.body as string)).toMatchObject({
+    expect(JSON.parse((mcpCalls(calls)[0] as Captured).init.body as string)).toMatchObject({
       params: { name: 'set_channel', arguments: { channel: 'latest' } },
     });
   });
@@ -177,7 +203,7 @@ describe('getChannel', () => {
   it('reads the channel via the MCP get_channel tool', async () => {
     const calls = stubBox(() => ({ body: sseOf({ channel: 'dev' }) }));
     await expect(getChannel()).resolves.toBe('dev');
-    expect(JSON.parse((calls[0] as Captured).init.body as string)).toMatchObject({
+    expect(JSON.parse((mcpCalls(calls)[0] as Captured).init.body as string)).toMatchObject({
       params: { name: 'get_channel', arguments: {} },
     });
   });
@@ -185,6 +211,141 @@ describe('getChannel', () => {
   it('returns null when the box does not answer — "not yet", never a verdict', async () => {
     stubBox(() => Promise.reject(new Error('ECONNREFUSED')) as Promise<never>);
     await expect(getChannel()).resolves.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Box-URL resolution as an ORDERED CANDIDATE LIST (#2922). The harness runs in
+// a container ON the box, where the configured/installed LAN address does not
+// route — but "nothing answered" must never be laundered into a success.
+// ---------------------------------------------------------------------------
+
+describe('boxUrlCandidates — the resolution ORDER', () => {
+  const noSettings = () => null;
+
+  it('tries the env-configured address FIRST, then the installed address, then the on-box endpoint', () => {
+    expect(
+      boxUrlCandidates({
+        env: { SB_BOX_URL: 'https://admin.example.tld' },
+        readSettings: () => 'STATIC_IP=10.0.0.5\nSERVICEBAY_PORT=5888\n',
+      }),
+    ).toEqual(['https://admin.example.tld', 'http://10.0.0.5:5888', INTERNAL_BOX_ORIGIN]);
+  });
+
+  it('accepts $SB_BOX as the configured address, and $SB_BOX_URL wins over it', () => {
+    expect(boxUrlCandidates({ env: { SB_BOX: '10.0.0.5:5888' }, readSettings: noSettings })).toEqual([
+      'http://10.0.0.5:5888',
+      INTERNAL_BOX_ORIGIN,
+    ]);
+    expect(
+      boxUrlCandidates({ env: { SB_BOX_URL: 'https://admin.example.tld', SB_BOX: '10.0.0.5:5888' }, readSettings: noSettings })[0],
+    ).toBe('https://admin.example.tld');
+  });
+
+  it('ALWAYS ends with the on-box endpoint — with nothing configured that is the whole list (the #2922 environment)', () => {
+    expect(boxUrlCandidates({ env: {}, readSettings: noSettings })).toEqual([INTERNAL_BOX_ORIGIN]);
+  });
+
+  it('does not repeat a candidate that is already the on-box endpoint', () => {
+    expect(boxUrlCandidates({ env: { SB_BOX_URL: INTERNAL_BOX_ORIGIN }, readSettings: noSettings })).toEqual([
+      INTERNAL_BOX_ORIGIN,
+    ]);
+  });
+});
+
+/** Only the on-box endpoint answers; every other candidate refuses. */
+const onlyInternalAnswers = (url: string) => (url.startsWith(INTERNAL_BOX_ORIGIN) ? 401 : 0);
+
+describe('resolveReachableBoxUrl — falls THROUGH to the candidate that answers', () => {
+  it('the case that matters: a CONFIGURED address that does not answer, with the on-box endpoint answering', async () => {
+    const calls = stubBox(() => ({ body: sseOf({ channel: 'latest' }) }), { health: onlyInternalAnswers });
+    await expect(resolveReachableBoxUrl()).resolves.toBe(INTERNAL_BOX_ORIGIN);
+    // The configured address was still tried FIRST, the on-box endpoint LAST —
+    // order is the contract, not just "something answered".
+    const probed = calls.map(c => c.url);
+    expect(probed[0]).toBe('https://box.example.tld/api/health');
+    expect(probed.at(-1)).toBe(`${INTERNAL_BOX_ORIGIN}/api/health`);
+  });
+
+  it('stops at the first candidate that answers — a 401 is "alive", the route is auth-gated', async () => {
+    const calls = stubBox(() => ({ body: '' }));
+    await expect(resolveReachableBoxUrl()).resolves.toBe('https://box.example.tld');
+    expect(calls.map(c => c.url)).toEqual(['https://box.example.tld/api/health']);
+  });
+
+  it('a 5xx is NOT an answer — it falls through like a refused connection', async () => {
+    stubBox(() => ({ body: '' }), { health: url => (url.startsWith(INTERNAL_BOX_ORIGIN) ? 401 : 502) });
+    await expect(resolveReachableBoxUrl()).resolves.toBe(INTERNAL_BOX_ORIGIN);
+  });
+
+  it('THROWS BoxUnreachableError naming the candidates when none answers — never a silent success', async () => {
+    stubBox(() => ({ body: '' }), { health: () => 0 });
+    const err = await resolveReachableBoxUrl().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BoxUnreachableError);
+    const { tried, message } = err as BoxUnreachableError;
+    expect(tried[0]).toBe('https://box.example.tld');
+    expect(tried.at(-1)).toBe(INTERNAL_BOX_ORIGIN);
+    expect(message).toContain('https://box.example.tld');
+    expect(message).toContain(INTERNAL_BOX_ORIGIN);
+  });
+
+  it('getChannel stays null — "could not ask" is not "on :latest"', async () => {
+    stubBox(() => ({ body: '' }), { health: () => 0 });
+    await expect(getChannel()).resolves.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Token handling for the new destination (#2922, security).
+// ---------------------------------------------------------------------------
+
+describe('the sb_ token goes ONLY to a candidate resolved by the ordered list', () => {
+  it('the reachability probe carries no Authorization header at all', async () => {
+    const calls = stubBox(() => ({ body: sseOf({ channel: 'latest' }) }), { health: onlyInternalAnswers });
+    await expect(getChannel()).resolves.toBe('latest');
+    const probes = calls.filter(c => c.url.endsWith('/api/health'));
+    expect(probes.length).toBeGreaterThanOrEqual(2); // the dead configured one, then the live on-box one
+    for (const probe of probes) expect(probe.init.headers?.Authorization).toBeUndefined();
+  });
+
+  it('sends the Bearer to the candidate that answered, and to no other origin', async () => {
+    const calls = stubBox(() => ({ body: sseOf({ channel: 'latest' }) }), { health: onlyInternalAnswers });
+    await getChannel();
+    const authed = calls.filter(c => c.init.headers?.Authorization !== undefined);
+    expect(authed.map(c => c.url)).toEqual([`${INTERNAL_BOX_ORIGIN}/mcp`]);
+  });
+
+  it('the added on-box candidate is a fixed constant, not a value read from anywhere', () => {
+    // Not env-derived, not box-derived, not user input: a literal in the module.
+    expect(INTERNAL_BOX_ORIGIN).toBe('http://host.containers.internal:5888');
+    expect(readFileSync('scripts/autoloop-box.ts', 'utf8')).toContain(
+      "export const INTERNAL_BOX_ORIGIN = 'http://host.containers.internal:5888';",
+    );
+    // ADR 0007: the NAME, never a literal LAN/link-local IP.
+    expect(INTERNAL_BOX_ORIGIN).not.toMatch(/\d+\.\d+\.\d+\.\d+/);
+  });
+
+  it('redacts userinfo out of any candidate that gets printed', () => {
+    expect(redactBoxUrl('https://admin:hunter2@box.example.tld')).toBe('https://box.example.tld');
+    expect(redactBoxUrl('http://host.containers.internal:5888')).toBe('http://host.containers.internal:5888');
+    vi.stubEnv('SB_BOX_URL', 'https://admin:hunter2@box.example.tld');
+    const described = describeBoxCandidates();
+    expect(described[0]).toBe('https://box.example.tld');
+    expect(described.at(-1)).toBe(INTERNAL_BOX_ORIGIN);
+    expect(described.join(' ')).not.toContain('hunter2');
+  });
+
+  it('no code path in the box helper or the verify harness prints the token', () => {
+    for (const file of ['scripts/autoloop-box.ts', 'scripts/autoloop-dev-verify.ts']) {
+      const src = readFileSync(file, 'utf8');
+      const printing = src
+        .split('\n')
+        .filter(l => /console\.(log|error|warn|info)/.test(l))
+        .filter(l => /getToken|SB_TOKEN|Bearer|\bsb_/i.test(l));
+      expect(printing, `${file} must never print the token`).toEqual([]);
+      // …and it is never interpolated into an Error message either.
+      expect(/throw new Error\([^)]*getToken\(\)/.test(src)).toBe(false);
+    }
   });
 });
 
