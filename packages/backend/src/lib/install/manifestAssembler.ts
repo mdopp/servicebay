@@ -753,6 +753,34 @@ function recordMintable(
   mintable.set(name, { ...meta, templateName: meta.templateName ?? itemName });
 }
 
+/**
+ * #2913 — read one template's `variables.json` metadata, falling through to a
+ * walk of every source when the pinned one does not carry the template.
+ *
+ * The fall-through is load-bearing, for the same reason it is in
+ * {@link refreshTemplateArtifacts} and `getTemplateMigrationScripts` (#2855):
+ * the MCP `install_template` tool records the literal `templateSource:
+ * 'Built-in'` in the JobInput whenever the caller omits a source, and the
+ * runner's post-registry-sync refill (`phases/preflight`) re-applies the
+ * defaults with THAT value. For a template that only lives in an external
+ * registry the pinned read resolves to null, and the caller's `continue` then
+ * dropped EVERY fill for it — no default, no operator-set value, no mintable
+ * token. A variable added to the template since the manifest was assembled
+ * therefore rendered empty; interpolated into a pod-spec `hostPath` it turned
+ * `{{VAR}}/agent-cli` into `/agent-cli` and crash-looped the pod, with only
+ * the #1318 "rendered empty" warning to show for it.
+ *
+ * Returns null only when no source carries the template.
+ */
+async function readTemplateVariableMeta(
+  name: string,
+  templateSource: string | undefined,
+): Promise<Record<string, VariableMeta> | null> {
+  const pinned = await getTemplateVariables(name, templateSource).catch(() => null);
+  if (pinned || !templateSource) return pinned;
+  return getTemplateVariables(name, undefined).catch(() => null);
+}
+
 async function collectVariableFills(
   items: JobInputItem[],
   templateSource: string | undefined,
@@ -767,7 +795,7 @@ async function collectVariableFills(
   const mintable = new Map<string, VariableMeta>();
   for (const item of items) {
     if (!item.checked || item.alreadyInstalled) continue;
-    const meta = await getTemplateVariables(item.name, templateSource).catch(() => null);
+    const meta = await readTemplateVariableMeta(item.name, templateSource);
     if (!meta) continue;
     for (const [name, m] of Object.entries(meta)) {
       declared.add(name);

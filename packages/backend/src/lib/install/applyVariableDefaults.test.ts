@@ -276,3 +276,84 @@ describe('applyVariableDefaults — a redeploy reuses the recorded per-service v
     expect(out.variables.find(v => v.name === 'SOLARIS_TTS_PASSWORD')?.value).toBe('');
   });
 });
+
+/**
+ * #2913 — the pinned-source fall-through. `install_template` records the
+ * literal `templateSource: 'Built-in'` in the JobInput whenever the MCP caller
+ * omits a source, and the runner's post-registry-sync refill re-applies the
+ * defaults with THAT value. For a template that only exists in an external
+ * registry, `getTemplateVariables(name, 'Built-in')` resolves to null — which
+ * used to skip default-filling for the whole template, so a variable added to
+ * the template since the manifest was assembled rendered empty and, once
+ * interpolated into a pod-spec `hostPath`, crash-looped the pod.
+ */
+describe('applyVariableDefaults — a pinned source that does not carry the template (#2913)', () => {
+  // The pi-web repro: the template lives in an external registry only, so the
+  // pinned 'Built-in' read misses and only the walk-every-source read answers.
+  const registryOnly = (meta: Record<string, unknown>) =>
+    mockReg.getTemplateVariables.mockImplementation(
+      async (_name: string, source?: string) => (source === undefined ? meta : null),
+    );
+
+  it('fills a registry-only template\'s defaults when no templateSource was passed', async () => {
+    registryOnly({ PI_WEB_AGENT_KIT_DIR: { type: 'text', default: '/mnt/data/servicebay/agent-kit/checkout' } });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'pi-web', checked: true }],
+      variables: [{ name: 'PI_WEB_AGENT_KIT_DIR', value: '' }],
+    }), 'Built-in');
+    expect(out.variables.find(v => v.name === 'PI_WEB_AGENT_KIT_DIR')?.value)
+      .toBe('/mnt/data/servicebay/agent-kit/checkout');
+  });
+
+  it('applies a newly-added variable\'s default when the stored manifest predates it', async () => {
+    // The upgrade path: the manifest was assembled before the template gained
+    // PI_WEB_AGENT_KIT_DIR, so the slot is absent entirely, not merely empty.
+    registryOnly({
+      PI_WEB_PORT: { type: 'text', default: '8080' },
+      PI_WEB_AGENT_KIT_DIR: { type: 'text', default: '/mnt/data/servicebay/agent-kit/checkout' },
+    });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'pi-web', checked: true }],
+      variables: [{ name: 'PI_WEB_PORT', value: '8080' }],
+    }), 'Built-in');
+    expect(out.variables.find(v => v.name === 'PI_WEB_AGENT_KIT_DIR')?.value)
+      .toBe('/mnt/data/servicebay/agent-kit/checkout');
+  });
+
+  it('still lets an explicitly supplied override win over the default', async () => {
+    registryOnly({ PI_WEB_AGENT_KIT_DIR: { type: 'text', default: '/mnt/data/servicebay/agent-kit/checkout' } });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'pi-web', checked: true }],
+      variables: [{ name: 'PI_WEB_AGENT_KIT_DIR', value: '/srv/operator/checkout' }],
+    }), 'Built-in');
+    expect(out.variables.find(v => v.name === 'PI_WEB_AGENT_KIT_DIR')?.value).toBe('/srv/operator/checkout');
+  });
+
+  it('leaves a variable with no default and no value empty, so the empty-render warning still fires', async () => {
+    // PI_WEB_GIT_TOKEN in the repro: a secret with no default is EXPECTED to
+    // render empty, and the #1318 warning in `phases/assetTransport` is what
+    // reports it. The fall-through must not invent a value for it.
+    registryOnly({
+      PI_WEB_GIT_TOKEN: { type: 'secret' },
+      PI_WEB_AGENT_KIT_DIR: { type: 'text', default: '/mnt/data/servicebay/agent-kit/checkout' },
+    });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'pi-web', checked: true }],
+      variables: [{ name: 'PI_WEB_GIT_TOKEN', value: '' }],
+    }), 'Built-in');
+    expect(out.variables.find(v => v.name === 'PI_WEB_GIT_TOKEN')?.value).toBe('');
+    expect(out.variables.find(v => v.name === 'PI_WEB_AGENT_KIT_DIR')?.value)
+      .toBe('/mnt/data/servicebay/agent-kit/checkout');
+  });
+
+  it('does not re-read when the pinned source does carry the template', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue({ FOO: { type: 'text', default: 'bar' } });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'x', checked: true }],
+      variables: [{ name: 'FOO', value: '' }],
+    }), 'Solaris');
+    expect(out.variables.find(v => v.name === 'FOO')?.value).toBe('bar');
+    expect(mockReg.getTemplateVariables).toHaveBeenCalledTimes(1);
+    expect(mockReg.getTemplateVariables).toHaveBeenCalledWith('x', 'Solaris');
+  });
+});
