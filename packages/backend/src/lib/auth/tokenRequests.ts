@@ -25,6 +25,13 @@
  * request (a widen attempt is rejected). The TTL can be overridden freely
  * (shorter is safer; the admin owns the ceiling).
  *
+ * BOUND TO A PRINCIPAL (#2930): the operator approves a request filed by an
+ * identity, not a bare id. `requestedBy` is required at submit and is consulted
+ * on every read — listing shows a token caller only its own rows, and only that
+ * same principal can collect the minted secret. A mismatch, or a caller that
+ * cannot be resolved to a principal at all, is a thrown refusal; it is never a
+ * `token: null` that a stranger's poll cannot tell from "already collected".
+ *
  * Persistence is a single JSON file under DATA_DIR, atomic-written like the
  * token store itself. A missing/corrupt file reads back as an empty list.
  * The minted token's *secret* is held only transiently in memory for the
@@ -79,7 +86,13 @@ export interface TokenRequest {
   requestedTtlSecs: number;
   /** Human-readable justification for the admin to weigh. */
   reason: string;
-  /** Calling agent/token identity for the audit trail (optional). */
+  /**
+   * The authenticated principal that filed the request. REQUIRED at submit
+   * (#2930): it is the identity the grant is bound to — only this principal may
+   * list the row or collect its secret. Optional on the stored shape only so a
+   * legacy row written before the binding still parses; such a row is refused
+   * on collection rather than handed to whoever polls first.
+   */
   requestedBy?: string;
   status: TokenRequestStatus;
   createdAt: string;
@@ -174,6 +187,79 @@ export class TokenRequestError extends Error {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * caller binding (#2930)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Who is asking. Resolved from the TRANSPORT before any row is read — never
+ * from a tool argument, so no caller can name another principal.
+ */
+export interface TokenRequestCaller {
+  /**
+   * The authenticated identity, the same string that lands in `requestedBy` at
+   * submit (`token:<name>` for an `sb_` caller, the session user for the
+   * operator). Empty when the transport could not resolve one — which is a
+   * refusal everywhere, never a wildcard and never "probably the requester".
+   */
+  principal: string;
+  /**
+   * True only for the OPERATOR at the dashboard (a password cookie session).
+   * It widens the LIST view to every row — that list is the admin's audit and
+   * approval surface — and nothing else: COLLECTION stays bound to `principal`
+   * for the console exactly as for an agent, so approving a request still never
+   * lets anyone but its requester redeem it.
+   *
+   * Deliberately false for a BRIDGED cookie session (POST
+   * /api/auth/session-from-token): that is a token caller wearing a cookie, and
+   * treating it as the console would hand a read-only token the operator's view
+   * of every agent's requests via the browser route (#2768, same shape).
+   */
+  console?: boolean;
+}
+
+/**
+ * The principal this caller is bound to, or `null` when it cannot be
+ * authoritatively resolved to one. Absent identity is not identity.
+ */
+function callerPrincipal(caller: TokenRequestCaller): string | null {
+  const principal = caller?.principal?.trim();
+  return principal ? principal : null;
+}
+
+/**
+ * The request KINDS that end with a collectable secret sitting on the row
+ * (`pendingSecret`). Both are collected through `pollTokenRequest`, so both
+ * must be caller-bound — the binding is a property of the collection path, not
+ * of one request flavour.
+ *
+ * Exported as a union + registry so the class gate in
+ * `tokenRequests.callerBinding.test.ts` enumerates the REAL set instead of a
+ * list hand-copied into a test: the gate cross-checks `mintedBy` against every
+ * function in this file that actually writes `pendingSecret`, so a third mint
+ * path added without registering it here turns the test red, and a kind
+ * registered without a driver turns it red too.
+ */
+export type SecretYieldingRequestKind = 'standing' | 'one-shot';
+
+export const SECRET_YIELDING_REQUEST_KINDS: {
+  readonly [K in SecretYieldingRequestKind]: {
+    /** The exported function in this module that stashes `pendingSecret`. */
+    readonly mintedBy: string;
+    /** One line so a failing gate can name the path it is talking about. */
+    readonly describe: string;
+  };
+} = {
+  standing: {
+    mintedBy: 'approveTokenRequest',
+    describe: 'admin-approved standing grant (Settings → MCP)',
+  },
+  'one-shot': {
+    mintedBy: 'mintOneShotForRequest',
+    describe: 'owner-approved one-shot elevated grant (#2245)',
+  },
+};
+
 /** A one-shot op's target service must be a single, safe path segment (no
  *  separators, no traversal) — mirrors the approvals-store service guard. */
 const ONE_SHOT_SERVICE_RE = /^[a-zA-Z0-9_.-]+$/;
@@ -185,15 +271,28 @@ const ONE_SHOT_SERVICE_RE = /^[a-zA-Z0-9_.-]+$/;
  * the TTL is clamped to ONE_SHOT_MAX_TTL_SECS, and the request PARKS as a
  * durable approval (card + self-approve guard) instead of the admin token PATCH
  * route. On owner Approve the minted token is bound to `oneShotOp`, carries
- * ONLY that scope, and is single-use. `requestedBy` is recorded as the approval
- * proposer so the self-approve guard refuses the requester approving itself. */
+ * ONLY that scope, and is single-use.
+ *
+ * `requestedBy` is the AUTHENTICATED principal and is required (#2930) — the
+ * caller passes its own transport identity, never a body field. It is recorded
+ * twice on purpose: on the row (only that principal may list or collect it) and
+ * as the approval's `payload.caller` (so the self-approve guard refuses the
+ * requester approving itself). A row with no principal would be a grant nobody
+ * can collect, so it is refused here rather than created. */
 export async function submitTokenRequest(input: {
   requestedScopes: ApiScope[];
   requestedTtlSecs: number;
   reason: string;
-  requestedBy?: string;
+  requestedBy: string;
   oneShotOp?: { toolName: string; service?: string };
 }): Promise<TokenRequestView> {
+  const requestedBy = (input.requestedBy ?? '').trim();
+  if (!requestedBy) {
+    throw new TokenRequestError(
+      'requestedBy (the authenticated principal) is required — a grant is bound to the identity that asks for it.',
+      403,
+    );
+  }
   assertScopes(input.requestedScopes, 'requestedScopes');
   assertTtl(input.requestedTtlSecs, 'requestedTtlSecs');
   const reason = (input.reason ?? '').trim();
@@ -237,7 +336,7 @@ export async function submitTokenRequest(input: {
     requestedScopes: [...new Set(input.requestedScopes)],
     requestedTtlSecs: ttlSecs,
     reason: reason.slice(0, 1000),
-    ...(input.requestedBy ? { requestedBy: input.requestedBy.slice(0, 120) } : {}),
+    requestedBy: requestedBy.slice(0, 120),
     ...(oneShotOp ? { oneShotOp } : {}),
     status: 'pending',
     createdAt: new Date().toISOString(),
@@ -255,9 +354,9 @@ export async function submitTokenRequest(input: {
     const approval = await submitApproval({
       service: oneShotOp.service ?? 'mcp',
       title: `one-shot ${request.requestedScopes[0]} token — ${opLabel}`,
-      description: `An MCP agent (${input.requestedBy ?? 'anon'}) requested a ONE-SHOT, short-lived ${request.requestedScopes[0]} token authorizing exactly "${oneShotOp.toolName}"${oneShotOp.service ? ` on ${oneShotOp.service}` : ''}, once. Approving mints the token for the agent to collect; it cannot self-approve. Reason: ${reason.slice(0, 300)}`,
+      description: `An MCP agent (${requestedBy}) requested a ONE-SHOT, short-lived ${request.requestedScopes[0]} token authorizing exactly "${oneShotOp.toolName}"${oneShotOp.service ? ` on ${oneShotOp.service}` : ''}, once. Approving mints the token for the agent to collect; it cannot self-approve. Reason: ${reason.slice(0, 300)}`,
       // caller drives the self-approve guard (isSelfApproval reads payload.caller).
-      payload: { caller: input.requestedBy, tokenRequestId: request.id, oneShotOp },
+      payload: { caller: requestedBy, tokenRequestId: request.id, oneShotOp },
       on_approve: { mintToken: { tokenRequestId: request.id } },
     });
     request.approvalId = approval.id;
@@ -265,16 +364,35 @@ export async function submitTokenRequest(input: {
 
   all.push(request);
   await writeStore(all);
-  logger.info(TAG, `submitted token request ${request.id} scopes=[${request.requestedScopes.join(',')}] ttl=${request.requestedTtlSecs}s${oneShotOp ? ` one-shot=${oneShotOp.toolName}${oneShotOp.service ? '/' + oneShotOp.service : ''} approval=${request.approvalId}` : ''} by ${input.requestedBy ?? 'anon'}`);
+  logger.info(TAG, `submitted token request ${request.id} scopes=[${request.requestedScopes.join(',')}] ttl=${request.requestedTtlSecs}s${oneShotOp ? ` one-shot=${oneShotOp.toolName}${oneShotOp.service ? '/' + oneShotOp.service : ''} approval=${request.approvalId}` : ''} by ${requestedBy}`);
   return publicView(request);
 }
 
-/** List every request (newest first). Secrets are never included. */
+/**
+ * List requests (newest first). Secrets are never included.
+ *
+ * Caller-bound (#2930): a `token` caller sees ONLY the rows it filed, so it
+ * cannot enumerate another agent's request ids and then race it to the
+ * collection. The `console` caller — the cookie-authenticated operator — keeps
+ * full visibility, because that list IS the admin's audit/approval surface.
+ * A token caller whose principal cannot be resolved is refused outright; it is
+ * never quietly served the unfiltered list.
+ */
 export async function listTokenRequests(
-  status?: TokenRequestStatus | 'all',
+  status: TokenRequestStatus | 'all' | undefined,
+  caller: TokenRequestCaller,
 ): Promise<TokenRequestView[]> {
+  const principal = callerPrincipal(caller);
+  if (!principal) {
+    throw new TokenRequestError(
+      'Refusing to list token requests: the calling principal could not be resolved. '
+      + 'A caller may only see the requests it filed.',
+      403,
+    );
+  }
   const all = await readStore();
-  const filtered = !status || status === 'all' ? all : all.filter(r => r.status === status);
+  const mine = caller.console ? all : all.filter(r => r.requestedBy === principal);
+  const filtered = !status || status === 'all' ? mine : mine.filter(r => r.status === status);
   return [...filtered]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map(publicView);
@@ -436,14 +554,59 @@ export interface PollResult {
  * clear-text token and wipes the stored secret (so it can't be replayed from
  * disk). A pending/denied request returns no token. An unknown id → not-found.
  *
+ * CALLER-BOUND (#2930). The operator approves a request filed by a *principal*,
+ * not a request id, so collection is refused unless the caller IS that
+ * principal:
+ *   - a different principal → a THROWN `TokenRequestError` (403), never a
+ *     silent `token: null` that reads like "already collected". The refusal
+ *     happens before the secret is touched, so a refused attempt cannot burn
+ *     the grant the rightful requester is still waiting for.
+ *   - a caller that cannot be authoritatively resolved to a principal → refused
+ *     too. Absent identity is not identity.
+ *   - the operator console is NOT exempt: it sees every row on the list, but it
+ *     collects only what it filed itself. Approving a grant is the operator's
+ *     part of this flow; redeeming it is the requester's.
+ *   - a legacy row with no recorded principal → refused for everyone; an
+ *     unbindable grant is nobody's, not first-poller's.
+ * The unknown-id answer stays a plain `not-found` value, matching
+ * `getInstallRequestState`'s 404-vs-403 split: what a stranger learns is only
+ * "that id exists", and `listTokenRequests` no longer hands out ids to enumerate.
+ *
  * NOTE: a token whose expiry has already lapsed by the time the caller polls
  * is reported without a token — the minted row is left for the sweeper to
  * delete; we don't hand out an already-dead credential.
  */
-export async function pollTokenRequest(id: string): Promise<PollResult | { id: string; status: 'not-found'; token: null }> {
+export async function pollTokenRequest(
+  id: string,
+  caller: TokenRequestCaller,
+): Promise<PollResult | { id: string; status: 'not-found'; token: null }> {
+  const principal = callerPrincipal(caller);
+  if (!principal) {
+    throw new TokenRequestError(
+      `Refusing to collect token request ${id}: the calling principal could not be resolved. `
+      + 'A grant is only ever handed to the identity that filed the request.',
+      403,
+    );
+  }
+
   const all = await readStore();
   const req = all.find(r => r.id === id);
   if (!req) return { id, status: 'not-found', token: null };
+
+  const requester = req.requestedBy?.trim();
+  if (!requester) {
+    throw new TokenRequestError(
+      `Token request ${id} carries no requesting principal, so nobody can collect it. File a fresh request.`,
+      403,
+    );
+  }
+  if (requester !== principal) {
+    logger.warn(TAG, `refused collection of token request ${id}: caller is not the requesting principal`);
+    throw new TokenRequestError(
+      `Token request ${id} was filed by another principal; only the principal that filed it can collect it.`,
+      403,
+    );
+  }
 
   if (req.status !== 'approved') {
     return { id, status: req.status, token: null };

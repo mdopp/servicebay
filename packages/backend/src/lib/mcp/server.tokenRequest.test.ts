@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import type { ApiScope } from '@/lib/auth/apiScope';
 
 // #2139: MCP scoped-token request tools (request_token / poll_token_request /
 // list_requests(type="token")). The store is file-backed under DATA_DIR, so use a
@@ -24,9 +25,11 @@ afterEach(async () => {
   await fsp.rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
-async function connectClient() {
+async function connectClient(
+  auth: { user: string; scopes: ApiScope[]; viaConsole?: boolean } = { user: 'agent:tester', scopes: ['read'] },
+) {
   const { createMcpServer } = await import('./server');
-  const server = createMcpServer({ auth: { user: 'agent:tester', scopes: ['read'] } });
+  const server = createMcpServer({ auth });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test-client', version: '1.0.0' });
   await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
@@ -106,6 +109,53 @@ describe('request_token / poll_token_request MCP tools (#2139)', () => {
     const denied = parse(await client.callTool({ name: 'list_requests', arguments: { type: 'token', status: 'denied' } }));
     expect(denied.requests.map((r: { id: string }) => r.id)).toEqual([b.id]);
     await client.close();
+  });
+
+  // #2930 — the collection path is bound to the principal that filed the
+  // request. These two cases are the MCP-surface half of
+  // auth/tokenRequests.callerBinding.test.ts: what a second agent actually sees.
+  it('a second agent cannot collect the grant the operator approved for the first', async () => {
+    const { client: a } = await connectClient({ user: 'token:agent-a', scopes: ['read'] });
+    const filed = parse(await a.callTool({
+      name: 'request_token',
+      arguments: { scopes: ['read'], reason: 'deploy one service', ttl_seconds: 600 },
+    }));
+
+    // The operator approves agent-a's request.
+    const { approveTokenRequest } = await import('@/lib/auth/tokenRequests');
+    await approveTokenRequest(filed.id, { scopes: ['read'], ttlSecs: 600, approvedBy: 'admin' });
+
+    // A co-resident read-only token knows the id and races for the secret.
+    const { client: b } = await connectClient({ user: 'token:agent-b', scopes: ['read'] });
+    const stolen = await b.callTool({ name: 'poll_token_request', arguments: { id: filed.id } });
+    expect(stolen.isError).toBe(true);
+    const text = (stolen as { content: { text: string }[] }).content[0].text;
+    expect(text).toMatch(/filed by another principal/i);
+    // A refusal, not a token, and not a null that reads like "already collected".
+    expect(text).not.toMatch(/^sb_/m);
+
+    // agent-a's grant is untouched by the attempt.
+    const mine = parse(await a.callTool({ name: 'poll_token_request', arguments: { id: filed.id } }));
+    expect(mine.token).toMatch(/^sb_[0-9a-f]{8}_[A-Z2-9]+$/);
+    await Promise.all([a.close(), b.close()]);
+  });
+
+  it('list_requests(type="token") shows an agent only its own rows; the console sees all', async () => {
+    const { client: a } = await connectClient({ user: 'token:agent-a', scopes: ['read'] });
+    const { client: b } = await connectClient({ user: 'token:agent-b', scopes: ['read'] });
+    const mine = parse(await a.callTool({ name: 'request_token', arguments: { scopes: ['read'], reason: 'a', ttl_seconds: 60 } }));
+    const theirs = parse(await b.callTool({ name: 'request_token', arguments: { scopes: ['read'], reason: 'b', ttl_seconds: 60 } }));
+
+    const listA = parse(await a.callTool({ name: 'list_requests', arguments: { type: 'token', status: 'all' } }));
+    expect(listA.requests.map((r: { id: string }) => r.id)).toEqual([mine.id]);
+    const listB = parse(await b.callTool({ name: 'list_requests', arguments: { type: 'token', status: 'all' } }));
+    expect(listB.requests.map((r: { id: string }) => r.id)).toEqual([theirs.id]);
+
+    // The operator's dashboard session keeps the full triage view.
+    const { client: op } = await connectClient({ user: 'admin', scopes: ['read'], viaConsole: true });
+    const listOp = parse(await op.callTool({ name: 'list_requests', arguments: { type: 'token', status: 'all' } }));
+    expect(listOp.requests.map((r: { id: string }) => r.id).sort()).toEqual([mine.id, theirs.id].sort());
+    await Promise.all([a.close(), b.close(), op.close()]);
   });
 
   it('a bad TTL / empty scope request is an error, not a silent pass', async () => {

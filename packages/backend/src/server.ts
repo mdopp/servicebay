@@ -258,7 +258,7 @@ app.prepare().then(() => {
         const { verifyBootstrapToken, clientIpForLanGate } = await import('./lib/mcp/bootstrapToken');
         const authHeader = req.headers.authorization || '';
         const bearerMatch = authHeader.match(/^Bearer\s+(\S+)$/i);
-        let auth: { user: string; scopes: import('./lib/auth/apiScope').ApiScope[]; tokenId?: string; oneShotOp?: { toolName: string; service?: string }; singleUse?: boolean } | null = null;
+        let auth: { user: string; scopes: import('./lib/auth/apiScope').ApiScope[]; tokenId?: string; viaConsole?: boolean; oneShotOp?: { toolName: string; service?: string }; singleUse?: boolean } | null = null;
         try {
           if (bearerMatch) {
             const t = await verifyToken(bearerMatch[1]);
@@ -312,9 +312,16 @@ app.prepare().then(() => {
             // A bridged session (POST /api/auth/session-from-token) carries the
             // source token's `scopes`; honour them instead of the broad set, or
             // a `read`-only token becomes a full operator over /mcp (#2768).
+            // `viaConsole` marks the OPERATOR at the dashboard, which is what
+            // keeps full visibility over the request lists (#2930). A BRIDGED
+            // session (POST /api/auth/session-from-token, i.e. `viaToken`) is a
+            // token caller wearing a cookie and must NOT get it, or a read-only
+            // token would regain the operator's view of every agent's token
+            // requests just by taking the browser route (#2768, same shape).
             auth = {
               user: session.user,
               scopes: session.scopes ?? ['read', 'lifecycle', 'mutate', 'destroy', 'propose'],
+              ...(session.viaToken ? {} : { viaConsole: true }),
             };
           }
         }

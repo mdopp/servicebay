@@ -91,6 +91,16 @@ the MCP tools `request_token`, `poll_token_request`, `list_requests(type="token"
    once** via `poll_token_request`. The secret is held transiently in memory for
    that single poll — never persisted.
 
+The grant is bound to the **principal that asked**, not to the request id
+(#2930): a request is filed as the caller's own authenticated identity, that
+identity is the only one that can collect the minted secret, and any other
+caller gets an explicit refusal rather than an empty answer — so a co-resident
+read-only token can neither enumerate another agent's request ids via
+`list_requests` nor race it to the hand-off. The operator's dashboard session
+keeps the full request list (that is the approval surface) and still collects
+only what it filed itself. A caller whose identity cannot be resolved is
+refused, never assumed to be the requester.
+
 A **one-shot** request (`one_shot_op`) parks as an operator-approval card
 instead, and so does every `destroy`-tier tool a token caller proposes. Both
 hand back an `approvalId`, which `get_approval_status` resolves to `pending`,

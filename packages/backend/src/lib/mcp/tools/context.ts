@@ -36,11 +36,20 @@ export interface ToolServer {
 export interface ToolRegistration {
   server: ToolServer;
   /**
-   * The authenticated token caller, when the server was built with one. Only
-   * the provenance-stamping tools (propose_learning, request_token) read it;
-   * the scope/approval enforcement itself lives in `server.ts`.
+   * The authenticated token caller, when the server was built with one. The
+   * provenance-stamping tools (propose_learning, request_token) record it, and
+   * the request tools bind a token grant to it (#2930); the scope/approval
+   * enforcement itself lives in `server.ts`.
    */
   caller?: string;
+  /**
+   * True only when the caller is the operator at the dashboard (a password
+   * cookie session). The request tools give it the full request lists — that is
+   * the admin audit surface — while a token caller sees only its own rows.
+   * Defaults to false, so an unrecognised transport is treated as a bound token
+   * caller rather than as the admin (#2930).
+   */
+  consoleCaller?: boolean;
 }
 
 export const nodeParam = z.string().optional().describe('Node name (defaults to first available node)');

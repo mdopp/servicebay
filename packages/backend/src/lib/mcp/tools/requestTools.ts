@@ -27,6 +27,7 @@ import {
   ONE_SHOT_MAX_TTL_SECS,
   TokenRequestError,
   type TokenRequestStatus,
+  type TokenRequestCaller,
 } from '@/lib/auth/tokenRequests';
 import { getApproval, approvalOutcome } from '@/lib/approvals';
 import { TOOL_SCOPES, APPROVAL_STATUS_TOOL } from '../toolPolicy';
@@ -47,7 +48,18 @@ const normalizeStatus = (s: AccessRequest['status']): 'pending' | 'approved' | '
 // its length just counts how many tools the group holds. The rule stays ON for the
 // handlers inside it, which is where real logic (and real length) would show up.
 // eslint-disable-next-line max-lines-per-function
-export function registerRequestTools({ server, caller }: ToolRegistration) {
+export function registerRequestTools({ server, caller, consoleCaller }: ToolRegistration) {
+  // Who this MCP connection is, for the token-request store's caller binding
+  // (#2930). Resolved ONCE, here, from the transport — never from a tool
+  // argument, so no caller can name another principal. The operator's cookie
+  // session is the console (full list visibility, no collection right); anything
+  // else is a token caller bound to its own rows. An `sb_` connection always
+  // carries a `caller` (server.ts 401s without auth), so a blank one means the
+  // identity could not be resolved — the store refuses it rather than guessing.
+  const tokenRequestCaller: TokenRequestCaller = {
+    principal: caller ?? '',
+    ...(consoleCaller ? { console: true } : {}),
+  };
   // --- Access requests / approval workflow (#1818) ---
   // Programmatic surface over the same `config.accessRequests` list the
   // family portal feeds and the admin Settings page resolves. Lets an
@@ -100,15 +112,19 @@ export function registerRequestTools({ server, caller }: ToolRegistration) {
   // (those poll one id; poll_token_request is non-idempotent) — see #2324. ---
   server.tool(
     'list_requests',
-    `List pending/resolved requests via \`type\`: "access" (access requests on the admin's central list, filed by file_access_request) or "token" (scoped-token request lifecycle, request_token). Defaults to pending; pass status="approved", "denied", or "all". Token requests never return secrets — only metadata, granted scopes, expiry, and minted token id. Neither list contains the operator-approval queue that destroy-tier tools and one-shot request_token park in — poll an \`approvalId\` with ${APPROVAL_STATUS_TOOL}.`,
+    `List pending/resolved requests via \`type\`: "access" (access requests on the admin's central list, filed by file_access_request) or "token" (scoped-token request lifecycle, request_token). Defaults to pending; pass status="approved", "denied", or "all". Token requests never return secrets — only metadata, granted scopes, expiry, and minted token id — and a token caller sees only the token requests it filed itself. Neither list contains the operator-approval queue that destroy-tier tools and one-shot request_token park in — poll an \`approvalId\` with ${APPROVAL_STATUS_TOOL}.`,
     {
       type: z.enum(['access', 'token']).describe('Which request list to read: access (file_access_request items) or token (scoped-token requests). Neither covers destroy-tier approvalIds.'),
       status: z.enum(['pending', 'approved', 'denied', 'all']).optional().default('pending').describe('Filter by status. Default: pending.'),
     },
     async ({ type, status }) => {
       if (type === 'token') {
-        const requests = await listTokenRequests(status as TokenRequestStatus | 'all');
-        return textResult({ requests });
+        try {
+          const requests = await listTokenRequests(status as TokenRequestStatus | 'all', tokenRequestCaller);
+          return textResult({ requests });
+        } catch (e) {
+          return errorResult(e instanceof TokenRequestError ? e.message : e instanceof Error ? e.message : String(e));
+        }
       }
       const config = await getConfig();
       const all = config.accessRequests ?? [];
@@ -234,7 +250,10 @@ export function registerRequestTools({ server, caller }: ToolRegistration) {
           requestedScopes: scopes,
           requestedTtlSecs: ttl_seconds,
           reason,
-          requestedBy: caller,
+          // The transport's identity, not an argument: the grant is bound to it
+          // both ways — nobody can file in another principal's name, and nobody
+          // else can collect what this one filed (#2930).
+          requestedBy: tokenRequestCaller.principal,
           ...(one_shot_op ? { oneShotOp: { toolName: one_shot_op.tool_name, ...(one_shot_op.service ? { service: one_shot_op.service } : {}) } } : {}),
         });
         return textResult({
@@ -254,13 +273,20 @@ export function registerRequestTools({ server, caller }: ToolRegistration) {
 
   server.tool(
     'poll_token_request',
-    'Poll a token request by id (from request_token). While "pending" no token is returned. On admin approval the FIRST poll returns the actual sb_ token secret plus the GRANTED (possibly narrowed) scopes and expiry — collect it then; later polls return no secret. "denied" → no token. The token auto-expires at the returned time and is then deleted from storage.',
+    'Poll a token request by id (from request_token). Only the caller that FILED the request can poll it — another caller gets an explicit refusal, not an empty answer, and the grant it was trying to take stays collectable by its owner. While "pending" no token is returned. On admin approval the FIRST poll returns the actual sb_ token secret plus the GRANTED (possibly narrowed) scopes and expiry — collect it then; later polls return no secret. "denied" → no token. The token auto-expires at the returned time and is then deleted from storage.',
     {
-      id: z.string().min(1).describe('Request id returned by request_token.'),
+      id: z.string().min(1).describe('Request id returned by request_token — one YOU filed. A request filed by another principal is refused.'),
     },
     async ({ id }) => {
-      const result = await pollTokenRequest(id);
-      return textResult(result);
+      try {
+        const result = await pollTokenRequest(id, tokenRequestCaller);
+        return textResult(result);
+      } catch (e) {
+        // A caller-binding refusal (#2930) is an ERROR result, not a null token:
+        // the agent must be able to tell "this grant is not yours" from "the
+        // secret was already collected", and the operator must see the attempt.
+        return errorResult(e instanceof TokenRequestError ? e.message : e instanceof Error ? e.message : String(e));
+      }
     },
   );
 }

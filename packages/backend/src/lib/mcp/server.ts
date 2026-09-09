@@ -60,6 +60,17 @@ interface McpAuthContext {
   user: string;
   scopes: ApiScope[];
   tokenId?: string;
+  /**
+   * True only for a cookie session that IS the operator at the dashboard (a
+   * password login). Used by the request tools (#2930) to tell the admin
+   * console — which keeps full visibility over the request lists — apart from
+   * an `sb_` caller, which sees and collects only what it filed itself.
+   * Deliberately NOT set for a bridged session (POST /api/auth/session-from-token):
+   * that is a token caller wearing a cookie, and treating it as the console
+   * would hand a read-only token the operator's view via the browser route
+   * (#2768). Absent ⇒ token caller ⇒ bound; there is no "unknown" middle.
+   */
+  viaConsole?: boolean;
   // One-shot owner-approved elevation (#2245). Present only for a token minted
   // through the approved request_token one-shot flow: it holds an elevated
   // scope BOUND to exactly one op, and burns after one use. The gate enforces
@@ -348,7 +359,11 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // Every group gets the SAME safety-wrapped registrar, so no module can
   // register a tool that skips the gates above. `caller` is the token identity
   // the two provenance-stamping tools record; everything else ignores it.
-  const registration = { server: server as ToolServer, caller: opts?.auth?.user };
+  const registration = {
+    server: server as ToolServer,
+    caller: opts?.auth?.user,
+    consoleCaller: opts?.auth?.viaConsole === true,
+  };
   registerNodeTools(registration);
   registerServiceTools(registration);
   registerContainerTools(registration);
