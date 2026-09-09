@@ -11,7 +11,13 @@ import ActionProgressModal from '@/components/ActionProgressModal';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import type { ToastType } from '@/providers/ToastProvider';
-import { ServiceViewModel, typedFetch, mutateApi } from '@servicebay/api-client';
+import {
+  ServiceViewModel,
+  typedFetch,
+  deleteServiceByName,
+  runServiceAction,
+  type ServiceStreamAction,
+} from '@servicebay/api-client';
 import { logger } from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 
@@ -30,11 +36,12 @@ const ServiceFilesResponseSchema = z.object({
   servicePath: z.string().optional(),
 });
 
-const ServiceActionResponseSchema = z.object({}).passthrough();
-
-const ServiceDeleteResponseSchema = z.object({
-  error: z.string().optional(),
-}).passthrough();
+/**
+ * The actions the service-actions menu can dispatch. `start`/`stop`/`restart`
+ * are handed to `ActionProgressModal` (streamed); `update` is the one that goes
+ * straight to `POST /api/services/:name/action`.
+ */
+type ServiceMenuAction = ServiceStreamAction | 'update';
 
 export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) {
   const { addToast, updateToast } = useToast();
@@ -151,8 +158,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
         : serviceToDelete.nodeName && serviceToDelete.nodeName !== 'Local'
           ? serviceToDelete.nodeName
           : '';
-      const query = nodeParam ? `?node=${nodeParam}` : '';
-      await mutateApi(`/api/services/${encodeURIComponent(serviceName)}${query}`, ServiceDeleteResponseSchema, undefined, 'DELETE');
+      await deleteServiceByName(serviceName, nodeParam || undefined);
       updateToast(toastId, 'success', 'Service deleted', `Service ${serviceToDelete.name} has been removed.`);
       onRefresh?.();
     } catch (error) {
@@ -178,11 +184,10 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
   const updateServiceImage = useCallback(async (service: ServiceViewModel): Promise<boolean> => {
     const serviceName = service.id || service.name;
     const nodeName = service.nodeName === 'Local' ? '' : service.nodeName;
-    const query = nodeName ? `?node=${nodeName}` : '';
     const toastId = addToast('loading', 'Updating service', `Pulling the latest image for ${service.displayName || service.name}…`, 0);
 
     try {
-      await mutateApi(`/api/services/${encodeURIComponent(serviceName)}/action${query}`, ServiceActionResponseSchema, { action: 'update' }, 'POST');
+      await runServiceAction(serviceName, 'update', nodeName || undefined);
       updateToast(toastId, 'success', 'Service updated', `${service.displayName || service.name} re-deployed with its latest image.`);
       onRefresh?.();
       return true;
@@ -194,7 +199,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     }
   }, [addToast, onRefresh, updateToast]);
 
-  const handleAction = useCallback(async (action: string) => {
+  const handleAction = useCallback(async (action: ServiceMenuAction) => {
     if (!selectedService) return;
 
     if (action === 'start' || action === 'stop' || action === 'restart') {
@@ -212,8 +217,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     try {
       const serviceName = selectedService.id || selectedService.name;
       const nodeParam = selectedService.nodeName === 'Local' ? '' : selectedService.nodeName;
-      const query = nodeParam ? `?node=${nodeParam}` : '';
-      await mutateApi(`/api/services/${encodeURIComponent(serviceName)}/action${query}`, ServiceActionResponseSchema, { action }, 'POST');
+      await runServiceAction(serviceName, action, nodeParam || undefined);
       setShowActions(false);
       updateToast(toastId, 'success', 'Action initiated', `${action} command sent to ${selectedService.name}`);
       setTimeout(() => onRefresh?.(), 1000);
@@ -286,7 +290,7 @@ interface ServiceActionOverlaysProps {
   selectedService: ServiceViewModel | null;
   actionLoading: boolean;
   runningAction: string | null;
-  handleAction: (action: string) => void;
+  handleAction: (action: ServiceMenuAction) => void;
   requestDelete: (service: ServiceViewModel) => void;
   drawerState: DrawerState;
   closeDrawer: () => void;
@@ -401,7 +405,7 @@ function ServiceActionsModal({
   selectedService: ServiceViewModel;
   actionLoading: boolean;
   runningAction: string | null;
-  handleAction: (action: string) => void;
+  handleAction: (action: ServiceMenuAction) => void;
   requestDelete: (service: ServiceViewModel) => void;
   setShowActions: (value: boolean) => void;
 }) {

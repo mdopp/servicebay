@@ -9,6 +9,7 @@
 // definitions from `@/lib/*`; later phases hoist the canonical
 // definitions in-place so the package is structurally independent.
 
+export * from './actionStream';
 export * from './agent';
 export * from './assists';
 export * from './backup';

@@ -6,7 +6,7 @@ import { ArrowLeft, Box, Power, RotateCw, Trash2, AlertTriangle, RefreshCw, X } 
 import ConfirmModal from '@/components/ConfirmModal';
 import { Button } from '@/components/ui';
 import { useToast } from '@/providers/ToastProvider';
-import { logger, mutateApi } from '@servicebay/api-client';
+import { logger, mutateRawApi } from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 export interface ContainerActionTarget {
@@ -19,8 +19,13 @@ interface UseContainerActionsOptions {
   onActionComplete?: () => void;
 }
 
+// `POST /api/containers/[id]/action` shapes its own body
+// (`NextResponse.json({ success, output })`), so it is read with the RAW
+// helper — `mutateApi` would demand a `{ ok, data }` envelope the route never
+// emits and report every successful action as a failure (#2941).
 const ContainerActionResponseSchema = z.object({
-  // The action endpoint returns minimal response; schema is permissive
+  success: z.boolean().optional(),
+  output: z.string().optional(),
 }).passthrough();
 
 export function useContainerActions({ onActionComplete }: UseContainerActionsOptions = {}) {
@@ -61,7 +66,7 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
       const nodeParam = selectedContainer.nodeName && selectedContainer.nodeName !== 'Local'
         ? `?node=${encodeURIComponent(selectedContainer.nodeName)}`
         : '';
-      await mutateApi(
+      await mutateRawApi(
         `/api/containers/${selectedContainer.id}/action${nodeParam}`,
         ContainerActionResponseSchema,
         { action },
