@@ -35,6 +35,70 @@ class FatalPreStartHookError extends Error {
     }
 }
 
+type HookAgent = import('../../agent/handler').AgentHandler;
+
+interface HostExecResult { code?: number; stdout?: string; stderr?: string }
+
+/**
+ * Run an argv on the host through the agent's `safe_exec` (#2928).
+ *
+ * EVERY host command in this module that carries a value taken out of the
+ * caller's pod manifest — `hostPath.path`, `securityContext.runAsUser`,
+ * `container.image` — goes through here rather than through `sendCommand
+ * ('exec', { command })`. `safe_exec` hands the list to the host verbatim,
+ * so there is no shell to parse a `;` or a `$(…)` out of a path: the value
+ * is one argument, whatever it contains.
+ *
+ * Before #2928 the ownership fixup built `podman unshare chown -R
+ * ${uid}:${gid} ${hostPath}` as a command string, which handed anybody who
+ * could write a manifest a shell as the agent user — defeating the whole
+ * mutate-vs-exec scope split of #591/#2623. `deployKubeService` now also
+ * refuses such a manifest up front (`validatePodManifest`), but this is the
+ * layer that holds even if a future write path forgets to validate.
+ */
+async function hostExec(agent: HookAgent, argv: string[], timeout?: number): Promise<HostExecResult> {
+    const payload: { argv: string[]; timeout?: number } = { argv };
+    if (timeout !== undefined) payload.timeout = timeout;
+    return (await agent.sendCommand('safe_exec', payload)) as HostExecResult;
+}
+
+/** `test -f <path>` on the host, argv-passed. Any failure ⇒ "not there". */
+async function hostFileExists(agent: HookAgent, path: string): Promise<boolean> {
+    try {
+        const res = await hostExec(agent, ['test', '-f', path]);
+        return res?.code === 0;
+    } catch {
+        return false;
+    }
+}
+
+/** `cat <path>` on the host, argv-passed. Missing/unreadable ⇒ null. */
+async function hostReadFile(agent: HookAgent, path: string): Promise<string | null> {
+    const res = await hostExec(agent, ['cat', path]);
+    if (res?.code !== 0) return null;
+    return res.stdout ?? '';
+}
+
+/**
+ * Overwrite a host file through the agent's structured `write_file`.
+ *
+ * Best-effort, like the `cat >> … <<'EOF'` heredoc it replaced: a failed
+ * write is logged and the hook carries on, so a permission problem on the
+ * config file never skips the #1864 integrity guard that runs after it.
+ */
+async function hostWriteFile(agent: HookAgent, path: string, content: string): Promise<void> {
+    try {
+        await agent.sendCommand('write_file', { path, content });
+    } catch (e) {
+        logger.warn('ServiceManager', `Failed to write ${path}:`, e);
+    }
+}
+
+/** A uid/gid that can be handed to `chown` — a plain non-negative integer. */
+function isUnixId(value: unknown): value is number {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
 /** Fix volume ownership for containers with explicit runAsUser/runAsGroup.
  *  In rootless podman, host UIDs map differently inside the user namespace.
  *  Uses `podman unshare chown` to translate container UIDs to correct host UIDs. */
@@ -46,6 +110,12 @@ async function chownContainerMounts(
     const uid = container.securityContext?.runAsUser;
     const gid = container.securityContext?.runAsGroup ?? uid;
     if (uid == null || uid === 0) return; // Skip root or unset
+    // The schema types these as non-negative integers; re-assert it here so a
+    // write path that skipped validation still cannot shape the chown target.
+    if (!isUnixId(uid) || !isUnixId(gid)) {
+        logger.warn('ServiceManager', `Ignoring non-integer runAsUser/runAsGroup on container "${container.name}"`);
+        return;
+    }
 
     const mounts = container.volumeMounts || [];
     for (const mount of mounts) {
@@ -55,9 +125,7 @@ async function chownContainerMounts(
 
         const agent = await agentManager.ensureAgent(nodeName);
         try {
-            await agent.sendCommand('exec', {
-                command: `podman unshare chown -R ${uid}:${gid} ${hostPath}`
-            });
+            await hostExec(agent, ['podman', 'unshare', 'chown', '-R', `${uid}:${gid}`, hostPath]);
             logger.info('ServiceManager', `Fixed volume ownership: ${hostPath} -> ${uid}:${gid}`);
         } catch (e) {
             logger.warn('ServiceManager', `Failed to fix ownership for ${hostPath}:`, e);
@@ -94,44 +162,39 @@ export async function fixVolumeOwnership(nodeName: string, yamlContent: string) 
  * FileBrowser DB initialization hook.
  */
 async function runFileBrowserHook(
-    agent: import('../../agent/handler').AgentHandler,
+    agent: HookAgent,
     image: string,
     dbHostPath: string,
     dbFile: string,
 ): Promise<void> {
     logger.info('ServiceManager', `Initializing FileBrowser DB at ${dbHostPath}/${dbFile} (config init + auth.method=proxy + admin user)`);
-    await agent.sendCommand('exec', { command: `mkdir -p ${dbHostPath}` });
+    await hostExec(agent, ['mkdir', '-p', dbHostPath]);
 
-    const initCmd = [
-        `podman run --rm --user 0:0`,
-        `-v ${dbHostPath}:/db`,
-        `${image}`,
-        `config init --database /db/${dbFile}`,
-    ].join(' ');
-    const initRes = await agent.sendCommand('exec', { command: initCmd, timeout: 60 });
+    // `dbHostPath` is the manifest's hostPath and `image` the manifest's
+    // image — both argv-passed (#2928), never spliced into a shell string.
+    const podmanRun = (...args: string[]): string[] => [
+        'podman', 'run', '--rm', '--user', '0:0',
+        '-v', `${dbHostPath}:/db`,
+        image,
+        ...args,
+    ];
+
+    const initRes = await hostExec(agent, podmanRun('config', 'init', '--database', `/db/${dbFile}`), 60);
     if (initRes.code !== 0) {
         logger.warn('ServiceManager', `FileBrowser config init failed (code ${initRes.code}): ${initRes.stderr || initRes.stdout}`);
         return;
     }
 
-    const setCmd = [
-        `podman run --rm --user 0:0`,
-        `-v ${dbHostPath}:/db`,
-        `${image}`,
-        `config set --auth.method=proxy --auth.header=Remote-User --database /db/${dbFile}`,
-    ].join(' ');
-    const setRes = await agent.sendCommand('exec', { command: setCmd, timeout: 60 });
+    const setRes = await hostExec(agent, podmanRun(
+        'config', 'set', '--auth.method=proxy', '--auth.header=Remote-User', '--database', `/db/${dbFile}`,
+    ), 60);
     if (setRes.code !== 0) {
         logger.warn('ServiceManager', `FileBrowser config set --auth.method=proxy failed (code ${setRes.code}): ${setRes.stderr || setRes.stdout}`);
     }
 
-    const userCmd = [
-        `podman run --rm --user 0:0`,
-        `-v ${dbHostPath}:/db`,
-        `${image}`,
-        `users add admin admin1234admin --perm.admin --database /db/${dbFile}`,
-    ].join(' ');
-    const result = await agent.sendCommand('exec', { command: userCmd, timeout: 60 });
+    const result = await hostExec(agent, podmanRun(
+        'users', 'add', 'admin', 'admin1234admin', '--perm.admin', '--database', `/db/${dbFile}`,
+    ), 60);
     if (result.code === 0) {
         logger.info('ServiceManager', 'FileBrowser DB initialized: proxy-auth + admin user (password unused under proxy auth).');
     } else {
@@ -140,37 +203,36 @@ async function runFileBrowserHook(
 }
 
 /**
- * Append `block` to `cfgFile` (heredoc) only when `topKey` (an
- * unindented YAML key, e.g. `automation:` / `script:`) is absent. Returns
- * true iff the block was appended. Shared by the HA self-heal hook so
- * each managed key is re-added independently after a backup-restore
- * brings back a user `configuration.yaml` without it. Idempotent: a
- * subsequent deploy finds the key present and leaves the file alone.
+ * Append `block` to `current` only when `topKey` (an unindented YAML key,
+ * e.g. `automation:` / `script:`) is absent. Returns the new content, or
+ * null when the key is already there and the file must be left alone.
+ * Shared by the HA self-heal hook so each managed key is re-added
+ * independently after a backup-restore brings back a user
+ * `configuration.yaml` without it. Idempotent: a subsequent deploy finds
+ * the key present and returns null.
+ *
+ * Pure since #2928: the probe used to be `grep -E '^key' <cfgFile>` and the
+ * append a `cat >> <cfgFile> <<'EOF'` heredoc, both of which spliced the
+ * manifest's hostPath into a shell command string. The caller now reads the
+ * file once (argv `cat`) and writes it back once (`write_file`), so this
+ * function never touches the host at all.
  */
-async function appendYamlKeyIfMissing(
-    agent: import('../../agent/handler').AgentHandler,
-    cfgFile: string,
+function appendYamlKeyIfMissing(
+    current: string,
     topKey: string,
     block: string,
     label: string,
-): Promise<boolean> {
-    // grep -E for an unindented top-level key. The `:` is included so
-    // `automation:` doesn't match a deeper `automation_foo:`; the key is
-    // a fixed literal here so no escaping is needed.
-    const probe = await agent.sendCommand('exec', { command: `grep -E '^${topKey}' ${cfgFile} || echo MISSING` });
-    if (!probe.stdout?.includes('MISSING')) {
+): string | null {
+    // An unindented top-level key. The `:` is part of `topKey` so
+    // `automation:` doesn't match a deeper `automation_foo:`.
+    const keyRe = new RegExp('^' + topKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'm');
+    if (keyRe.test(current)) {
         logger.debug('ServiceManager', `HA configuration.yaml already has ${label}, leaving it alone`);
-        return false;
+        return null;
     }
     logger.info('ServiceManager', `HA configuration.yaml missing ${label} — re-adding (likely after a backup-restore)`);
-    const appendCmd = `cat >> ${cfgFile} <<'EOF'\n${block}\nEOF`;
-    const res = await agent.sendCommand('exec', { command: appendCmd, timeout: 10 });
-    if (res.code === 0) {
-        logger.info('ServiceManager', `HA ${label} re-added`);
-        return true;
-    }
-    logger.warn('ServiceManager', `HA ${label} append failed: ${res.stderr || res.stdout}`);
-    return false;
+    const base = current === '' || current.endsWith('\n') ? current : `${current}\n`;
+    return `${base}${block}\n`;
 }
 
 /**
@@ -230,17 +292,14 @@ function parseHaEntryCount(content: string): number | null {
  * on top of an emptied config.
  */
 async function assertHaConfigIntegrity(
-    agent: import('../../agent/handler').AgentHandler,
+    agent: HookAgent,
     includeDir: string,
     includes: { key: string; file: string; seed: string; platform?: string }[],
 ): Promise<void> {
     const registryPath = `${includeDir}/.storage/core.entity_registry`;
-    const regRes = await agent.sendCommand('exec', {
-        command: `cat ${registryPath} 2>/dev/null || echo MISSING`,
-    });
-    const registryJson = regRes.stdout ?? '';
+    const registryJson = (await hostReadFile(agent, registryPath)) ?? '';
     // No registry yet (fresh install / first boot) → nothing to compare.
-    if (registryJson.trim() === '' || registryJson.trim() === 'MISSING') return;
+    if (registryJson.trim() === '') return;
 
     // platform name per include file (drop the trailing `:` from the key).
     const platformFor: Record<string, string> = {
@@ -256,14 +315,10 @@ async function assertHaConfigIntegrity(
         const registered = countRegistryPlatformEntries(registryJson, platform);
         if (registered === 0) continue;
 
-        const fileRes = await agent.sendCommand('exec', {
-            command: `cat ${includeDir}/${inc.file} 2>/dev/null || echo MISSING`,
-        });
-        const raw = fileRes.stdout ?? '';
         // A genuinely missing file (the include target should always exist
         // after the seed loop above, but a race or manual delete is the
         // same hazard) is treated as 0 entries.
-        const content = raw.trim() === 'MISSING' ? '' : raw;
+        const content = (await hostReadFile(agent, `${includeDir}/${inc.file}`)) ?? '';
         const parsed = parseHaEntryCount(content);
         // null = unparseable; don't raise a false alarm on a file we can't
         // read (HA itself would error on it, which is its own signal).
@@ -314,15 +369,14 @@ async function assertHaConfigIntegrity(
  * the production caller is `runPreStartHooks`.
  */
 export async function runHomeAssistantHook(
-    agent: import('../../agent/handler').AgentHandler,
+    agent: HookAgent,
     cfgFile: string,
 ): Promise<void> {
     // Only act when the file already exists. On a first-install the
     // template's mustache config is about to be written by the deploy flow
     // — let that path own initial seeding. On every subsequent deploy
     // (including post-restore), the file is there and we get to fix it.
-    const exists = await agent.sendCommand('exec', { command: `test -f ${cfgFile} && echo yes` });
-    if (exists.stdout?.trim() !== 'yes') return;
+    if (!await hostFileExists(agent, cfgFile)) return;
 
     // UI-editable automations/scripts/scenes only load when their
     // `!include` line is in configuration.yaml. A backup-restore brings
@@ -335,15 +389,30 @@ export async function runHomeAssistantHook(
         { key: 'script:', file: 'scripts.yaml', seed: '{}' },
         { key: 'scene:', file: 'scenes.yaml', seed: '[]' },
     ];
+    // One argv read of the config, all three keys decided in-process, one
+    // structured write back (#2928) — instead of six shell commands built
+    // around the manifest-supplied config path.
+    let cfgContent = (await hostReadFile(agent, cfgFile)) ?? '';
+    let cfgChanged = false;
     for (const inc of includes) {
         // Ensure the include target exists (empty seed) so a freshly
-        // re-added include never points at a missing file. `>>` + a guard
-        // avoids clobbering a restored file that already has real content.
-        await agent.sendCommand('exec', {
-            command: `test -f ${includeDir}/${inc.file} || printf '%s\\n' '${inc.seed}' > ${includeDir}/${inc.file}`,
-        });
+        // re-added include never points at a missing file. The existence
+        // probe guards it, so a restored file with real content is never
+        // clobbered.
+        const targetPath = `${includeDir}/${inc.file}`;
+        if (!await hostFileExists(agent, targetPath)) {
+            await hostWriteFile(agent, targetPath, `${inc.seed}\n`);
+        }
         const block = `${inc.key} !include ${inc.file}`;
-        await appendYamlKeyIfMissing(agent, cfgFile, inc.key, block, `${inc.key} !include`);
+        const updated = appendYamlKeyIfMissing(cfgContent, inc.key, block, `${inc.key} !include`);
+        if (updated !== null) {
+            cfgContent = updated;
+            cfgChanged = true;
+        }
+    }
+    if (cfgChanged) {
+        await hostWriteFile(agent, cfgFile, cfgContent);
+        logger.info('ServiceManager', 'HA configuration.yaml includes re-added');
     }
 
     // Integrity guard (#1864): refuse-and-shout when the entity registry
@@ -408,8 +477,7 @@ export async function runPreStartHooks(nodeName: string, name: string, yamlConte
                 const agent = await agentManager.ensureAgent(nodeName);
 
                 // Check if DB already exists (don't overwrite on redeploy)
-                const check = await agent.sendCommand('exec', { command: `test -f ${fullDbPath} && echo exists` });
-                if (check.stdout?.trim() === 'exists') {
+                if (await hostFileExists(agent, fullDbPath)) {
                     logger.debug('ServiceManager', `FileBrowser DB already exists at ${fullDbPath}, skipping init`);
                     continue;
                 }

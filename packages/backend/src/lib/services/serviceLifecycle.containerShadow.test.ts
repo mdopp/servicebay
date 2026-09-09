@@ -51,6 +51,19 @@ const execCommands = () =>
         .filter(([action]) => action === 'exec')
         .map(([, params]) => (params as { command?: string })?.command ?? '');
 
+/**
+ * Everything the reconcile asked the node to run, in order — legacy shell
+ * strings AND structured `safe_exec` argv (rendered space-joined for the
+ * assertions). Since #2928 the force-remove is argv, because the container
+ * name comes out of the caller's pod manifest.
+ */
+const nodeCommands = () =>
+    mockSendCommand.mock.calls
+        .filter(([action]) => action === 'exec' || action === 'safe_exec')
+        .map(([action, params]) => action === 'exec'
+            ? ((params as { command?: string })?.command ?? '')
+            : ((params as { argv?: string[] })?.argv ?? []).join(' '));
+
 describe('reconcileContainerQuadletShadow (#2174)', () => {
     it('is a no-op when no .container unit is on disk (ordinary kube deploy)', async () => {
         mockSendCommand.mockImplementation(async (action: string, params: unknown) => {
@@ -90,8 +103,8 @@ describe('reconcileContainerQuadletShadow (#2174)', () => {
         // Force-recreate: stop, then rm -f every plausible container name
         // (a plain restart leaves the old CPU container by name).
         expect(cmds.some(c => /systemctl --user stop llama\.service/.test(c))).toBe(true);
-        expect(cmds.some(c => /podman rm -f llama-llama /.test(c))).toBe(true);
-        expect(cmds.some(c => /podman rm -f systemd-llama /.test(c))).toBe(true);
+        expect(nodeCommands().some(c => /^podman rm -f llama-llama$/.test(c))).toBe(true);
+        expect(nodeCommands().some(c => /^podman rm -f systemd-llama$/.test(c))).toBe(true);
 
         // ...then start so the `.container` unit recreates it with the CDI device.
         expect(cmds.some(c => /systemctl --user --no-block start llama\.service/.test(c))).toBe(true);
@@ -99,10 +112,10 @@ describe('reconcileContainerQuadletShadow (#2174)', () => {
 
     it('orders the force-recreate: stop → rm -f → start (rm before start)', async () => {
         await ServiceLifecycle.reconcileContainerQuadletShadow('local', 'llama', 'llama.yml', OLLAMA_YAML);
-        const cmds = execCommands();
+        const cmds = nodeCommands();
 
         const stopIdx = cmds.findIndex(c => /systemctl --user stop llama\.service/.test(c));
-        const rmIdx = cmds.findIndex(c => /podman rm -f llama-llama /.test(c));
+        const rmIdx = cmds.findIndex(c => /^podman rm -f llama-llama$/.test(c));
         const startIdx = cmds.findIndex(c => /systemctl --user --no-block start llama\.service/.test(c));
 
         expect(stopIdx).toBeGreaterThanOrEqual(0);
@@ -229,7 +242,7 @@ const reconcile = (lines?: string[]) =>
     );
 
 const wasRecreated = () => {
-    const cmds = execCommands();
+    const cmds = nodeCommands();
     return cmds.some(c => /podman rm -f/.test(c)) || cmds.some(c => /systemctl --user stop llama\.service/.test(c));
 };
 
@@ -270,7 +283,7 @@ describe('reconcileContainerQuadletShadow — warm state survives an unchanged r
         const lines: string[] = [];
         await reconcile(lines);
 
-        expect(execCommands().some(c => /podman rm -f llama-llama /.test(c))).toBe(true);
+        expect(nodeCommands().some(c => /^podman rm -f llama-llama$/.test(c))).toBe(true);
         expect(execCommands().some(c => /--no-block start llama\.service/.test(c))).toBe(true);
         expect(lines.some(l => /force-recreating the container — the \.container Quadlet changed/.test(l))).toBe(true);
     });

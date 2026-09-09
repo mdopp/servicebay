@@ -13,14 +13,17 @@ vi.mock('../logger', () => ({
     logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-type Params = { command?: string } | undefined;
+type Params = { command?: string; argv?: string[]; path?: string; content?: string } | undefined;
 
 /**
- * Fake agent that simulates a host `configuration.yaml` against which the
- * HA self-heal hook (#1687) runs shell commands. We interpret the handful of
- * commands the hook issues (`test -f`, `grep -E '^key'`, the `cat >> heredoc`
- * append, and the `test -f file || printf > file` include-seed) so the test
- * asserts the resulting file content, not just the command strings.
+ * Fake host filesystem the HA self-heal hook (#1687) runs against.
+ *
+ * Since #2928 the hook talks to the node only through the STRUCTURED agent
+ * verbs — `safe_exec` with an argv list (`test -f <path>`, `cat <path>`) and
+ * `write_file` — never through a shell command string, because the paths it
+ * handles come straight out of the caller's pod manifest. This stub therefore
+ * interprets argv, not command strings, and `calls` records the argv joined
+ * for readability. The assertions are still about the resulting file content.
  */
 function makeHaAgent(initialFiles: Record<string, string>) {
     const files: Record<string, string> = { ...initialFiles };
@@ -28,46 +31,25 @@ function makeHaAgent(initialFiles: Record<string, string>) {
     const agent = {
         files,
         calls,
-        sendCommand: vi.fn(async (_action: string, params?: unknown) => {
-            const cmd = (params as Params)?.command ?? '';
-            calls.push(cmd);
-
-            // test -f <path> && echo yes
-            let m = cmd.match(/^test -f (\S+) && echo yes$/);
-            if (m) return { code: 0, stdout: files[m[1]] !== undefined ? 'yes' : '' };
-
-            // grep -E '^key' <path> || echo MISSING
-            m = cmd.match(/^grep -E '\^([^']+)' (\S+) \|\| echo MISSING$/);
-            if (m) {
-                const [, pattern, path] = m;
-                const body = files[path] ?? '';
-                const re = new RegExp('^' + pattern, 'm');
-                return { code: 0, stdout: re.test(body) ? 'match' : 'MISSING' };
+        sendCommand: vi.fn(async (action: string, params?: unknown) => {
+            const p = params as Params;
+            if (action === 'write_file') {
+                calls.push(`write_file ${p?.path}`);
+                files[p!.path!] = p?.content ?? '';
+                return 'ok';
             }
+            const argv = p?.argv ?? [];
+            calls.push(argv.join(' '));
 
-            // cat >> <path> <<'EOF'\n<block>\nEOF
-            m = cmd.match(/^cat >> (\S+) <<'EOF'\n([\s\S]*)\nEOF$/);
-            if (m) {
-                const [, path, block] = m;
-                files[path] = (files[path] ?? '') + block + '\n';
-                return { code: 0 };
+            if (argv[0] === 'test' && argv[1] === '-f') {
+                return { code: files[argv[2]] !== undefined ? 0 : 1, stdout: '', stderr: '' };
             }
-
-            // test -f <file> || printf '%s\n' '<seed>' > <file>
-            m = cmd.match(/^test -f (\S+) \|\| printf '%s\\n' '([^']*)' > (\S+)$/);
-            if (m) {
-                const [, testPath, seed, outPath] = m;
-                if (files[testPath] === undefined) files[outPath] = seed + '\n';
-                return { code: 0 };
+            if (argv[0] === 'cat') {
+                const body = files[argv[1]];
+                return body === undefined
+                    ? { code: 1, stdout: '', stderr: 'No such file or directory' }
+                    : { code: 0, stdout: body, stderr: '' };
             }
-
-            // cat <path> 2>/dev/null || echo MISSING  (integrity-guard reads)
-            m = cmd.match(/^cat (\S+) 2>\/dev\/null \|\| echo MISSING$/);
-            if (m) {
-                const body = files[m[1]];
-                return { code: 0, stdout: body !== undefined ? body : 'MISSING' };
-            }
-
             return { code: 0, stdout: '' };
         }),
     };
@@ -113,8 +95,8 @@ describe('runHomeAssistantHook (#1687 config-survival self-heal)', () => {
         expect(agent.files[CFG]).not.toMatch(/^http:/m);
         expect(agent.files[CFG]).not.toContain('use_x_forwarded_for');
         expect(agent.files[CFG]).not.toContain('trusted_proxies');
-        // …and it never even probed for the key, so no command can re-add it.
-        expect(agent.calls.some((c) => c.includes("grep -E '^http:'"))).toBe(false);
+        // …and nothing it wrote back mentions the key, so no path can re-add it.
+        expect(agent.calls.some((c) => c.includes('http'))).toBe(false);
     });
 
     it('#2573: leaves an operator/legacy http: block in place — removal is post-deploy.py\'s call', async () => {
@@ -155,7 +137,7 @@ describe('runHomeAssistantHook (#1687 config-survival self-heal)', () => {
         const agent = makeHaAgent({});
         await ServiceLifecycle.runHomeAssistantHook(agent as never, CFG);
         // Only the existence probe ran; no append/seed.
-        expect(agent.calls).toEqual([`test -f ${CFG} && echo yes`]);
+        expect(agent.calls).toEqual([`test -f ${CFG}`]);
         expect(agent.files[CFG]).toBeUndefined();
     });
 

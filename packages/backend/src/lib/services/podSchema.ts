@@ -1,9 +1,17 @@
 /**
  * Runtime validation for Pod manifests submitted via the API.
  *
- * Two write paths feed `ServiceManager.deployKubeService` / `saveService`:
- *   1. POST /api/services — wizard + InstallerModal + MCP deploy_service
- *   2. PUT  /api/services/[name] — Settings → Services edit panel
+ * Every write path funnels through one of two entry points:
+ *   1. `ServiceLifecycle.deployKubeService` — the deploy choke point. It calls
+ *      `validatePodManifest` itself (#2928), so the install runner
+ *      (POST /api/services) AND the MCP tools (`deploy_service`,
+ *      `update_service_yaml`) are covered whether or not their caller
+ *      remembered to validate. Before #2928 only the two HTTP routes called
+ *      this module, so an MCP client could hand the deploy path any manifest
+ *      it liked — including one whose `hostPath.path` carried a shell
+ *      metacharacter.
+ *   2. PUT /api/services/[name] — Settings → Services edit panel, which
+ *      writes via `saveService` and validates in the route.
  *
  * Until this module landed, both paths accepted whatever `yamlContent` the
  * caller sent and called `js-yaml.loadAll` with `as any[]`. A typoed
@@ -50,6 +58,50 @@ const ContainerPortSchema = z.object({
     hostIp: z.string().optional(),
 }).passthrough();
 
+/**
+ * Characters a pod-manifest value must not carry when it can end up on a host
+ * command line (#2928).
+ *
+ * The primary fix is that these values are now argv-passed (`safe_exec`), so a
+ * metacharacter has no meaning to any shell. This refusal is the second layer:
+ * a manifest that carries one is *not* a manifest anybody legitimately wrote,
+ * so refusing it early turns "a shell escape somewhere downstream" into a 400
+ * with a path. Deliberately a DENY-list, not an allow-list: ordinary hostPaths
+ * do contain spaces (`/mnt/data/My Media`), `+`, `=` and `@`, and refusing
+ * those would break the common case for no security gain.
+ */
+const SHELL_METACHARACTERS = /[`$;&|<>(){}[\]*?!\\'"\n\r\t~#]/;
+
+/** Reject control characters too — a newline in a path is a second command. */
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+
+function hasShellMetacharacter(value: string): boolean {
+    return SHELL_METACHARACTERS.test(value) || CONTROL_CHARACTERS.test(value);
+}
+
+/**
+ * A uid/gid the deploy path interpolates into a `chown` argument. K8s says
+ * int64; we say a plain non-negative integer, which is what every real
+ * manifest carries and what makes `${uid}:${gid}` unforgeable.
+ */
+const UnixId = z
+    .number()
+    .int('must be an integer')
+    .min(0, 'must not be negative')
+    .max(4294967295, 'must be a valid uid/gid');
+
+/**
+ * `securityContext` stays permissive (`privileged`, `capabilities`,
+ * `seLinuxOptions`, … are all still accepted) — but the three fields the
+ * pre-start ownership fixup reads are typed, because they used to be
+ * `z.object({}).passthrough()` and therefore accepted a string (#2928).
+ */
+const SecurityContextSchema = z.object({
+    runAsUser: UnixId.optional(),
+    runAsGroup: UnixId.optional(),
+    fsGroup: UnixId.optional(),
+}).passthrough();
+
 const VolumeMountSchema = z.object({
     name: z.string().min(1, 'volumeMount.name is required'),
     mountPath: z.string().startsWith('/', 'mountPath must be absolute'),
@@ -68,13 +120,17 @@ const ContainerSchema = z.object({
     }).passthrough()).optional(),
     ports: z.array(ContainerPortSchema).optional(),
     volumeMounts: z.array(VolumeMountSchema).optional(),
-    securityContext: z.object({}).passthrough().optional(),
+    securityContext: SecurityContextSchema.optional(),
 }).passthrough();
 
 const HostPathVolumeSchema = z.object({
     name: z.string().min(1),
     hostPath: z.object({
-        path: z.string().startsWith('/', 'hostPath.path must be absolute'),
+        path: z.string()
+            .startsWith('/', 'hostPath.path must be absolute')
+            .refine(v => !hasShellMetacharacter(v), {
+                message: 'hostPath.path must not contain shell metacharacters or control characters',
+            }),
         type: z.string().optional(),
     }),
 }).passthrough();
