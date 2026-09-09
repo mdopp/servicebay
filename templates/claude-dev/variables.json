@@ -30,9 +30,10 @@
   },
   "CLAUDE_DEV_CONFIG_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for the claude-dev configuration UI, e.g. `claude.<your domain>`. Gated by Authelia forward-auth like every other service — an unauthenticated request is redirected to the login page and never reaches the container. The UI additionally refuses anyone outside CLAUDE_DEV_LDAP_GROUP, because Authelia's catch-all rule lets any household user through and this is the dev box's own configuration.",
+    "description": "Subdomain for the claude-dev configuration UI, e.g. `claude.<your domain>`. This is the dev box's own configuration, so it is an ADMIN surface: the auth template's access_control table names `claude.<domain>` in its admins-only rule and in the explicit-deny twin, so a household `family` account is refused rather than passed through the wildcard (#2936). The UI then independently refuses anyone outside CLAUDE_DEV_LDAP_GROUP, so a group change on the dev box narrows access further but can never widen it past the admins group.",
     "default": "claude",
     "exposure": "public",
+    "audience": "admin",
     "proxyPort": "CLAUDE_DEV_CONFIG_PORT",
     "loopbackOnly": true,
     "proxyConfig": {
@@ -48,9 +49,10 @@
   },
   "CLAUDE_DEV_PI_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for the pi web chat, e.g. `pi.<your domain>` — the second agent in this container, alongside the Claude sessions you reach over SSH and Remote Control. Gated by Authelia forward-auth exactly like the configuration UI: an unauthenticated request is redirected to the login page and never reaches the container. Authelia is the ONLY gate here — pi-web-ui carries no sign-in of its own, which is why this subdomain must never be pointed at a port that is reachable without it.",
+    "description": "Subdomain for the pi web chat, e.g. `pi.<your domain>` — the second agent in this container, alongside the Claude sessions you reach over SSH and Remote Control. Authelia is the ONLY gate here: pi-web-ui carries no sign-in of its own and hands whoever reaches it an interactive agent with a bash tool running as `dev` inside this container. So this is an ADMIN surface — the auth template names `pi.<domain>` in its admins-only two-factor rule and in the explicit-deny twin, and a household `family` account is refused (#2936). Never point this subdomain at a port that is reachable without the proxy, and never move the host out of that rule.",
     "default": "pi",
     "exposure": "public",
+    "audience": "admin",
     "proxyPort": "CLAUDE_DEV_PI_PORT",
     "loopbackOnly": true,
     "proxyConfig": {
@@ -86,7 +88,7 @@
   },
   "CLAUDE_DEV_LDAP_GROUP": {
     "type": "text",
-    "description": "Only LLDAP users in this group may SSH in, and only they may open the configuration UI at CLAUDE_DEV_CONFIG_SUBDOMAIN. Defaults to `admins`, the group your operator account belongs to. The entrypoint provisions a local login account for each member of this group; point it at a dedicated group to grant dev-box access without making someone a full admin.",
+    "description": "Only LLDAP users in this group may SSH in, and only they may open the configuration UI at CLAUDE_DEV_CONFIG_SUBDOMAIN. Defaults to `admins`, the group your operator account belongs to. The entrypoint provisions a local login account for each member of this group; point it at a dedicated group to grant dev-box access without making someone a full admin. It does NOT gate the pi web chat: pi has no group check of its own, so `pi.<domain>` is held by the auth template's admins-only access_control rule instead (#2936). Pointing this at a non-admin group therefore widens SSH and the configuration UI, never the web surfaces — those stay admins-only until the auth template's rule says otherwise.",
     "default": "admins"
   }
 }

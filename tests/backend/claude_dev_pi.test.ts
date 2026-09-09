@@ -24,8 +24,15 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'fs';
 import path from 'path';
+import {
+  authTemplateAccessControl,
+  isAllowed,
+  policyFor,
+} from '../fixtures/autheliaAccessControl';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
+/** Stand-in apex for evaluating the auth template's access_control table. */
+const PUBLIC_DOMAIN = 'example.test';
 const TEMPLATE_DIR = path.join(REPO_ROOT, 'templates', 'claude-dev');
 const SEEDER = path.join(TEMPLATE_DIR, 'pi', 'seed-models.mjs');
 
@@ -92,9 +99,58 @@ describe('#2803 (1): pi extends claude-dev rather than forking a second template
     expect(new Set(ports).size).toBe(ports.length);
   });
 
-  it('reuses the SSH/config-UI LDAP group rather than inventing a second one', () => {
+  // #2936. What used to stand here was
+  //   expect(entrypoint()).toMatch(/start_pi_web_ui\(\)[\s\S]*CLAUDE_DEV_LDAP_GROUP/)
+  // under the name "reuses the SSH/config-UI LDAP group rather than inventing a
+  // second one". The only thing that ever matched was the closing `echo` line —
+  // start_pi_web_ui enforces NOTHING. The test was green while `pi.<domain>` was
+  // on the internet behind the `*.<domain>` one_factor family catch-all, handing
+  // any household LLDAP account an agent with a bash tool as `dev` in this
+  // container, next to the box's ServiceBay token and the operator's Claude and
+  // GitHub credentials.
+  //
+  // So the assertions below are about the gate that actually decides: Authelia's
+  // access_control table, evaluated the way Authelia evaluates it. They fail if
+  // the host is taken out of the admin rule, or if its explicit-deny twin is
+  // dropped (a `subject` mismatch SKIPS a rule — #878).
+  it('gives pi NO group check of its own, and no longer claims one in its log line', () => {
+    const src = entrypoint();
+    const body = src.slice(src.indexOf('start_pi_web_ui()'));
+    const fn = body.slice(0, body.indexOf('\n}\n'));
+    // No enforcement of any kind inside the launcher…
+    expect(fn).not.toMatch(/PI_WEB_TOKEN=|id -nG|getent group|AllowGroups/);
+    // …and the start-up line must not read as if there were one. The old line
+    // ended in "behind Authelia (group '${CLAUDE_DEV_LDAP_GROUP:-admins}')",
+    // which is the sentence this whole issue is made of.
+    expect(fn).not.toContain('CLAUDE_DEV_LDAP_GROUP');
+    // The variable itself stays — it gates SSH and the configuration UI.
     expect(Object.keys(variables())).toContain('CLAUDE_DEV_LDAP_GROUP');
-    expect(entrypoint()).toMatch(/start_pi_web_ui\(\)[\s\S]*CLAUDE_DEV_LDAP_GROUP/);
+  });
+
+  it('declares pi an admin surface, and Authelia actually denies a family account', () => {
+    const sub = variables().CLAUDE_DEV_PI_SUBDOMAIN;
+    expect(sub.audience).toBe('admin');
+
+    const table = authTemplateAccessControl(REPO_ROOT, PUBLIC_DOMAIN);
+    const host = `${sub.default}.${PUBLIC_DOMAIN}`;
+    // Denied, not merely "not two_factor": without the explicit-deny twin the
+    // family subject falls through to the wildcard and IS allowed.
+    expect(isAllowed(policyFor(table, host, { user: 'resident', groups: ['family'] }))).toBe(false);
+    // A signed-in account in no group at all — the subject-mismatch path.
+    expect(isAllowed(policyFor(table, host, { user: 'stranger', groups: [] }))).toBe(false);
+    // Not reachable without signing in either.
+    expect(isAllowed(policyFor(table, host, null))).toBe(false);
+    // And the operator does get in.
+    expect(policyFor(table, host, { user: 'operator', groups: ['admins'] })).toBe('two_factor');
+  });
+
+  it('holds the configuration UI to the same rule (#2936: it was family-reachable too)', () => {
+    const sub = variables().CLAUDE_DEV_CONFIG_SUBDOMAIN;
+    expect(sub.audience).toBe('admin');
+    const table = authTemplateAccessControl(REPO_ROOT, PUBLIC_DOMAIN);
+    const host = `${sub.default}.${PUBLIC_DOMAIN}`;
+    expect(isAllowed(policyFor(table, host, { user: 'resident', groups: ['family'] }))).toBe(false);
+    expect(policyFor(table, host, { user: 'operator', groups: ['admins'] })).toBe('two_factor');
   });
 
   it('sets no PI_WEB_TOKEN anywhere — Authelia is the gate, not a second password', () => {

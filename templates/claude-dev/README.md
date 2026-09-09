@@ -44,11 +44,11 @@ homes under `/workspace/home/<user>` stay private (mode `700`).
 | `CLAUDE_CODE_OAUTH_TOKEN` | Optional long-lived Claude subscription token, so sessions never need an interactive `/login`. See [Staying logged in](#staying-logged-in). Blank keeps the interactive login. |
 | `SERVICEBAY_MCP_TOKEN` | Optional read-only ServiceBay API token, wired as an MCP server for every session. See [Reading ServiceBay from a session](#reading-servicebay-from-a-session). |
 | `LLDAP_ADMIN_PASSWORD` | LLDAP bind password. **Not asked for** — reused automatically from the value the `auth` stack generated. Empty ⇒ LDAP login off, `dev` only. |
-| `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in **and** open the configuration UI (default `admins`). |
+| `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in **and** open the configuration UI (default `admins`). It does not gate the pi chat, and it can only narrow access — both web surfaces are admins-only in Authelia (#2936). |
 | `CLAUDE_DEV_CONFIG_PORT` | Port the configuration UI listens on (default `8790`), published on the host loopback only. |
-| `CLAUDE_DEV_CONFIG_SUBDOMAIN` | Subdomain the configuration UI is served on (default `claude`), behind nginx + Authelia. See [The configuration UI](#the-configuration-ui). |
+| `CLAUDE_DEV_CONFIG_SUBDOMAIN` | Subdomain the configuration UI is served on (default `claude`), behind nginx + Authelia's **admins-only** rule. See [The configuration UI](#the-configuration-ui). |
 | `CLAUDE_DEV_PI_PORT` | Port the pi web chat listens on (default `8791`), published on the host loopback only. Deliberately **not** pi-web-ui's own default `8787`, which solaris already uses on this box. |
-| `CLAUDE_DEV_PI_SUBDOMAIN` | Subdomain the pi chat is served on (default `pi`), behind nginx + Authelia. See [pi](#pi). |
+| `CLAUDE_DEV_PI_SUBDOMAIN` | Subdomain the pi chat is served on (default `pi`), behind nginx + Authelia's **admins-only** rule. See [pi](#pi). |
 | `CLAUDE_DEV_PI_MODEL_BASE_URL` | The OpenAI-compatible endpoint pi talks to — this box's own model server (default `http://host.containers.internal:11435/v1`, the solarisbay `llama` template's `LLAMA_PORT`). The only model source configured; no cloud key ships with this template. The picker stays empty until that listener is reachable from an isolated pod (mdopp/solarisbay#1344). |
 | `CLAUDE_DEV_PI_MODEL_ID` | Optional model id (or comma-separated ids) to offer in pi. Blank ⇒ the container asks the model server itself at start-up. |
 | `SERVICEBAY_APP_URL` | Set by the pod to `https://admin.<your domain>` — where a *browser* reaches ServiceBay, so the UI can link at the Claude sign-in repair terminal. Not `SERVICEBAY_API_URL`, which is the container-side address. |
@@ -367,10 +367,17 @@ so the credential is exactly the one `gh auth login` would have created; set
 the box's normal Authelia sign-in first (`__authelia_forward_auth__`, the same
 snippet the other gated services use), and the shell then accepts only users in
 `CLAUDE_DEV_LDAP_GROUP` — the group that already decides who may SSH in.
-Authelia's catch-all rule is `one_factor` for *any* household user, so without
-that second check every family account could open the dev box's configuration.
 A request with no Authelia identity gets `401` and a request from the wrong
 group gets `403`; neither ever receives the page.
+
+Since #2936 the Authelia gate is the *admin* rule, not the catch-all: the auth
+template names `claude.<your domain>` in its admins-only `two_factor` rule and
+in the explicit-deny twin, so a household `family` account is refused before the
+request reaches the container at all. Before that it fell to the
+`*.<domain>` `one_factor` rule and the shell's own group check was the only
+thing standing between any family login and the dev box's configuration. The two
+gates are deliberately ordered that way round: `CLAUDE_DEV_LDAP_GROUP` can
+narrow access further (point it at a dedicated dev group), never widen it.
 
 The port is published on the host's `127.0.0.1` only, so the proxy is the sole
 route in — a LAN host cannot hit `<lan-ip>:8790` and skip the sign-in.
@@ -411,16 +418,23 @@ own, so the container runs [`pi-web-ui`](https://www.npmjs.com/package/pi-web-ui
 as a second service on `CLAUDE_DEV_PI_PORT` (default `8791` — *not* pi-web-ui's
 own default `8787`, which solaris already occupies on this box). The port is
 published on the host's `127.0.0.1` only; `CLAUDE_DEV_PI_SUBDOMAIN` (default
-`pi.<your domain>`) puts it behind nginx + **Authelia**, gated on the same
-`CLAUDE_DEV_LDAP_GROUP` as SSH and the configuration UI.
+`pi.<your domain>`) puts it behind nginx + **Authelia**.
 
 Two details that matter:
 
-- **Authelia is the only gate.** `PI_WEB_TOKEN` (pi-web-ui's optional shared
-  password) is deliberately **not** set — the entrypoint even `env -u`s it — so
-  there is no second credential to leak or rotate. This is why the port must
-  stay loopback-published: nothing else stands between a LAN host and an agent
-  with a shell in this container.
+- **Authelia is the only gate, so that gate is admins-only.** `PI_WEB_TOKEN`
+  (pi-web-ui's optional shared password) is deliberately **not** set — the
+  entrypoint even `env -u`s it — and pi has no group check of its own, so
+  Authelia's verdict is the entire authorization decision. Which is why
+  `pi.<your domain>` is named in the auth template's admins-only `two_factor`
+  rule *and* in its explicit-deny twin (#2936): a `subject` mismatch skips a
+  rule rather than denying, so without the twin every `family` account would
+  reach it through the `*.<domain>` catch-all — an interactive agent with a bash
+  tool, running as `dev` beside this box's ServiceBay token and the operator's
+  Claude and GitHub credentials. `CLAUDE_DEV_LDAP_GROUP` does **not** gate this
+  surface; it gates SSH and the configuration shell.
+  This is also why the port must stay loopback-published: nothing else stands
+  between a LAN host and an agent with a shell in this container.
 - **The websocket needs the origin whitelisted.** pi-web-ui 403s a websocket
   upgrade whose `Origin` does not match the `Host` it sees, which reads as "the
   page loads but the chat keeps reconnecting". The pod passes the public

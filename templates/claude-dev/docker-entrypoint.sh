@@ -420,7 +420,11 @@ start_pi_web_ui() {
     done
   ) &
   if [ -n "$origin" ]; then
-    echo "claude-dev: pi-web-ui on port ${port}, reachable only through ${origin} behind Authelia (group '${CLAUDE_DEV_LDAP_GROUP:-admins}')."
+    # Do NOT name the dev-box LDAP group here: pi has no group check of its
+    # own, and this line reading as if it did is what let pi.<domain> sit on the
+    # family catch-all for a release (#2936). Authelia's admins-only rule for
+    # this host is the entire gate.
+    echo "claude-dev: pi-web-ui on port ${port}, reachable only through ${origin}. Authelia's admins-only rule for that host is the ONLY gate — pi has no sign-in and no group check of its own."
   else
     echo "claude-dev: pi-web-ui on port ${port}, published on the host loopback only — no public origin configured."
   fi

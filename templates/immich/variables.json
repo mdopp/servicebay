@@ -37,6 +37,7 @@
     "description": "Subdomain for Immich",
     "default": "photos",
     "exposure": "public",
+    "audience": "family",
     "proxyPort": "IMMICH_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,

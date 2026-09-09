@@ -13,6 +13,7 @@
     "description": "Subdomain for Syncthing Web UI — gated by Authelia forward-auth. The Syncthing mobile/desktop apps use API keys, not the GUI session, so device sync keeps working. Syncthing's GUI is loopback-only by design (it exposes API keys + folder paths); NPM (hostNetwork=true) forwards to 127.0.0.1:8384 to reach it (#880).",
     "default": "sync",
     "exposure": "internal",
+    "audience": "family",
     "proxyPort": "8384",
     "loopbackOnly": true,
     "proxyConfig": {
@@ -37,6 +38,7 @@
     "description": "Subdomain for FileBrowser. Authelia forward-auth in the proxy snippet means SSO login → FileBrowser session in one step.",
     "default": "files",
     "exposure": "public",
+    "audience": "family",
     "proxyPort": "FILEBROWSER_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,

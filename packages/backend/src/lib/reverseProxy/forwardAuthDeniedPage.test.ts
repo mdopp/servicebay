@@ -27,7 +27,15 @@ import {
 
 describe('requiredGroupsForDomain', () => {
   it('maps the admin-only subdomains to the admins group', () => {
-    for (const d of ['admin.dopp.cloud', 'nginx.dopp.cloud', 'dns.dopp.cloud', 'ldap.dopp.cloud']) {
+    for (const d of [
+      'admin.dopp.cloud',
+      'nginx.dopp.cloud',
+      'dns.dopp.cloud',
+      'ldap.dopp.cloud',
+      // claude-dev's two web surfaces — admin-only since #2936.
+      'claude.dopp.cloud',
+      'pi.dopp.cloud',
+    ]) {
       expect(requiredGroupsForDomain(d)).toEqual(['admins']);
     }
   });
