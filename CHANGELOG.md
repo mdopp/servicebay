@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.35.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.35.1...servicebay-v5.35.2) (2026-09-09)
+
+
+### Bug Fixes
+
+* **api:** redact rendered service files and log text for token principals ([44f9bad](https://github.com/mdopp/servicebay/commit/44f9bad6a5d4940720f1f824460e2c0ad9233214)), closes [#2943](https://github.com/mdopp/servicebay/issues/2943)
+* **auth:** hold every token-administration verb to a scope a read principal lacks ([b927783](https://github.com/mdopp/servicebay/commit/b92778393145459a4ecbdefaefbeeca7065eba2a)), closes [#2944](https://github.com/mdopp/servicebay/issues/2944)
+* **auth:** hold the claude-dev web surfaces to the admin rule, not the family catch-all ([b7b9b0f](https://github.com/mdopp/servicebay/commit/b7b9b0fce29db57ccd5be02033b02f23b7e02eb7)), closes [#2936](https://github.com/mdopp/servicebay/issues/2936)
+* **auth:** re-check a bridged session at every cookie surface, not only on /api/* ([bea05f1](https://github.com/mdopp/servicebay/commit/bea05f10d646f4a3610c66922ac6fa915e64ea7a)), closes [#2931](https://github.com/mdopp/servicebay/issues/2931)
+* **autoloop:** make the verify harness say why it failed ([241f5a4](https://github.com/mdopp/servicebay/commit/241f5a435d3ad0d91eeedadf663791f28e5d7829)), closes [#2926](https://github.com/mdopp/servicebay/issues/2926) [#2927](https://github.com/mdopp/servicebay/issues/2927) [#2940](https://github.com/mdopp/servicebay/issues/2940)
+* **services:** argv-pass pod-manifest fields and validate at the deploy choke point ([fe80c01](https://github.com/mdopp/servicebay/commit/fe80c01b686c1443e67b1777a443e3d9650b41a9)), closes [#2928](https://github.com/mdopp/servicebay/issues/2928)
+* **templates:** keep every credential Home Assistant's post-deploy writes owner-only ([4297780](https://github.com/mdopp/servicebay/commit/4297780e679e639a8617a8ef173a045c85fb8683)), closes [#2937](https://github.com/mdopp/servicebay/issues/2937)
+
 ## [5.35.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.35.0...servicebay-v5.35.1) (2026-09-09)
 
 
