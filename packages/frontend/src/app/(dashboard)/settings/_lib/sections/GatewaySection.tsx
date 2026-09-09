@@ -46,7 +46,7 @@ export default function GatewaySection() {
           setUsername(data.username);
           setSsl(data.ssl);
         }
-      } catch (e) {
+      } catch {
         // Silently ignore errors on load
       } finally {
         if (!cancelled) setBusy(null);
