@@ -140,6 +140,21 @@ export interface ApprovalAction {
    * token layer directly (would close an approvals ↔ token cycle).
    */
   mintToken?: { tokenRequestId: string };
+  /**
+   * Seal and run an agent-filed installation request (#2965). Carried on
+   * `on_approve` so the operator's Approve is what turns a *request* into an
+   * install — the agent CLI that filed it never installs anything, approved or
+   * not. `on_reject` leaves this unset, so rejecting installs nothing and the
+   * requester reads `denied` off the approval record.
+   *
+   * The action carries only the request id: the sealer reads the plan back out
+   * of THIS approval's `payload.plan` — the object the operator's card
+   * rendered — so what executes is what was approved rather than whatever the
+   * request row says at execution time. The sealer is injected
+   * (registerInstallSealer) so this kernel module never imports the install
+   * layer directly, symmetric with `mintToken`.
+   */
+  sealInstall?: { installRequestId: string };
 }
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
@@ -251,6 +266,22 @@ let tokenMinter: TokenMinter | null = null;
 /** Register the function that mints a one-shot elevated token on approve. */
 export function registerTokenMinter(fn: TokenMinter): void {
   tokenMinter = fn;
+}
+
+/**
+ * Seals an agent-filed installation request and schedules it (#2965). Injected
+ * by the install layer via {@link registerInstallSealer} for the same reason
+ * `mcpDispatcher` and `tokenMinter` are: this kernel module must not import the
+ * install layer, which imports it to submit the approval. Throws if the request
+ * is unknown or not pending, so a replay/double-approve cannot install twice.
+ */
+export type InstallSealer = (installRequestId: string) => Promise<void>;
+
+let installSealer: InstallSealer | null = null;
+
+/** Register the function that seals + runs an approved install request. */
+export function registerInstallSealer(fn: InstallSealer): void {
+  installSealer = fn;
 }
 
 /** Input accepted by {@link submitApproval}. `id`, `created_at` and `status`
@@ -528,6 +559,15 @@ async function runAction(action: ApprovalAction, node: string, service: string):
       throw new Error('Token minter is not registered; cannot run this approval.');
     }
     await tokenMinter(action.mintToken.tokenRequestId);
+  }
+  if (action.sealInstall) {
+    // Seal the approved plan onto the install request and schedule it (#2965).
+    // LOAD-BEARING: a failure must propagate so the approval is NOT marked
+    // approved and the requester keeps reading "waiting", never "installed".
+    if (!installSealer) {
+      throw new Error('Install sealer is not registered; cannot run this approval.');
+    }
+    await installSealer(action.sealInstall.installRequestId);
   }
   return {};
 }

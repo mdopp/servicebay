@@ -34,6 +34,11 @@ vi.mock('@/lib/approvals', async () => {
     isSelfApproval: actual.isSelfApproval,
     approveApproval: mocks.approveApproval,
     getApproval: mocks.getApproval,
+    // The route side-effect-imports the install-request store so this bundle's
+    // approvals copy has an install sealer (#2965, the #2237 hazard). That
+    // module registers at load, so the registrar has to exist on the mock —
+    // the real one, since it is a pure setter.
+    registerInstallSealer: actual.registerInstallSealer,
   };
 });
 

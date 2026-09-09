@@ -77,6 +77,8 @@ spell the `node …` form out.
 | `servicebay assist <id>` | Print one assist in full, frontmatter and body. |
 | `servicebay delegate <name> [--scopes read,lifecycle] [--expires <iso8601>]` | Mint a child of YOUR token, never wider than it. Prints the child secret once. |
 | `servicebay revoke <id>` | Revoke one child token you delegated. |
+| `servicebay request-install <template> --as <service> --reason <text> [--subdomain <label>] [--mount <host:container[:ro]>] [--port <host:container[/udp]>] [--var <NAME=value>] [--source <name>] [--node <name>]` | ASK the operator to install a template. It files a request and installs nothing; ServiceBay runs the approved plan. Prints a request id. |
+| `servicebay request-status <id>` | Read what really happened to your request: waiting, approved, installed, rejected or failed. Exit 4 means still waiting. |
 
 `servicebay --help` prints the same table from the CLI itself. That table is the
 contract; a verb or an option that is not in it does not exist.
@@ -100,6 +102,16 @@ The token is **read-scoped**, and that is the whole story:
   service's YAML, write files on the host, create or remove proxy routes, or
   read stored secrets. Those need a write-scoped session, which is the
   operator's, not yours.
+- **It can ask.** `request-install` files an installation *request*: it names
+  the template, the service name you want, the subdomain, the mounts and the
+  ports, and it puts that in front of the operator as an approval. It installs
+  nothing — not while it waits, and not after the operator approves. ServiceBay
+  runs the plan the operator approved; a later edit of the request cannot change
+  what runs. If your token is refused, this verb needs the `propose` scope, which
+  is the ladder's separate "ask a human" capability, not a write scope. Read the
+  outcome with `request-status <id>`, and read it honestly: **exit 4 means the
+  operator has not decided and nothing is installed.** Do not report a filed
+  request as a finished install.
 - When a call is refused, the CLI names **the scope it needed**, not the bare
   status — ServiceBay's REST gate answers a refused Bearer with a flat `401
   Authentication required`, which is useless to act on. A `403` carries the
@@ -107,7 +119,8 @@ The token is **read-scoped**, and that is the whole story:
 
 So: use the CLI to *observe* (and, where a sub-agent or a project of its own
 needs its own narrower credential, to delegate one). If a task needs a change on
-the box, say what you need and why, and ask the operator — do not go looking for
+the box, ask for it the way the CLI provides — `request-install` for a template
+you have finished, and otherwise say what you need and why. Do not go looking for
 a side door such as `podman` on a host socket or a second credential lying
 around the container.
 

@@ -71,6 +71,24 @@ const SUCCESS_BODY: Record<string, unknown> = {
   // like one only so the renderer has something to render.
   delegate: { token: { id: 'c0ffee12', name: 'claude-dev project alpha', scopes: ['read'] }, secret: FAKE_CHILD_TOKEN },
   revoke: { ok: true, revoked: 1, id: 'c0ffee12', name: 'claude-dev project alpha' },
+  // The request pair (#2965). Filing answers a request id and says, in words,
+  // that nothing is installed; the status verb's SUCCESS case is the one state
+  // that is genuinely a success — everything else exits non-zero (below).
+  'request-install': {
+    id: 'req-7f3a',
+    status: 'pending',
+    approvalId: 'ap-11',
+    installed: false,
+    detail: 'filed for approval — NOTHING has been installed. ServiceBay installs it only if the operator approves.',
+  },
+  'request-status': {
+    id: 'req-7f3a',
+    status: 'installed',
+    installed: true,
+    detail: 'installed',
+    jobId: 'job-1',
+    error: null,
+  },
 };
 
 /** The positional arguments each verb needs, for the table-driven cases. */
@@ -84,6 +102,8 @@ const ARGV: Record<string, string[]> = {
   assist: ['assist', 'adr-0007-naming'],
   delegate: ['delegate', 'claude-dev project alpha'],
   revoke: ['revoke', 'c0ffee12'],
+  'request-install': ['request-install', 'linkwarden', '--as', 'linkwarden', '--reason', 'the template is finished'],
+  'request-status': ['request-status', 'req-7f3a'],
 };
 
 function envWith(extra: Record<string, string> = {}) {
@@ -244,6 +264,121 @@ describe.each(Object.keys(ARGV))('verb `%s`', verbName => {
     expect(result.stderr).toContain('no ServiceBay API token found');
     expect(result.stderr).toContain(needPhrase(verbName));
     expect(result.stderr).toContain('SERVICEBAY_MCP_TOKEN_FILE');
+  });
+});
+
+/**
+ * The request pair (#2965) — the CLI asks, ServiceBay executes.
+ *
+ * The class-level guarantee (no verb reaches a mutating route, ever) lives in
+ * `agent_cli_mutation_gate.test.ts`. What is pinned here is the behaviour an
+ * agent actually experiences: the two verbs speak the request routes and
+ * NOTHING else, a filed request is never rendered as an install, and "still
+ * waiting for the operator" leaves through a non-zero exit code so a script
+ * cannot mistake it for done.
+ */
+describe('request-install asks, and installs nothing (#2965)', () => {
+  it('POSTs the request route and never touches an install/lifecycle route', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY['request-install']) };
+    const result = await cli.run(ARGV['request-install'], { env: envWith() });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(seen.method).toBe('POST');
+    expect(seen.url).toBe('/api/install/requests');
+    expect(seen.url).not.toContain('/api/install/start');
+    expect(seen.url).not.toContain('/api/install/assemble');
+  });
+
+  it('sends the plan the operator will read: template, name, subdomain, mounts, ports', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY['request-install']) };
+    await cli.run([
+      'request-install', 'linkwarden',
+      '--as', 'linkwarden',
+      '--reason', 'the template is finished',
+      '--subdomain', 'links',
+      '--mount', '/mnt/data/stacks/linkwarden/data:/data:rw',
+      '--mount', '/mnt/data/stacks/linkwarden/cache:/cache',
+      '--port', '8099:3000',
+      '--port', '5353:53/udp',
+      '--var', 'TZ=Europe/Berlin',
+    ], { env: envWith() });
+    const sent = JSON.parse(seen.body);
+    expect(sent.reason).toBe('the template is finished');
+    expect(sent.plan.template).toBe('linkwarden');
+    expect(sent.plan.serviceName).toBe('linkwarden');
+    expect(sent.plan.subdomain).toBe('links');
+    // A repeated flag ACCUMULATES — a dropped mount would file a narrower
+    // request than the agent believes it filed.
+    expect(sent.plan.mounts).toEqual([
+      { host: '/mnt/data/stacks/linkwarden/data', container: '/data', mode: 'rw' },
+      { host: '/mnt/data/stacks/linkwarden/cache', container: '/cache' },
+    ]);
+    expect(sent.plan.ports).toEqual([
+      { host: 8099, container: 3000 },
+      { host: 5353, container: 53, protocol: 'udp' },
+    ]);
+    expect(sent.plan.variables).toEqual({ TZ: 'Europe/Berlin' });
+    // Not requestable, at all: an agent-filed install is additive (ADR 0004).
+    expect(sent.plan.wipeMode).toBeUndefined();
+  });
+
+  it('tells the agent, in words, that nothing has been installed', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY['request-install']) };
+    const result = await cli.run(ARGV['request-install'], { env: envWith() });
+    expect(result.stdout).toContain('NOTHING has been installed');
+    expect(result.stdout).toContain('request-status req-7f3a');
+    // Every line that says "installed" says it is NOT: no line of this output
+    // can be quoted back as "the install is done".
+    for (const written of result.stdout.split('\n').filter(l => /installed/i.test(l))) {
+      expect(written).toMatch(/NOTHING has been installed/);
+    }
+    expect(result.stdout).toContain('status   pending');
+  });
+
+  it('has no flag that would make it install, approved or not', async () => {
+    for (const flag of ['--force', '--approve', '--now', '--yes']) {
+      const result = await cli.run([...ARGV['request-install'], flag], { env: envWith() });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('has no option');
+    }
+  });
+});
+
+describe('request-status never reports waiting as success (#2965 criterion 5)', () => {
+  const states: [string, boolean, number][] = [
+    ['pending', false, 4],
+    ['approved', false, 4],
+    ['installing', false, 4],
+    ['denied', false, 5],
+    ['failed', false, 5],
+    ['installed', true, 0],
+  ];
+
+  it.each(states)('status %s → exit %s', async (status, installed, exitCode) => {
+    reply = {
+      status: 200,
+      body: JSON.stringify({ id: 'req-7f3a', status, installed, detail: `state: ${status}`, jobId: null, error: null }),
+    };
+    const result = await cli.run(['request-status', 'req-7f3a'], { env: envWith() });
+    expect(result.exitCode, `${status} must exit ${exitCode}`).toBe(exitCode);
+    expect(result.stdout).toContain(status);
+    expect(result.stdout).toContain(installed ? 'installed  yes' : 'installed  no');
+  });
+
+  it('--json marks a waiting request as NOT ok, so a script cannot read it as done', async () => {
+    reply = {
+      status: 200,
+      body: JSON.stringify({ id: 'req-7f3a', status: 'pending', installed: false, detail: 'waiting', jobId: null, error: null }),
+    };
+    const result = await cli.run(['request-status', 'req-7f3a', '--json'], { env: envWith() });
+    expect(result.exitCode).toBe(4);
+    expect(JSON.parse(result.stdout).ok).toBe(false);
+  });
+
+  it('reads only its own request — a GET, with no way to name another principal', () => {
+    const verb = cli.VERBS['request-status'];
+    expect(verb.method).toBe('GET');
+    expect(verb.options).toEqual([]);
+    expect(verb.path({ id: 'req-7f3a' }, {})).toBe('/api/install/requests/req-7f3a');
   });
 });
 
