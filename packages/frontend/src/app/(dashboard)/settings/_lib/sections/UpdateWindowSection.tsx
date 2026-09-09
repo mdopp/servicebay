@@ -106,7 +106,7 @@ export default function UpdateWindowSection() {
             applyTo: { ...DEFAULT_WINDOW.applyTo, ...(data.window.applyTo ?? {}) },
           });
         }
-      } catch (_e) {
+      } catch {
         // Ignore errors on load
       } finally {
         if (!cancelled) setLoading(false);
