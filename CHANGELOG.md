@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.36.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.35.2...servicebay-v5.36.0) (2026-09-09)
+
+
+### Features
+
+* **install:** let the agent CLI request an installation the operator approves ([194259c](https://github.com/mdopp/servicebay/commit/194259c53203fe017375e369e4f98441297ace04)), closes [#2965](https://github.com/mdopp/servicebay/issues/2965)
+
+
+### Bug Fixes
+
+* **autoloop:** prove the seal's gates instead of inferring them ([60239bc](https://github.com/mdopp/servicebay/commit/60239bcb5fee42bdf83c24c21829526357b6faab)), closes [#2938](https://github.com/mdopp/servicebay/issues/2938) [#2939](https://github.com/mdopp/servicebay/issues/2939)
+* **backup:** judge only what a restore archive wrote, never the live dir it lands in ([ec96a5d](https://github.com/mdopp/servicebay/commit/ec96a5d98ca4dd6e8d01dcb9622119d45581c019)), closes [#2935](https://github.com/mdopp/servicebay/issues/2935)
+* **proxy:** reconcile an existing host's access list to its exposure ([e8a94bc](https://github.com/mdopp/servicebay/commit/e8a94bc6cc0032e5e42134f301f9d852dc82e6da)), closes [#2933](https://github.com/mdopp/servicebay/issues/2933)
+* **proxy:** refuse an authSkipPaths entry that turns SSO off for a whole host ([b31ad8e](https://github.com/mdopp/servicebay/commit/b31ad8eee35a953fd1ad2703eab2a7f3c6a8a978)), closes [#2932](https://github.com/mdopp/servicebay/issues/2932)
+* **services:** report the real outcome of a delete, an image update and a streamed action ([311960f](https://github.com/mdopp/servicebay/commit/311960fe61499472dc9c1c0fa369ee1f1c33bfac)), closes [#2941](https://github.com/mdopp/servicebay/issues/2941) [#2942](https://github.com/mdopp/servicebay/issues/2942)
+
 ## [5.35.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.35.1...servicebay-v5.35.2) (2026-09-09)
 
 
