@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { listAssists, getAssist, stripAssistProvenance } from '@/lib/assists/catalog';
+import { listAssists, getAssist, stripAssistProvenance, assistHaystack, applyAssistFilters } from '@/lib/assists/catalog';
 
 describe('list_assists filters (#2813)', () => {
   it('no args still returns the full catalog — existing callers unchanged', async () => {
@@ -42,15 +42,34 @@ describe('list_assists filters (#2813)', () => {
     expect(await listAssists({ tag: 'ad' })).toEqual([]);
   });
 
-  it('q is a substring filter over title + whenToUse', async () => {
+  it('q is a substring filter over the searchable text, and still narrows', async () => {
     const all = await listAssists();
     const hits = await listAssists({ q: 'template' });
     expect(hits.length).toBeGreaterThan(0);
+    // Still a FILTER: a real word must not degrade into "matches everything".
     expect(hits.length).toBeLessThan(all.length);
     for (const a of hits) {
-      expect(`${a.title}\n${a.whenToUse}`.toLowerCase(), `${a.id} matches`).toContain('template');
+      expect(assistHaystack(a), `${a.id} matches`).toContain('template');
+    }
+    // ...and an entry the needle does not appear in is genuinely excluded.
+    const missed = all.filter(a => !assistHaystack(a).includes('template'));
+    expect(missed.length).toBeGreaterThan(0);
+    for (const a of missed) {
+      expect(hits.map(h => h.id), `${a.id} is filtered out`).not.toContain(a.id);
     }
     expect(await listAssists({ q: 'zzz-no-such-phrase-zzz' })).toEqual([]);
+  });
+
+  it('q still matches title and whenToUse prose, as it always did', async () => {
+    const all = await listAssists();
+    const [sample] = all;
+    // A phrase that only the title carries, and one only whenToUse carries.
+    const titleHit = await listAssists({ q: sample.title.toLowerCase() });
+    expect(titleHit.map(a => a.id), 'title text still filters').toContain(sample.id);
+    const when = sample.whenToUse.toLowerCase();
+    expect(when.length, `${sample.id} has whenToUse text`).toBeGreaterThan(0);
+    const whenHit = await listAssists({ q: when });
+    expect(whenHit.map(a => a.id), 'whenToUse text still filters').toContain(sample.id);
   });
 
   it('filters compose — kind AND q together narrow further than either alone', async () => {
@@ -59,6 +78,83 @@ describe('list_assists filters (#2813)', () => {
     expect(both.length).toBeGreaterThan(0);
     expect(both.length).toBeLessThanOrEqual(footguns.length);
     for (const a of both) expect(a.kind).toBe('footgun');
+  });
+});
+
+/**
+ * #2917: `q` matched only title + whenToUse while `query` ranked over id +
+ * title + whenToUse + kind + tags, 29 lines apart in the same file. So
+ * `q: "overview"` returned [] on the live box while both `*-overview` guides
+ * sat in the catalog tagged `overview` — an empty list from a discovery tool
+ * reads as "no such assist", and the agent re-derives what it already had.
+ *
+ * These tests are CLASS-level on purpose: they sweep every field the shared
+ * haystack contributes, so a field added to `assistHaystack` later is covered
+ * without anyone remembering to extend the test.
+ */
+describe('list_assists q covers every field the ranker searches (#2917)', () => {
+  it('q:"overview" returns both orientation guides — the measured miss', async () => {
+    const ids = (await listAssists({ q: 'overview' })).map(a => a.id);
+    expect(ids).toContain('servicebay-overview');
+    expect(ids).toContain('solaris-overview');
+  });
+
+  it('q reaches an entry by its id', async () => {
+    const ids = (await listAssists({ q: 'solaris-overview' })).map(a => a.id);
+    expect(ids).toContain('solaris-overview');
+  });
+
+  it('q reaches an entry by a tag that appears nowhere else in its text', async () => {
+    const tagOnly = 'household-ai';
+    const solaris = (await listAssists()).find(a => a.id === 'solaris-overview');
+    expect(solaris, 'solaris-overview is in the catalog').toBeDefined();
+    expect(solaris!.tags).toContain(tagOnly);
+    expect(`${solaris!.title}\n${solaris!.whenToUse}`.toLowerCase(), 'tag-only needle').not.toContain(tagOnly);
+    expect((await listAssists({ q: tagOnly })).map(a => a.id)).toContain('solaris-overview');
+  });
+
+  it('the match stays case-insensitive, both sides', async () => {
+    const lower = (await listAssists({ q: 'overview' })).map(a => a.id);
+    const upper = (await listAssists({ q: 'OVERVIEW' })).map(a => a.id);
+    const mixed = (await listAssists({ q: '  OvErViEw  ' })).map(a => a.id);
+    expect(lower.length).toBeGreaterThan(0);
+    expect(upper).toEqual(lower);
+    expect(mixed).toEqual(lower);
+  });
+
+  it('EVERY field of EVERY entry is reachable through q — driven off the shared haystack', async () => {
+    const all = await listAssists();
+    expect(all.length).toBeGreaterThan(30);
+    let probes = 0;
+    for (const a of all) {
+      // Whatever `assistHaystack` contributes — today id, title, whenToUse,
+      // kind and one line per tag — must be a needle that finds this entry.
+      const fields = assistHaystack(a).split('\n').filter(f => f.trim().length > 0);
+      expect(fields.length, `${a.id} contributes searchable fields`).toBeGreaterThanOrEqual(3);
+      for (const field of fields) {
+        const hits = applyAssistFilters(all, { q: field }).map(e => e.id);
+        expect(hits, `${a.id} is reachable by q:"${field}"`).toContain(a.id);
+        probes++;
+      }
+      // Never "everything matches": the entry's own id excludes other entries.
+      expect(applyAssistFilters(all, { q: a.id }).length, `q:"${a.id}" narrows`).toBeLessThan(all.length);
+    }
+    expect(probes, 'the sweep really probed every field of every entry').toBeGreaterThan(all.length * 3);
+  });
+
+  it('q and query agree on a single-token needle — q can no longer hide what query ranks first', async () => {
+    // Same predicate, different jobs: `query` ranks the set, `q` filters it.
+    // A field list that drifted apart again shows up here as a set difference.
+    const all = await listAssists();
+    const needles = ['overview', 'adr', 'guide', 'servicebay-overview', 'household-ai', 'backup'];
+    for (const needle of needles) {
+      const expected = all.filter(a => assistHaystack(a).includes(needle)).map(a => a.id).sort();
+      expect(expected.length, `${needle} matches something`).toBeGreaterThan(0);
+      const filtered = (await listAssists({ q: needle })).map(a => a.id).sort();
+      const ranked = (await listAssists({ query: needle })).map(a => a.id).sort();
+      expect(filtered, `q:"${needle}"`).toEqual(expected);
+      expect(ranked, `query:"${needle}"`).toEqual(expected);
+    }
   });
 });
 

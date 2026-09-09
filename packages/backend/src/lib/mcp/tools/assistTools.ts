@@ -67,7 +67,7 @@ export function registerAssistTools({ server, caller }: ToolRegistration) {
       query: z.string().optional().describe('Free-text task description to rank matching entries (e.g. "deploy a new service behind SSO"). Omit to list everything.'),
       kind: z.enum(ASSIST_KINDS).optional().describe('Restrict to one kind: guide | recipe | adr | template | checklist | footgun | snippet.'),
       tag: z.string().optional().describe('Restrict to entries carrying this tag (case-insensitive, whole-tag match), e.g. "sso". Filters, does not rank.'),
-      q: z.string().optional().describe('Substring filter over title + whenToUse (case-insensitive). Narrower than `query`: it filters instead of ranking, so a small-context caller gets only the slice it can afford to read.'),
+      q: z.string().optional().describe('Case-insensitive substring filter over the same text `query` ranks on — id, title, whenToUse, kind and tags. Narrower than `query`: it filters instead of ranking, so a small-context caller gets only the slice it can afford to read.'),
     },
     async ({ query, kind, tag, q }) => {
       try {
