@@ -16,8 +16,8 @@ import {
   type RevokeResult,
 } from '@/lib/auth/apiTokens';
 import { scopeSatisfiedBy } from '@/lib/auth/apiScope';
+import type { SessionPayload } from '@/lib/auth/session';
 import { revokeBootstrapToken } from '@/lib/mcp/bootstrapToken';
-import { requireSession } from '@/lib/api/requireSession';
 import { apiError } from '@/lib/api/errors';
 import { logger } from '@/lib/logger';
 
@@ -28,9 +28,13 @@ import { logger } from '@/lib/logger';
  * the adoption invariant holds) — the logic lives here, once.
  */
 
-export async function getTokensHandler({ request }: { request: Request }) {
-  const auth = await requireSession(request);
-  if (auth instanceof NextResponse) return auth;
+export async function getTokensHandler({ auth }: { auth?: SessionPayload }) {
+  // The wrapper's gate already ran (`cookieScope: 'read'`) and threaded the
+  // principal in. Re-running `requireSession` here without the route's options
+  // asked a DIFFERENT question than the gate did — since #2958 a bare call also
+  // consults the scopeless-route classification, which this route is absent
+  // from precisely because it declares its own scope. One gate, one answer.
+  if (!auth) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   // Opening the list is the natural moment to retire what has been dead for
   // longer than the grace window (#2606). The periodic server timer is the
   // real guarantee; this just means the operator never reads a stale list.
@@ -86,11 +90,12 @@ function scopesBeyondCaller(requested: ApiScope[], held: ApiScope[] | undefined)
   return requested.filter(s => !scopeSatisfiedBy(held, s));
 }
 
-export async function createTokenHandler({ request }: { request: Request }) {
-  // requireSession is re-run here (the wrapper already gated POST) to
-  // recover the session's user for the token's `createdBy` field.
-  const auth = await requireSession(request);
-  if (auth instanceof NextResponse) return auth;
+export async function createTokenHandler(
+  { request, auth }: { request: Request; auth?: SessionPayload },
+) {
+  // The principal comes from the wrapper's gate (`cookieScope: 'mutate'`), not
+  // from a second `requireSession` call — see `getTokensHandler` above.
+  if (!auth) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   try {
     const body = CreateBody.parse(await request.json());
 

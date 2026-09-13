@@ -159,6 +159,47 @@ describe('runAssetTransportPhase — the rendered pod + file set', () => {
       }),
     )).rejects.toThrow('Cannot deploy media: app.conf references variable(s) with no value: MISSING_KEY. Go back to the Configure step and fill them in (or check the template\'s variables.json defaults).');
   });
+  it('deploys when the template GUARDS the empty case with an inverted section (#2956)', async () => {
+    // `{{^X}}…{{/X}}` is the template stating that X is optional and naming
+    // the value to use when it is unset. The auth template's admin access
+    // rules do exactly this: each admin host is named by its DECLARING
+    // template's subdomain variable, which resolves to nothing whenever that
+    // template is not part of this install (a lone `auth` redeploy, a box
+    // without claude-dev). Blocking there would block on the one case the
+    // template already handles — and would make `auth` undeployable.
+    const assets = await runAssetTransportPhase(
+      'job1',
+      input({ variables: [{ name: 'DATA_DIR', value: '/mnt/data/stacks' }] }),
+      item({
+        yaml: 'spec: {}\n',
+        configFiles: [{
+          filename: 'app.conf',
+          content: 'host={{#PI_SUBDOMAIN}}{{PI_SUBDOMAIN}}{{/PI_SUBDOMAIN}}{{^PI_SUBDOMAIN}}pi{{/PI_SUBDOMAIN}}',
+          targetPath: '{{DATA_DIR}}/x.conf',
+        }],
+      }),
+    );
+
+    expect(assets.extraFiles[0].content).toBe('host=pi');
+  });
+
+  it('still refuses a variable guarded only by a plain section — that says nothing about the empty case', async () => {
+    // Narrower than the pod-YAML twin `findEmptyYamlVars`, deliberately: a
+    // `{{#X}}` guard drops the block when X is empty, which for a config file
+    // is usually silent data loss, not a handled fallback.
+    await expect(runAssetTransportPhase(
+      'job1',
+      input({ variables: [{ name: 'DATA_DIR', value: '/mnt/data/stacks' }] }),
+      item({
+        yaml: 'spec: {}\n',
+        configFiles: [{
+          filename: 'app.conf',
+          content: '{{#MISSING_KEY}}key={{MISSING_KEY}}{{/MISSING_KEY}}',
+          targetPath: '{{DATA_DIR}}/x.conf',
+        }],
+      }),
+    )).rejects.toThrow(/references variable\(s\) with no value: MISSING_KEY/);
+  });
 });
 
 describe('buildPostDeployEnv — the only channel a script gets values through (#2415)', () => {

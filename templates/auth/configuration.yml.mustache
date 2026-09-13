@@ -83,21 +83,33 @@ access_control:
     # `*.{{PUBLIC_DOMAIN}}` family catch-all at the bottom of this table and any
     # household account reaches it at one factor (#2936).
     #
-    # The two are kept in step by a test, not by memory: the "Authelia audience"
-    # section of tests/backend/template_consistency.test.ts evaluates these rules
-    # the way Authelia does (top to bottom, a `subject` mismatch SKIPS the rule)
-    # for a `group:family`-only subject and fails when a host declared `admin` is
-    # not denied. Code mirror: ADMIN_ONLY_SUBDOMAINS in
-    # packages/backend/src/lib/reverseProxy/lanDeniedPage.ts.
+    # Each entry is bound to the CONFIGURED value of the declaring template's
+    # subdomain variable, with the template's default as the fallback (#2956).
+    # Naming the default label literally meant renaming a host in the wizard
+    # dropped it out of this rule and onto the family catch-all — one factor,
+    # any household account, no warning and nothing visibly different.
     #
-    # The hostnames are the templates' DEFAULT subdomain labels. An operator who
-    # renames a subdomain in the wizard has to add the new name here by hand —
-    # same limitation the original four always had.
+    # The idiom is plain Mustache "value or default": a section on the variable
+    # emits the configured value when there is one, and the inverted section on
+    # the same variable emits the shipped default when it is unset (the
+    # declaring template is not part of this install, so the wizard never
+    # resolved it). Do not write a bare label here again, and note that this
+    # file is itself a Mustache template — a tag written in a COMMENT is still
+    # parsed and rendered, so these lines describe the idiom in prose instead of
+    # quoting it.
+    #
+    # The two rules are kept in step by a test, not by memory: the "Authelia
+    # audience" section of tests/backend/template_consistency.test.ts evaluates
+    # these rules the way Authelia does (top to bottom, a `subject` mismatch
+    # SKIPS the rule) for a `group:family`-only subject and fails when a host
+    # declared `admin` is not denied — under its default name AND under a
+    # renamed one. Code mirror: ADMIN_ONLY_SUBDOMAINS in
+    # packages/backend/src/lib/reverseProxy/lanDeniedPage.ts.
     - domain:
-        - 'admin.{{PUBLIC_DOMAIN}}'
-        - 'nginx.{{PUBLIC_DOMAIN}}'
-        - 'dns.{{PUBLIC_DOMAIN}}'
-        - 'ldap.{{PUBLIC_DOMAIN}}'
+        - '{{#SERVICEBAY_SUBDOMAIN}}{{SERVICEBAY_SUBDOMAIN}}{{/SERVICEBAY_SUBDOMAIN}}{{^SERVICEBAY_SUBDOMAIN}}admin{{/SERVICEBAY_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
+        - '{{#NPM_SUBDOMAIN}}{{NPM_SUBDOMAIN}}{{/NPM_SUBDOMAIN}}{{^NPM_SUBDOMAIN}}nginx{{/NPM_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
+        - '{{#ADGUARD_SUBDOMAIN}}{{ADGUARD_SUBDOMAIN}}{{/ADGUARD_SUBDOMAIN}}{{^ADGUARD_SUBDOMAIN}}dns{{/ADGUARD_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
+        - '{{#LLDAP_SUBDOMAIN}}{{LLDAP_SUBDOMAIN}}{{/LLDAP_SUBDOMAIN}}{{^LLDAP_SUBDOMAIN}}ldap{{/LLDAP_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
         # claude-dev (#2936). Both hosts hand out the dev box itself: `pi` is an
         # interactive coding agent with a bash tool running as `dev` inside the
         # claude-dev container and carries NO sign-in of its own, so Authelia's
@@ -105,8 +117,8 @@ access_control:
         # container's own configuration UI. Family-reachable, they gave any
         # household LLDAP account a shell next to the box's ServiceBay token and
         # the operator's Claude/GitHub credentials.
-        - 'claude.{{PUBLIC_DOMAIN}}'
-        - 'pi.{{PUBLIC_DOMAIN}}'
+        - '{{#CLAUDE_DEV_CONFIG_SUBDOMAIN}}{{CLAUDE_DEV_CONFIG_SUBDOMAIN}}{{/CLAUDE_DEV_CONFIG_SUBDOMAIN}}{{^CLAUDE_DEV_CONFIG_SUBDOMAIN}}claude{{/CLAUDE_DEV_CONFIG_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
+        - '{{#CLAUDE_DEV_PI_SUBDOMAIN}}{{CLAUDE_DEV_PI_SUBDOMAIN}}{{/CLAUDE_DEV_PI_SUBDOMAIN}}{{^CLAUDE_DEV_PI_SUBDOMAIN}}pi{{/CLAUDE_DEV_PI_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
       policy: two_factor
       subject:
         - 'group:admins'
@@ -118,12 +130,12 @@ access_control:
     # denying. (#878 follow-up — the access_control table looked
     # restrictive but actually let family users into LLDAP / NPM / AdGuard.)
     - domain:
-        - 'admin.{{PUBLIC_DOMAIN}}'
-        - 'nginx.{{PUBLIC_DOMAIN}}'
-        - 'dns.{{PUBLIC_DOMAIN}}'
-        - 'ldap.{{PUBLIC_DOMAIN}}'
-        - 'claude.{{PUBLIC_DOMAIN}}'
-        - 'pi.{{PUBLIC_DOMAIN}}'
+        - '{{#SERVICEBAY_SUBDOMAIN}}{{SERVICEBAY_SUBDOMAIN}}{{/SERVICEBAY_SUBDOMAIN}}{{^SERVICEBAY_SUBDOMAIN}}admin{{/SERVICEBAY_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
+        - '{{#NPM_SUBDOMAIN}}{{NPM_SUBDOMAIN}}{{/NPM_SUBDOMAIN}}{{^NPM_SUBDOMAIN}}nginx{{/NPM_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
+        - '{{#ADGUARD_SUBDOMAIN}}{{ADGUARD_SUBDOMAIN}}{{/ADGUARD_SUBDOMAIN}}{{^ADGUARD_SUBDOMAIN}}dns{{/ADGUARD_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
+        - '{{#LLDAP_SUBDOMAIN}}{{LLDAP_SUBDOMAIN}}{{/LLDAP_SUBDOMAIN}}{{^LLDAP_SUBDOMAIN}}ldap{{/LLDAP_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
+        - '{{#CLAUDE_DEV_CONFIG_SUBDOMAIN}}{{CLAUDE_DEV_CONFIG_SUBDOMAIN}}{{/CLAUDE_DEV_CONFIG_SUBDOMAIN}}{{^CLAUDE_DEV_CONFIG_SUBDOMAIN}}claude{{/CLAUDE_DEV_CONFIG_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
+        - '{{#CLAUDE_DEV_PI_SUBDOMAIN}}{{CLAUDE_DEV_PI_SUBDOMAIN}}{{/CLAUDE_DEV_PI_SUBDOMAIN}}{{^CLAUDE_DEV_PI_SUBDOMAIN}}pi{{/CLAUDE_DEV_PI_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}'
       policy: deny
 
     # Everything else — family + admins, one-factor

@@ -393,6 +393,14 @@ export interface AppConfig {
      * operator has to know about.
      */
     servicesIncomplete?: string[];
+    /**
+     * Installed templates whose `servicebay.backup` declaration is missing,
+     * unparseable or refused, so the run had nothing it could back up for them
+     * (#2950). They count as failures in `servicesTotal` — a template that
+     * leaves the denominator takes its own absence with it, which is how a box
+     * reported "12/12 services · ok" while one service's config was nowhere.
+     */
+    servicesUndeclared?: string[];
   };
   /**
    * LLDAP admin credentials, persisted by the install wizard so the user can

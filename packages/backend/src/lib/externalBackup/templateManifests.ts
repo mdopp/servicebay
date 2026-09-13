@@ -17,7 +17,7 @@ import { getTemplateYaml } from '@/lib/registry';
 import { parseTemplateManifest } from '@/lib/template/contract';
 import type { ServiceBackupManifest } from '@servicebay/backup-manifest';
 
-import { resolveTemplateBackupDeclaration } from './backupDeclaration';
+import { resolveTemplateBackupDeclaration, unresolvedDeclarationReason } from './backupDeclaration';
 
 const LOG_SCOPE = 'ExternalBackup';
 
@@ -35,8 +35,55 @@ async function readTemplateBackupRaw(template: string): Promise<string | undefin
  *  deploy, but it must never be silent either. */
 export async function resolveTemplateManifests(template: string): Promise<ServiceBackupManifest[]> {
   const resolution = resolveTemplateBackupDeclaration(template, await readTemplateBackupRaw(template));
-  for (const problem of resolution.problems) logger.warn(LOG_SCOPE, problem);
+  for (const problem of resolution.problems) logger.warn(LOG_SCOPE, problem.message);
   return resolution.manifests;
+}
+
+/** A template that declares no backing store and did not opt out — a service
+ *  nobody is keeping the config of (#2950). */
+interface UnresolvedBackupDeclaration {
+  template: string;
+  reason: string;
+}
+
+/** What the box's installed templates declare, INCLUDING the ones that declare
+ *  nothing usable. */
+export interface InstalledBackupDeclarations {
+  /** Every manifest that resolved — what the run actually backs up. */
+  manifests: ServiceBackupManifest[];
+  /** Templates that contribute no manifest and did not opt out. These stay in
+   *  the run tally as failures: dropping them shrinks numerator AND denominator
+   *  together, which is how "12/12 services · ok" was reported over eleven. */
+  unresolved: UnresolvedBackupDeclaration[];
+  /** Templates that said `backup: none` with a reason — a recorded decision,
+   *  not a defect. Never counted against the run. */
+  optedOut: { template: string; reason: string }[];
+}
+
+/**
+ * Resolve every installed template's declaration and keep the failures.
+ *
+ * {@link resolveInstalledBackupManifests} answers "what can we back up"; this
+ * answers "what did the box PROMISE to back up, and what did we fail to
+ * resolve" — the denominator (#2950). The nightly run needs the second
+ * question, because a template that resolves to nothing used to leave the list
+ * entirely and take its own absence with it.
+ */
+export async function resolveInstalledBackupDeclarations(): Promise<InstalledBackupDeclarations> {
+  const installed = Object.keys((await getConfig()).installedTemplates ?? {});
+  const out: InstalledBackupDeclarations = { manifests: [], unresolved: [], optedOut: [] };
+  for (const template of installed) {
+    const resolution = resolveTemplateBackupDeclaration(template, await readTemplateBackupRaw(template));
+    for (const problem of resolution.problems) logger.warn(LOG_SCOPE, problem.message);
+    out.manifests.push(...resolution.manifests);
+    if (resolution.optOut !== null) {
+      out.optedOut.push({ template, reason: resolution.optOut });
+      continue;
+    }
+    const reason = unresolvedDeclarationReason(resolution);
+    if (reason !== null) out.unresolved.push({ template, reason });
+  }
+  return out;
 }
 
 /**
@@ -46,10 +93,7 @@ export async function resolveTemplateManifests(template: string): Promise<Servic
  * is installed, which is exactly what `gateOn` meant.
  */
 export async function resolveInstalledBackupManifests(): Promise<ServiceBackupManifest[]> {
-  const installed = Object.keys((await getConfig()).installedTemplates ?? {});
-  const out: ServiceBackupManifest[] = [];
-  for (const template of installed) out.push(...(await resolveTemplateManifests(template)));
-  return out;
+  return (await resolveInstalledBackupDeclarations()).manifests;
 }
 
 /**

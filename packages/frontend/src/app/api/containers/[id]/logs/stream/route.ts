@@ -9,11 +9,12 @@ export const dynamic = 'force-dynamic';
 
 const Query = z.object({ node: z.string().optional() });
 
-/** Same class and same gate as the sibling `../route.ts` (#2943): a token
- *  principal — including a session bridged from a `read` token — gets the log
- *  body redacted, a cookie operator gets it verbatim. */
+/** Same class and same gate as the sibling `../route.ts`: a token principal —
+ *  including a session bridged from a `read` token — gets the log body redacted,
+ *  a cookie operator gets it verbatim. The `read` it is held to is declared in
+ *  `lib/api/tokenPrincipalRoutes.ts` (#2958), not per-route here (#2943). */
 export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { id: string }>(
-  { query: Query, cookieScope: 'read' },
+  { query: Query },
   async ({ query, params, auth }) => {
   const check = ContainerId.safeParse(params.id);
   if (!check.success) {

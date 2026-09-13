@@ -47,6 +47,43 @@ import {
   type ServiceBackupManifest,
 } from '@servicebay/backup-manifest';
 
+/**
+ * EVERY way a declaration can fail to resolve into the manifests it should,
+ * each with the one-line description the class gate prints (#2950).
+ *
+ * This map is the enumeration. A test derives the list from it and from the
+ * emission sites in this file — it does not keep a hand-written copy, because a
+ * hand-written copy is what let "a template can also fail like THIS" go
+ * untested until a nightly run reported 12/12 with a service missing. Every
+ * problem in this module is built by {@link problem}, so adding a branch means
+ * adding a code here, and adding a code here means the gate demands a fixture
+ * for it.
+ */
+export const DECLARATION_PROBLEM_CODES = {
+  no_annotation: 'the template carries no `servicebay.backup` annotation at all',
+  unparseable: 'the annotation is not a declaration this contract can read',
+  data_subdir_escape: 'the store\'s `dataSubdir` leaves the service data dir',
+  bulk_volume: 'the store names a podman volume ServiceBay declares bulk',
+  path_boundary: 'a declared path leaves the service data dir and was dropped',
+  bulk_clamp: 'a declared include resolves into a bulk volume and was clamped',
+  no_include_survived: 'no include path survived the ADR 0002 checks, so no manifest was built',
+} as const;
+
+/** One reason a declaration did not resolve, from {@link DECLARATION_PROBLEM_CODES}. */
+export type DeclarationProblemCode = keyof typeof DECLARATION_PROBLEM_CODES;
+
+/** A declaration defect: the machine-readable reason plus the operator's line. */
+interface DeclarationProblem {
+  code: DeclarationProblemCode;
+  message: string;
+}
+
+/** The ONLY way this module makes a problem. The class gate asserts that — a
+ *  problem built inline would carry no code and would not be enumerable. */
+function problem(code: DeclarationProblemCode, message: string): DeclarationProblem {
+  return { code, message };
+}
+
 /** What one template's declaration resolved to. */
 export interface TemplateBackupResolution {
   /** The manifests the template contributes — its own store first, then the
@@ -56,7 +93,26 @@ export interface TemplateBackupResolution {
   optOut: string | null;
   /** Why the declaration was refused, or which paths the clamp dropped.
    *  Non-empty here is always a defect the operator/author must see. */
-  problems: string[];
+  problems: DeclarationProblem[];
+}
+
+/**
+ * Why this template contributes NOTHING it should have contributed, or `null`
+ * when it is fine. This is the denominator question (#2950): a template that
+ * resolves to no manifest and did not opt out is not "not applicable" — it is a
+ * service whose config nobody is keeping, and it must stay in the run tally as
+ * a failure rather than quietly leaving it.
+ *
+ * A deliberate `backup: none` with a reason is a recorded decision and answers
+ * `null`. So does a template that lost one path to a platform clamp but still
+ * built a manifest: its surviving store IS backed up, and the dropped path is
+ * reported through `problems` and the CI coverage gate.
+ */
+export function unresolvedDeclarationReason(resolution: TemplateBackupResolution): string | null {
+  if (resolution.optOut !== null) return null;
+  if (resolution.manifests.length > 0) return null;
+  if (resolution.problems.length > 0) return resolution.problems.map(p => p.message).join(' ');
+  return 'the declaration resolved to no backing store, and it is not a `backup: none` opt-out.';
 }
 
 /** The DATA_DIR-relative roots that must never enter a NAS tarball. */
@@ -89,14 +145,15 @@ function withinBoundary(
   paths: readonly string[],
   service: string,
   field: string,
-  problems: string[],
+  problems: DeclarationProblem[],
 ): string[] {
   return paths.filter(p => {
     const reason = dataDirEscapeReason(p);
     if (!reason) return true;
-    problems.push(
+    problems.push(problem(
+      'path_boundary',
       `${service}: dropped ${field} path "${p}" — it ${reason} (ADR 0002 path boundary, re-checked producer-side).`,
-    );
+    ));
     return false;
   });
 }
@@ -112,7 +169,7 @@ function clampBulk(
   service: string,
   store: TemplateBackupStore,
   roots: readonly string[],
-  problems: string[],
+  problems: DeclarationProblem[],
 ): { kept: string[]; clamped: string[] } {
   if (store.volume !== undefined) return { kept: [...include], clamped: [] };
   const dataRoot = (store.dataSubdir ?? service).replace(/\/+$/, '');
@@ -125,25 +182,34 @@ function clampBulk(
       continue;
     }
     clamped.push(p);
-    problems.push(
+    problems.push(problem(
+      'bulk_clamp',
       `${service}: clamped include "${p}" — it resolves into the bulk volume "${key}", which never ` +
       `enters a NAS tarball (ADR 0002 tier clamp).`,
-    );
+    ));
   }
   return { kept, clamped };
 }
 
 /** Refuse the whole store, with a reason, or `null` when it may proceed. */
-function refuseStore(service: string, store: TemplateBackupStore, roots: readonly string[]): string | null {
+function refuseStore(
+  service: string,
+  store: TemplateBackupStore,
+  roots: readonly string[],
+): DeclarationProblem | null {
   if (store.dataSubdir !== undefined && dataDirEscapeReason(store.dataSubdir)) {
-    return `${service}: refused — dataSubdir "${store.dataSubdir}" leaves the data dir (ADR 0002).`;
+    return problem(
+      'data_subdir_escape',
+      `${service}: refused — dataSubdir "${store.dataSubdir}" leaves the data dir (ADR 0002).`,
+    );
   }
   // Tier clamp, volume shape: a named volume ServiceBay lists as bulk is never
   // pushed to the NAS, whatever the template says about it.
   if (store.volume !== undefined && roots.includes(store.volume)) {
-    return (
+    return problem(
+      'bulk_volume',
       `${service}: refused — the podman volume "${store.volume}" is declared bulk in EXCLUDED_BULK_VOLUMES ` +
-      `(${EXCLUDED_BULK_VOLUMES[store.volume]}), so it never goes to the NAS (ADR 0002 tier clamp).`
+      `(${EXCLUDED_BULK_VOLUMES[store.volume]}), so it never goes to the NAS (ADR 0002 tier clamp).`,
     );
   }
   return null;
@@ -157,7 +223,7 @@ function toManifest(
   service: string,
   gateOn: string | undefined,
   store: TemplateBackupStore,
-  problems: string[],
+  problems: DeclarationProblem[],
 ): ServiceBackupManifest | null {
   const roots = bulkRoots();
   const refusal = refuseStore(service, store, roots);
@@ -171,10 +237,11 @@ function toManifest(
     service, store, roots, problems,
   );
   if (include.length === 0) {
-    problems.push(
+    problems.push(problem(
+      'no_include_survived',
       `${service}: no include path survived the ADR 0002 checks — no manifest built (an empty backup ` +
       `reports "ok" and is indistinguishable from a healthy one).`,
-    );
+    ));
     return null;
   }
 
@@ -214,10 +281,11 @@ export function resolveTemplateBackupDeclaration(
     return {
       manifests: [],
       optOut: null,
-      problems: [
+      problems: [problem(
+        'no_annotation',
         `${template}: no \`servicebay.backup\` annotation. Declare what to keep, or say ` +
         `\`backup: none\` with a \`reason:\` — silence is not an opt-out (#2858).`,
-      ],
+      )],
     };
   }
   const parsed = parseTemplateBackupYaml(backupRaw);
@@ -225,7 +293,7 @@ export function resolveTemplateBackupDeclaration(
     return {
       manifests: [],
       optOut: null,
-      problems: parsed.errors.map(e => `${template}: servicebay.backup ${e}`),
+      problems: parsed.errors.map(e => problem('unparseable', `${template}: servicebay.backup ${e}`)),
     };
   }
   if (parsed.backup.kind === 'none') {
@@ -233,7 +301,7 @@ export function resolveTemplateBackupDeclaration(
   }
 
   const { stores, ...own } = parsed.backup;
-  const problems: string[] = [];
+  const problems: DeclarationProblem[] = [];
   const manifests: ServiceBackupManifest[] = [];
   if (own.include.length > 0) {
     const m = toManifest(template, undefined, own, problems);

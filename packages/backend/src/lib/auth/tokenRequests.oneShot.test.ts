@@ -32,6 +32,10 @@ afterEach(async () => {
 const loadReq = () => import('@/lib/auth/tokenRequests');
 const loadTokens = () => import('@/lib/auth/apiTokens');
 const loadApprovals = () => import('@/lib/approvals');
+// The requester is the principal the grant is bound to (#2930): it files the
+// request and it is the only caller that can collect it.
+const WARTUNG = 'token:wartung';
+const asWartung = { principal: WARTUNG };
 
 describe('one-shot owner-approved elevated token (#2245)', () => {
   it('one-shot request PARKS as an approval and returns an approvalId — mints NOTHING immediately', async () => {
@@ -43,7 +47,7 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
       requestedScopes: ['destroy'],
       requestedTtlSecs: 300,
       reason: 'delete media',
-      requestedBy: 'token:wartung',
+      requestedBy: WARTUNG,
       oneShotOp: { toolName: 'delete_service', service: 'media' },
     });
     expect(view.status).toBe('pending');
@@ -61,7 +65,7 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
     // NO token minted yet.
     expect(await listTokens()).toHaveLength(0);
     // Poll before approval → pending, no token.
-    const early = await pollTokenRequest(view.id);
+    const early = await pollTokenRequest(view.id, asWartung);
     expect(early.status).toBe('pending');
     expect(early.token).toBeNull();
   });
@@ -73,13 +77,13 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
 
     const view = await submitTokenRequest({
       requestedScopes: ['destroy'], requestedTtlSecs: 300, reason: 'r',
-      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'media' },
+      requestedBy: WARTUNG, oneShotOp: { toolName: 'delete_service', service: 'media' },
     });
 
     // Owner approves the durable approval → mintToken runs.
     await approveApproval(view.approvalId!);
 
-    const poll = await pollTokenRequest(view.id);
+    const poll = await pollTokenRequest(view.id, asWartung);
     expect(poll.status).toBe('approved');
     expect(poll.token).toMatch(/^sb_[0-9a-f]{8}_[A-Z2-9]+$/);
     expect((poll as { grantedScopes?: string[] }).grantedScopes).toEqual(['destroy']);
@@ -91,7 +95,7 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
     expect(verified!.oneShotOp).toEqual({ toolName: 'delete_service', service: 'media' });
 
     // Second poll no longer hands over the secret.
-    const again = await pollTokenRequest(view.id);
+    const again = await pollTokenRequest(view.id, asWartung);
     expect(again.token).toBeNull();
   });
 
@@ -102,12 +106,12 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
 
     const view = await submitTokenRequest({
       requestedScopes: ['exec'], requestedTtlSecs: 120, reason: 'r',
-      requestedBy: 'token:wartung', oneShotOp: { toolName: 'exec_command' },
+      requestedBy: WARTUNG, oneShotOp: { toolName: 'exec_command' },
     });
     await rejectApproval(view.approvalId!);
 
     expect(await listTokens()).toHaveLength(0);
-    const poll = await pollTokenRequest(view.id);
+    const poll = await pollTokenRequest(view.id, asWartung);
     // The token request itself never flipped to approved (mint never ran).
     expect(poll.token).toBeNull();
     expect(poll.status).toBe('pending');
@@ -120,10 +124,10 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
 
     const view = await submitTokenRequest({
       requestedScopes: ['destroy'], requestedTtlSecs: 300, reason: 'r',
-      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'media' },
+      requestedBy: WARTUNG, oneShotOp: { toolName: 'delete_service', service: 'media' },
     });
     await approveApproval(view.approvalId!);
-    const secret = (await pollTokenRequest(view.id)).token!;
+    const secret = (await pollTokenRequest(view.id, asWartung)).token!;
 
     const first = await verifyToken(secret);
     expect(first).not.toBeNull();
@@ -149,11 +153,11 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
     } as typeof import('@/lib/auth/tokenRequests') & typeof import('@/lib/approvals');
     const view = await submitTokenRequest({
       requestedScopes: ['destroy'], requestedTtlSecs: 30 * 24 * 3600, reason: 'r',
-      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'media' },
+      requestedBy: WARTUNG, oneShotOp: { toolName: 'delete_service', service: 'media' },
     });
     expect(view.requestedTtlSecs).toBe(ONE_SHOT_MAX_TTL_SECS);
     await approveApproval(view.approvalId!);
-    const poll = await pollTokenRequest(view.id);
+    const poll = await pollTokenRequest(view.id, asWartung);
     expect((poll as { expiresAt?: string }).expiresAt).toBeTruthy();
     const ttlMs = Date.parse((poll as { expiresAt: string }).expiresAt) - Date.now();
     expect(ttlMs).toBeLessThanOrEqual(ONE_SHOT_MAX_TTL_SECS * 1000 + 1000);
@@ -162,11 +166,11 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
   it('rejects a one-shot request that asks for a non-elevated or multi-scope grant', async () => {
     const { submitTokenRequest } = await loadReq();
     await expect(submitTokenRequest({
-      requestedScopes: ['read'], requestedTtlSecs: 120, reason: 'r',
+      requestedScopes: ['read'], requestedTtlSecs: 120, reason: 'r', requestedBy: WARTUNG,
       oneShotOp: { toolName: 'delete_service' },
     })).rejects.toThrow(/exactly one elevated scope/);
     await expect(submitTokenRequest({
-      requestedScopes: ['destroy', 'exec'], requestedTtlSecs: 120, reason: 'r',
+      requestedScopes: ['destroy', 'exec'], requestedTtlSecs: 120, reason: 'r', requestedBy: WARTUNG,
       oneShotOp: { toolName: 'delete_service' },
     })).rejects.toThrow(/exactly one elevated scope/);
   });
@@ -177,7 +181,7 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
     const { listTokens } = await loadTokens();
     const view = await submitTokenRequest({
       requestedScopes: ['destroy'], requestedTtlSecs: 300, reason: 'r',
-      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'media' },
+      requestedBy: WARTUNG, oneShotOp: { toolName: 'delete_service', service: 'media' },
     });
     await approveApproval(view.approvalId!);
     expect(await listTokens()).toHaveLength(1);

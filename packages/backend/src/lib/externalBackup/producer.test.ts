@@ -139,7 +139,7 @@ describe('stageServiceBackup', () => {
       include: ['config.yaml', '.storage', 'missing.yaml'],
       exclude: ['home-assistant_v2.db', 'logs'],
     };
-    const staged = await stageServiceBackup(src, manifest, staging);
+    const { staged } = await stageServiceBackup(src, manifest, staging);
 
     expect(staged).toEqual(['.storage/lovelace', '.storage/lovelace_dashboards', 'config.yaml']);
     expect(await fs.readFile(path.join(staging, 'config.yaml'), 'utf8')).toBe('model: x');
@@ -166,7 +166,7 @@ describe('stageServiceBackup', () => {
       include: ['.storage/lovelace*', '.storage/hacs*'],
       exclude: [],
     };
-    const staged = await stageServiceBackup(src, manifest, staging);
+    const { staged } = await stageServiceBackup(src, manifest, staging);
 
     // Every lovelace dashboard (including the bare name + the sidebar list) and
     // every hacs.* file is staged; the unrelated core.config_entries is not.
@@ -190,7 +190,7 @@ describe('stageServiceBackup', () => {
       include: ['.storage/lovelace*'],
       exclude: [],
     };
-    expect(await stageServiceBackup(src, manifest, staging)).toEqual([]);
+    expect((await stageServiceBackup(src, manifest, staging)).staged).toEqual([]);
   });
 
   it('stages an included directory (custom_components/) recursively (#1596)', async () => {
@@ -203,7 +203,7 @@ describe('stageServiceBackup', () => {
       include: ['custom_components'],
       exclude: [],
     };
-    const staged = await stageServiceBackup(src, manifest, staging);
+    const { staged } = await stageServiceBackup(src, manifest, staging);
     expect(staged).toEqual([
       'custom_components/meross_lan/__init__.py',
       'custom_components/meross_lan/manifest.json',
@@ -274,7 +274,7 @@ describe('stageServiceBackup', () => {
       exclude: [],
       renames: { 'data/database.sqlite.sb-backup': 'data/database.sqlite' },
     };
-    const staged = await stageServiceBackup(src, manifest, staging);
+    const { staged } = await stageServiceBackup(src, manifest, staging);
 
     // Tarball carries the snapshot bytes under the canonical name.
     expect(staged).toEqual(['data/database.sqlite']);
@@ -654,7 +654,7 @@ describe('runBackupCollector — pg-dump in the service\'s own Postgres containe
 
     mockPgAgent();
     const { manifest: remapped } = await runBackupCollector(pgManifest({ include: ['media', 'pgdata'] }), 'Local');
-    const staged = await stageServiceBackup(src, remapped, staging);
+    const { staged } = await stageServiceBackup(src, remapped, staging);
 
     expect(staged).toEqual(['media/doc.pdf', 'paperless.dump']);
     expect(await fs.readFile(path.join(staging, 'paperless.dump'), 'utf8')).toBe('PGDUMP-CUSTOM');
@@ -1176,7 +1176,7 @@ describe('manifest integration', () => {
     const staging = await mkTmp();
     await writeFile(src, 'conf/AdGuardHome.yaml', 'bind_host: 0.0.0.0');
     await writeFile(src, 'data/querylog.json', '[]');
-    const staged = await stageServiceBackup(src, builtinManifest('adguard'), staging);
+    const { staged } = await stageServiceBackup(src, builtinManifest('adguard'), staging);
     expect(staged).toEqual(['conf/AdGuardHome.yaml']);
   });
 
@@ -1191,7 +1191,7 @@ describe('manifest integration', () => {
     await writeFile(src, 'custom_components/hacs/hacs_frontend/main.js', 'JUNK');
     await writeFile(src, 'custom_components/hacs_frontend/entrypoint.js', 'JUNK');
 
-    const staged = await stageServiceBackup(src, builtinManifest('home-assistant'), staging);
+    const { staged } = await stageServiceBackup(src, builtinManifest('home-assistant'), staging);
 
     // The HACS code + other integrations are staged …
     expect(staged).toContain('custom_components/hacs/__init__.py');

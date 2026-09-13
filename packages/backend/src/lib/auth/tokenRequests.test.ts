@@ -25,6 +25,11 @@ afterEach(async () => {
 
 const loadReq = () => import('@/lib/auth/tokenRequests');
 const loadTokens = () => import('@/lib/auth/apiTokens');
+// Every request is filed by a principal and read back by that same principal
+// (#2930); the cross-caller refusals get their own file
+// (tokenRequests.callerBinding.test.ts).
+const AGENT = 'agent:x';
+const asAgent = { principal: AGENT };
 
 describe('token request flow (#2139)', () => {
   it('request returns a pending id and NO token', async () => {
@@ -37,7 +42,7 @@ describe('token request flow (#2139)', () => {
     expect((view as Record<string, unknown>).pendingSecret).toBeUndefined();
     expect((view as Record<string, unknown>).tokenId).toBeUndefined();
 
-    const pending = await listTokenRequests('pending');
+    const pending = await listTokenRequests('pending', asAgent);
     expect(pending.map(r => r.id)).toContain(view.id);
     expect(pending[0].requestedBy).toBe('agent:x');
   });
@@ -46,7 +51,7 @@ describe('token request flow (#2139)', () => {
     const { submitTokenRequest, approveTokenRequest, pollTokenRequest } = await loadReq();
     const { verifyToken } = await loadTokens();
 
-    const req = await submitTokenRequest({ requestedScopes: ['read', 'lifecycle', 'mutate'], requestedTtlSecs: 3600, reason: 'r' });
+    const req = await submitTokenRequest({ requestedScopes: ['read', 'lifecycle', 'mutate'], requestedTtlSecs: 3600, reason: 'r', requestedBy: AGENT });
 
     // Admin grants FEWER scopes than requested + a shorter TTL.
     const approved = await approveTokenRequest(req.id, { scopes: ['read'], ttlSecs: 600, approvedBy: 'admin1' });
@@ -56,7 +61,7 @@ describe('token request flow (#2139)', () => {
     expect(approved.tokenId).toBeTruthy();
 
     // First poll hands over the secret exactly once.
-    const first = await pollTokenRequest(req.id);
+    const first = await pollTokenRequest(req.id, asAgent);
     expect(first.status).toBe('approved');
     expect(first.token).toMatch(/^sb_[0-9a-f]{8}_[A-Z2-9]+$/);
     expect((first as { grantedScopes?: string[] }).grantedScopes).toEqual(['read']);
@@ -67,30 +72,30 @@ describe('token request flow (#2139)', () => {
     expect(verified!.scopes).toEqual(['read']);
 
     // Second poll no longer returns the secret (single hand-off).
-    const second = await pollTokenRequest(req.id);
+    const second = await pollTokenRequest(req.id, asAgent);
     expect(second.status).toBe('approved');
     expect(second.token).toBeNull();
   });
 
   it('rejects an approval that widens beyond the requested scopes', async () => {
     const { submitTokenRequest, approveTokenRequest, TokenRequestError } = await loadReq();
-    const req = await submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: 60, reason: 'r' });
+    const req = await submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: 60, reason: 'r', requestedBy: AGENT });
     await expect(approveTokenRequest(req.id, { scopes: ['read', 'exec'] })).rejects.toBeInstanceOf(TokenRequestError);
   });
 
   it('denied request yields no token', async () => {
     const { submitTokenRequest, denyTokenRequest, pollTokenRequest } = await loadReq();
-    const req = await submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: 60, reason: 'r' });
+    const req = await submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: 60, reason: 'r', requestedBy: AGENT });
     const denied = await denyTokenRequest(req.id);
     expect(denied.status).toBe('denied');
-    const polled = await pollTokenRequest(req.id);
+    const polled = await pollTokenRequest(req.id, asAgent);
     expect(polled.status).toBe('denied');
     expect(polled.token).toBeNull();
   });
 
   it('re-resolving an already-resolved request throws 409', async () => {
     const { submitTokenRequest, approveTokenRequest, denyTokenRequest, TokenRequestError } = await loadReq();
-    const req = await submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: 60, reason: 'r' });
+    const req = await submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: 60, reason: 'r', requestedBy: AGENT });
     await approveTokenRequest(req.id);
     await expect(denyTokenRequest(req.id)).rejects.toMatchObject({ status: 409 });
     await expect(approveTokenRequest(req.id)).rejects.toBeInstanceOf(TokenRequestError);
@@ -98,18 +103,18 @@ describe('token request flow (#2139)', () => {
 
   it('poll of an unknown id → not-found', async () => {
     const { pollTokenRequest } = await loadReq();
-    const res = await pollTokenRequest('nope');
+    const res = await pollTokenRequest('nope', asAgent);
     expect(res.status).toBe('not-found');
     expect(res.token).toBeNull();
   });
 
   it('rejects a TTL over the ceiling and an empty scope set', async () => {
     const { submitTokenRequest, MAX_TTL_SECS, TokenRequestError } = await loadReq();
-    await expect(submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: MAX_TTL_SECS + 1, reason: 'r' }))
+    await expect(submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: MAX_TTL_SECS + 1, reason: 'r', requestedBy: AGENT }))
       .rejects.toBeInstanceOf(TokenRequestError);
-    await expect(submitTokenRequest({ requestedScopes: [], requestedTtlSecs: 60, reason: 'r' }))
+    await expect(submitTokenRequest({ requestedScopes: [], requestedTtlSecs: 60, reason: 'r', requestedBy: AGENT }))
       .rejects.toBeInstanceOf(TokenRequestError);
-    await expect(submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: 60, reason: '  ' }))
+    await expect(submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: 60, reason: '  ', requestedBy: AGENT }))
       .rejects.toBeInstanceOf(TokenRequestError);
   });
 
@@ -117,11 +122,11 @@ describe('token request flow (#2139)', () => {
     const { submitTokenRequest, approveTokenRequest, pollTokenRequest } = await loadReq();
     const { verifyToken, sweepExpiredTokens, listTokens } = await loadTokens();
 
-    const req = await submitTokenRequest({ requestedScopes: ['read', 'lifecycle'], requestedTtlSecs: 1, reason: 'short' });
+    const req = await submitTokenRequest({ requestedScopes: ['read', 'lifecycle'], requestedTtlSecs: 1, reason: 'short', requestedBy: AGENT });
     const approved = await approveTokenRequest(req.id, { ttlSecs: 1 });
     const tokenId = approved.tokenId!;
 
-    const first = await pollTokenRequest(req.id);
+    const first = await pollTokenRequest(req.id, asAgent);
     const secret = first.token!;
     expect(secret).toBeTruthy();
 
@@ -146,12 +151,12 @@ describe('token request flow (#2139)', () => {
 
   it('a grant that expired before its first poll is not handed out', async () => {
     const { submitTokenRequest, approveTokenRequest, pollTokenRequest } = await loadReq();
-    const req = await submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: 1, reason: 'r' });
+    const req = await submitTokenRequest({ requestedScopes: ['read'], requestedTtlSecs: 1, reason: 'r', requestedBy: AGENT });
     await approveTokenRequest(req.id, { ttlSecs: 1 });
 
     vi.useFakeTimers();
     vi.setSystemTime(new Date(Date.now() + 5000));
-    const polled = await pollTokenRequest(req.id);
+    const polled = await pollTokenRequest(req.id, asAgent);
     // Approved but the credential is already dead → no token returned.
     expect(polled.status).toBe('approved');
     expect(polled.token).toBeNull();

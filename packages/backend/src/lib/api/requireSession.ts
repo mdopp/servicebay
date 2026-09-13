@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSessionFromCookieHeader, type SessionPayload } from '@/lib/auth/session';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { scopeSatisfiedBy, type ApiScope } from '@/lib/auth/apiScope';
+import { gateForTokenPrincipal } from '@/lib/api/tokenPrincipalRoutes';
 
 export interface RequireSessionOptions {
   /**
@@ -17,7 +18,7 @@ export interface RequireSessionOptions {
    * Hold a *scoped cookie session* to this scope **without** opening the Bearer
    * branch (#2919).
    *
-   * `tokenScope` does two things at once: it applies `cookieScopeRefusal` to a
+   * `tokenScope` does two things at once: it applies `tokenPrincipalRefusal` to a
    * bridged cookie session AND it makes the route reachable with a raw
    * `Authorization: Bearer sb_…`. On a credential-**minting** route the second
    * half is a hole of its own — a short-lived token could mint an unparented,
@@ -51,10 +52,12 @@ export interface RequireSessionOptions {
  *      (#1264). Returns `user: 'token:<name>'` carrying the token's scopes.
  *   3. A valid session cookie. A cookie minted by the token→session bridge
  *      (`POST /api/auth/session-from-token`) carries the source token's
- *      `scopes`, and is held to them on `tokenScope` routes exactly like the
- *      Bearer branch (#2768). A cookie without `scopes` (password login)
- *      means all scopes, for back-compat. `options.cookieScope` applies that
- *      same hold on routes that must stay cookie-only (#2919).
+ *      `scopes`, and is held to them exactly like the Bearer branch (#2768) —
+ *      on a `tokenScope`/`cookieScope` route by the route's own declaration,
+ *      and on a route that declares neither by the written classification in
+ *      `tokenPrincipalRoutes.ts`, which defaults to refusing (#2958). A cookie
+ *      without `scopes` (password login) means all scopes, for back-compat and
+ *      is untouched by any of it.
  *
  * This is intentionally a per-handler helper rather than a global
  * middleware: the broader hardening plan (PR1) layers a `middleware.ts`
@@ -121,31 +124,71 @@ export async function requireSession(
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
   }
-  // `cookieScope` is the same refusal without the Bearer opt-in (#2919).
-  return cookieScopeRefusal(session, options.tokenScope ?? options.cookieScope) ?? session;
+  // `cookieScope` is the same refusal without the Bearer opt-in (#2919); a route
+  // that declares neither is classified in `tokenPrincipalRoutes.ts` (#2958).
+  return tokenPrincipalRefusal(request, session, options.tokenScope ?? options.cookieScope)
+    ?? session;
 }
 
 /**
- * Hold a *scoped* cookie session to the scopes it carries (#2768).
+ * The one place a **token principal** is held to a scope (#2958).
  *
- * A cookie minted by the token→session bridge
- * (`POST /api/auth/session-from-token`) carries `scopes = token.scopes`. Without
- * this check a `read`-only token could be traded for a cookie and then drive a
- * `tokenScope: 'destroy'` route — the Bearer branch's scope gate, laundered away
- * by a round-trip through the bridge.
+ * A cookie minted by the token→session bridge (`POST /api/auth/session-from-token`)
+ * carries `scopes = token.scopes`. Without a check here a `read`-only token could be
+ * traded for a cookie and then drive a `tokenScope: 'destroy'` route — the Bearer
+ * branch's scope gate, laundered away by a round-trip through the bridge (#2768).
  *
- * Omitted `scopes` means "all" (password login / internal) and is untouched, and
- * a route without `tokenScope` is cookie-only anyway. Returns a 403 (authenticated
- * but under-scoped, like `requireAssistAdmin`) or null to proceed.
+ * Two cases, one rule:
+ *  - The route **declares** a scope (`tokenScope`, or `cookieScope` for a route that
+ *    must stay cookie-only, #2919) → the session's scopes must satisfy it. Identical
+ *    to what the Bearer branch above already enforces.
+ *  - The route declares **nothing** → a bearer cannot reach it at all, so the cookie
+ *    path consults the written classification in `tokenPrincipalRoutes.ts`. An
+ *    unclassified route is refused, so the cookie can never be the stronger of the
+ *    two credentials (#2958). This replaced the per-route `cookieScope` patches
+ *    #2943 had to add to the container-log routes one at a time.
+ *
+ * Omitted `scopes` means "all" (password login / internal principal) and returns
+ * before any of this — a password session behaves exactly as it did. Returns a 403
+ * (authenticated but under-scoped, like `requireAssistAdmin`) or null to proceed.
+ *
+ * This is deliberately the ONLY scope check on the cookie path. `proxy.ts` decides
+ * reachability and knows nothing of a route's declared scope; putting a second copy
+ * of this rule there would need a parallel path→scope map, and the two would drift.
  */
-function cookieScopeRefusal(
+function tokenPrincipalRefusal(
+  request: Request,
   session: SessionPayload,
-  tokenScope: ApiScope | undefined,
+  declared: ApiScope | undefined,
 ): NextResponse | null {
-  if (!tokenScope || !session.scopes) return null;
-  if (scopeSatisfiedBy(session.scopes, tokenScope)) return null;
+  if (!session.scopes) return null;
+  if (declared) return scopeRefusal(session.scopes, declared);
+
+  const gate = gateForTokenPrincipal(request.method, pathnameOf(request));
+  if (gate === 'any') return null;
+  if (gate === 'deny') {
+    return NextResponse.json(
+      { error: 'Forbidden: this route is not reachable by an API-token principal' },
+      { status: 403 },
+    );
+  }
+  return scopeRefusal(session.scopes, gate);
+}
+
+function scopeRefusal(held: readonly ApiScope[], required: ApiScope): NextResponse | null {
+  if (scopeSatisfiedBy(held, required)) return null;
   return NextResponse.json(
-    { error: `Forbidden: '${tokenScope}' scope required` },
+    { error: `Forbidden: '${required}' scope required` },
     { status: 403 },
   );
+}
+
+/** Route path for the classification lookup. An unparseable URL yields a path that
+ *  matches no rule, so the lookup falls to its `deny` default — fail closed. */
+function pathnameOf(request: Request): string {
+  try {
+    return new URL(request.url).pathname;
+  } catch {
+    return '';
+  }
 }

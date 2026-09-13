@@ -2,11 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // #2299 — the createTokenHandler must fail-closed 403 when a `neverExpires`
 // token requests any non-read scope, and pass `neverExpires` through otherwise.
-// requireSession + the mint + the bootstrap-revoke are mocked so this exercises
-// only the guard + wiring.
-vi.mock('@/lib/api/requireSession', () => ({
-  requireSession: vi.fn(async () => ({ user: 'admin' })),
-}));
+// The mint + the bootstrap-revoke are mocked so this exercises only the guard +
+// wiring. The principal is handed in the way `withApiHandler` hands it in — the
+// handler no longer re-runs the gate itself (#2958).
 vi.mock('@/lib/auth/apiTokens', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth/apiTokens')>();
   return {
@@ -24,6 +22,10 @@ vi.mock('@/lib/mcp/bootstrapToken', () => ({
 import { createTokenHandler } from './apiTokenRoutes';
 import { createToken } from '@/lib/auth/apiTokens';
 
+/** A password-login session: no `scopes`, so the #2919 overreach guard is a
+ *  no-op and the #2299 guard under test is the only thing that can refuse. */
+const ADMIN = { user: 'admin', expires: new Date(Date.now() + 60_000) };
+
 const mkRequest = (body: unknown) =>
   new Request('http://test/api/system/api-tokens', {
     method: 'POST',
@@ -37,13 +39,13 @@ beforeEach(() => {
 
 describe('createTokenHandler neverExpires guard (#2299)', () => {
   it('mints a read-only + neverExpires token and passes neverExpires through', async () => {
-    const res = await createTokenHandler({ request: mkRequest({ name: 'machine', scopes: ['read'], neverExpires: true }) });
+    const res = await createTokenHandler({ auth: ADMIN, request: mkRequest({ name: 'machine', scopes: ['read'], neverExpires: true }) });
     expect(res.status).toBe(200);
     expect(createToken).toHaveBeenCalledWith(expect.objectContaining({ neverExpires: true, scopes: ['read'] }));
   });
 
   it('rejects neverExpires + a non-read scope with 403 and does NOT mint', async () => {
-    const res = await createTokenHandler({ request: mkRequest({ name: 'machine', scopes: ['read', 'mutate'], neverExpires: true }) });
+    const res = await createTokenHandler({ auth: ADMIN, request: mkRequest({ name: 'machine', scopes: ['read', 'mutate'], neverExpires: true }) });
     expect(res.status).toBe(403);
     expect(createToken).not.toHaveBeenCalled();
     const body = await res.json();
@@ -51,13 +53,13 @@ describe('createTokenHandler neverExpires guard (#2299)', () => {
   });
 
   it('rejects neverExpires with a lone non-read scope (403)', async () => {
-    const res = await createTokenHandler({ request: mkRequest({ name: 'machine', scopes: ['destroy'], neverExpires: true }) });
+    const res = await createTokenHandler({ auth: ADMIN, request: mkRequest({ name: 'machine', scopes: ['destroy'], neverExpires: true }) });
     expect(res.status).toBe(403);
     expect(createToken).not.toHaveBeenCalled();
   });
 
   it('allows a non-read scope when neverExpires is absent (default false)', async () => {
-    const res = await createTokenHandler({ request: mkRequest({ name: 'ops', scopes: ['read', 'mutate'] }) });
+    const res = await createTokenHandler({ auth: ADMIN, request: mkRequest({ name: 'ops', scopes: ['read', 'mutate'] }) });
     expect(res.status).toBe(200);
     expect(createToken).toHaveBeenCalledWith(expect.objectContaining({ neverExpires: false }));
   });

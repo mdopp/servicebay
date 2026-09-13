@@ -199,7 +199,7 @@ describe('stageServiceBackup', () => {
       expect(staged).toContain('configuration.yaml');
     });
 
-    it('does not follow a symlink nested inside an included directory', async () => {
+    it('does not follow a symlink nested inside an included directory, and REPORTS it (#2951)', async () => {
       const victim = await mkTmp();
       await write(victim, 'querylog.json', 'SIBLING-DATA');
       const src = await mkTmp();
@@ -208,9 +208,30 @@ describe('stageServiceBackup', () => {
       await fs.symlink(victim, path.join(src, 'conf/leakdir'));
       const staging = await mkTmp();
 
-      const { staged } = await stageServiceBackup(src, ADGUARD_MANIFEST, staging);
+      // The include is the DIRECTORY, so the walk actually meets both links.
+      const manifest: ServiceBackupManifest = { service: 'adguard', include: ['conf'], exclude: [] };
+      const { staged, skipped } = await stageServiceBackup(src, manifest, staging);
 
       expect(staged).toEqual(['conf/AdGuardHome.yaml']);
+      // Refusing to follow it is right; refusing SILENTLY was the #2951 bug —
+      // the same silence that dropped NPM's letsencrypt/live from every tar.
+      expect(skipped.map(s => s.file).sort()).toEqual(['conf/leak.json', 'conf/leakdir']);
+      for (const miss of skipped) expect(miss.reason).toMatch(/inside the service data dir/);
+    });
+
+    it('reports an include ROOT that escapes, rather than only logging it (#2951)', async () => {
+      const victim = await mkTmp();
+      await write(victim, 'config.yaml', 'api_key: SIBLING-SECRET\n');
+      const src = await mkTmp();
+      await fs.symlink(path.join(victim, 'config.yaml'), path.join(src, 'config.yaml'));
+      const staging = await mkTmp();
+
+      const { staged, skipped } = await stageServiceBackup(src, MANIFEST_WITH_STRIP_RULE, staging);
+
+      expect(staged).toEqual([]);
+      expect(skipped).toEqual([
+        { file: 'config.yaml', reason: expect.stringMatching(/outside the service data dir/) },
+      ]);
     });
 
     it('still stages a symlink that stays inside the service data root', async () => {

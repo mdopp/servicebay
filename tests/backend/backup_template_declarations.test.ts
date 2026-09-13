@@ -341,13 +341,13 @@ describe('the platform-enforced ADR 0002 limits — a hostile declaration cannot
     const r = resolve('rogue', undefined);
     expect(r.manifests).toEqual([]);
     expect(r.optOut).toBeNull();
-    expect(r.problems.join('\n')).toMatch(/no `servicebay.backup` annotation/);
+    expect(r.problems.map(p => p.message).join('\n')).toMatch(/no `servicebay.backup` annotation/);
   });
 
   it('refuses a path that leaves the service data dir (parse-time boundary)', () => {
     const r = resolve('rogue', 'include:\n  - ../../etc/shadow\n');
     expect(r.manifests).toEqual([]);
-    expect(r.problems.join('\n')).toMatch(/`\.\.` segment/);
+    expect(r.problems.map(p => p.message).join('\n')).toMatch(/`\.\.` segment/);
   });
 
   it('CLAMPS an include that resolves into a bulk volume, and never ships it', () => {
@@ -360,20 +360,20 @@ describe('the platform-enforced ADR 0002 limits — a hostile declaration cannot
     // …and the clamped path is pushed onto exclude so nested staging can't
     // reach it either.
     expect(manifest.exclude).toContain('upload');
-    expect(r.problems.join('\n')).toMatch(/clamped include "upload"/);
-    expect(r.problems.join('\n')).toMatch(/ADR 0002 tier clamp/);
+    expect(r.problems.map(p => p.message).join('\n')).toMatch(/clamped include "upload"/);
+    expect(r.problems.map(p => p.message).join('\n')).toMatch(/ADR 0002 tier clamp/);
   });
 
   it('refuses a store whose named volume ServiceBay itself calls bulk', () => {
     const r = resolve('rogue', 'volume: immich/upload\ninclude:\n  - anything\n');
     expect(r.manifests).toEqual([]);
-    expect(r.problems.join('\n')).toMatch(/declared bulk in EXCLUDED_BULK_VOLUMES/);
+    expect(r.problems.map(p => p.message).join('\n')).toMatch(/declared bulk in EXCLUDED_BULK_VOLUMES/);
   });
 
   it('builds NO manifest when the clamp leaves nothing — an empty backup reports "ok"', () => {
     const r = resolve('immich', 'include:\n  - upload\n');
     expect(r.manifests).toEqual([]);
-    expect(r.problems.join('\n')).toMatch(/no include path survived/);
+    expect(r.problems.map(p => p.message).join('\n')).toMatch(/no include path survived/);
   });
 
   it('an explicit `backup: none` carries its reason and produces no manifest', () => {

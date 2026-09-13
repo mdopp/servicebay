@@ -118,7 +118,14 @@ const SURFACES: { name: string; accepts: (cookie: string) => Promise<boolean> }[
   {
     name: '/api/* — requireSession',
     accepts: async (cookie) => {
-      const r = await requireSession(new Request('http://test/api/services', { headers: { cookie } }));
+      // `GET /api/services` really does declare `tokenScope: 'read'`; pass it so
+      // what is under test stays liveness (#2931) rather than the scope gate.
+      // A bare call would now also consult the scopeless-route classification
+      // (#2958), which this route is absent from because it declares a scope.
+      const r = await requireSession(
+        new Request('http://test/api/services', { headers: { cookie } }),
+        { tokenScope: 'read' },
+      );
       return !(r instanceof NextResponse);
     },
   },

@@ -297,6 +297,42 @@ describe('checkConfigBackup — criterion 3: last nightly result is visible', ()
     expect(r.hint).toMatch(/NPM sqlite snapshot/);
   });
 
+  // #2950 — a template that declares nothing used to leave the denominator
+  // entirely, so the row went green over a smaller set than the box has.
+  it('names the templates that declare nothing, instead of reading as a shortfall on the NAS', async () => {
+    state.config = {
+      externalBackup: {
+        enabled: true, lastRun: ago(6 * HOUR), lastStatus: 'partial',
+        servicesOk: 12, servicesTotal: 13,
+        servicesUndeclared: ['paperless'],
+        lastMessage: 'Not backed up: paperless (no backup declaration this run could use — …)',
+      },
+    };
+    const r = await checkConfigBackup(NOW);
+    expect(r.state).toBe('undeclared_templates');
+    expect(r.status).toBe('warn');
+    expect(r.detail).toMatch(/1 installed template\(s\) declare nothing to back up or declare it wrongly/);
+    expect(r.detail).toMatch(/paperless/);
+    // The fix is in the template, not on the NAS — say so, or the operator
+    // spends the evening on the share.
+    expect(r.hint).toMatch(/servicebay\.backup/);
+    expect(r.hint).toMatch(/backup: none/);
+  });
+
+  it('does not go green while a template declares nothing, even at a full tally', async () => {
+    state.config = {
+      externalBackup: {
+        enabled: true, lastRun: ago(6 * HOUR), lastStatus: 'success',
+        servicesOk: 13, servicesTotal: 13, servicesIncomplete: [],
+        servicesUndeclared: ['paperless'],
+        lastMessage: '13/13 services backed up',
+      },
+    };
+    const r = await checkConfigBackup(NOW);
+    expect(r.state).toBe('undeclared_templates');
+    expect(r.status).not.toBe('ok');
+  });
+
   it('stays "ok" when every landed backup was complete', async () => {
     state.config = {
       externalBackup: {

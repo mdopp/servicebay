@@ -614,3 +614,192 @@ export function applyTransformRules(
   }
   return content;
 }
+
+// ─── The directory walk: every dirent kind has a disposition (#2951) ─────
+//
+// Both staging paths (the worker's `engine/staging.ts` and the backend's
+// local-seed `externalBackup/producer.ts`) walk an included directory and
+// decide, per entry, what to do with it. Before this, both asked exactly two
+// questions — `isDirectory()` and `isFile()` — and every other dirent kind fell
+// off the end of the `if` chain: not staged, not recursed, and NOT reported.
+//
+// That is how NPM's certificates went missing. Certbot writes each cert as a
+// real file under `letsencrypt/archive/<name>/` plus a relative SYMLINK at
+// `letsencrypt/live/<name>/` — the path every vhost references. The symlink
+// stays inside the service's own data dir, so the #2454 escape guard was never
+// the thing dropping it; the walk simply had no branch for it. The tar shipped
+// `archive/` and `renewal/`, reported a plausible file count and `ok`, and a
+// restore from it produced a proxy that could not start a single SSL vhost.
+//
+// So the walk no longer answers two questions — it CLASSIFIES, over a kind set
+// derived from `fs.Dirent`'s own predicates, and every kind maps to one of:
+// stage it, recurse into it, resolve it, or record it in the skipped channel.
+// There is no fall-through. A test enumerates `fs.Dirent`'s predicates at
+// runtime and fails if any kind lacks a disposition, so adding a branch is the
+// only way to meet a new kind — dropping it in silence is not reachable.
+
+/**
+ * Every kind of thing a directory entry can be, named after the `fs.Dirent`
+ * predicate that reports it, plus `unknown` for the `DT_UNKNOWN` case where a
+ * filesystem answers none of them.
+ */
+export type DirentKind =
+  | 'directory'
+  | 'file'
+  | 'symlink'
+  | 'blockDevice'
+  | 'characterDevice'
+  | 'fifo'
+  | 'socket'
+  | 'unknown';
+
+/** The `fs.Dirent` surface {@link direntKind} reads — declared structurally so
+ *  the pure package needs no `node:fs` import and a test can synthesise a kind
+ *  it cannot create on disk without root (block/char devices). */
+export interface DirentLike {
+  name: string;
+  isDirectory(): boolean;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+  isBlockDevice(): boolean;
+  isCharacterDevice(): boolean;
+  isFIFO(): boolean;
+  isSocket(): boolean;
+}
+
+/** Classify one directory entry. Order matters only in that a real `fs.Dirent`
+ *  answers exactly one predicate; `unknown` is the honest answer when it
+ *  answers none. */
+export function direntKind(entry: DirentLike): DirentKind {
+  if (entry.isDirectory()) return 'directory';
+  if (entry.isFile()) return 'file';
+  if (entry.isSymbolicLink()) return 'symlink';
+  if (entry.isBlockDevice()) return 'blockDevice';
+  if (entry.isCharacterDevice()) return 'characterDevice';
+  if (entry.isFIFO()) return 'fifo';
+  if (entry.isSocket()) return 'socket';
+  return 'unknown';
+}
+
+/** What the walk does with an entry. `resolve` is the symlink case: follow it,
+ *  then stage / recurse / skip depending on where it lands. */
+export type DirentDisposition =
+  | { action: 'stage' }
+  | { action: 'recurse' }
+  | { action: 'resolve' }
+  | { action: 'skip'; reason: string };
+
+/**
+ * The disposition of EVERY dirent kind. A `Record` keyed by the union, not a
+ * switch with a fall-through: TypeScript refuses the map if a kind is missing,
+ * so a new kind cannot be met with silence.
+ */
+export const DIRENT_DISPOSITIONS: Readonly<Record<DirentKind, DirentDisposition>> = {
+  directory: { action: 'recurse' },
+  file: { action: 'stage' },
+  symlink: { action: 'resolve' },
+  blockDevice: { action: 'skip', reason: 'block device — not a config file' },
+  characterDevice: { action: 'skip', reason: 'character device — not a config file' },
+  fifo: { action: 'skip', reason: 'FIFO — not a config file' },
+  socket: { action: 'skip', reason: 'socket — not a config file' },
+  unknown: { action: 'skip', reason: 'unknown directory entry type' },
+};
+
+/** The disposition for one directory entry. */
+export function direntDisposition(entry: DirentLike): DirentDisposition {
+  return DIRENT_DISPOSITIONS[direntKind(entry)];
+}
+
+/** One entry the walk declined to stage, with the reason. This is the #2877
+ *  visibility channel: it reaches the run tally and the tar's meta sidecar, so
+ *  an incomplete backup can never read as a clean one. */
+export interface SkippedWalkEntry {
+  /** Path inside the tar the entry WOULD have had. */
+  file: string;
+  /** Why it was not staged. */
+  reason: string;
+}
+
+/** Where a symlink actually landed, once fully resolved. */
+export interface ResolvedWalkEntry {
+  realPath: string;
+  isDirectory: boolean;
+}
+
+/** The two filesystem primitives {@link collectIncludedFiles} needs. Both
+ *  staging paths supply their own: the worker straight from `node:fs`, the
+ *  backend through its `BackupFileBackend` seam. */
+export interface DirWalkFs {
+  /** Entries of a directory given as a path RELATIVE to the service data dir. */
+  readdir(relDir: string): Promise<DirentLike[]>;
+  /**
+   * Fully resolve a service-data-dir-relative path through every symlink.
+   * `null` when it does not land inside the service's own data root — missing,
+   * dangling, a link loop, or an escape (#2454).
+   */
+  resolveInsideRoot(rel: string): Promise<ResolvedWalkEntry | null>;
+}
+
+/** What one directory walk produced. */
+export interface WalkedDir {
+  /** Service-data-dir-relative paths to stage. */
+  files: string[];
+  /** Entries the walk declined, each with its reason. Never silent. */
+  skipped: SkippedWalkEntry[];
+}
+
+/** A rel path is excluded when it equals an exclude entry or lives under one. */
+function isWalkExcluded(relPath: string, excludes: readonly string[]): boolean {
+  return excludes.some(ex => relPath === ex || relPath.startsWith(ex + '/'));
+}
+
+/**
+ * Walk an included directory and return every file to stage plus every entry
+ * declined, with its reason. An excluded path is the one thing that leaves no
+ * skip record — an exclude is a DECLARED decision, not a silent loss.
+ *
+ * A symlink is resolved: landing on a file inside the service root stages it
+ * (this is what puts `letsencrypt/live/*` back in the tar), landing on a
+ * directory inside the root recurses into it once (`seenRealDirs` closes the
+ * link loop), and landing anywhere else is skipped with the reason.
+ */
+export async function collectIncludedFiles(
+  walkFs: DirWalkFs,
+  relDir: string,
+  excludes: readonly string[],
+  seenRealDirs: Set<string> = new Set(),
+): Promise<WalkedDir> {
+  const out: WalkedDir = { files: [], skipped: [] };
+  for (const entry of await walkFs.readdir(relDir)) {
+    const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
+    if (isWalkExcluded(rel, excludes)) continue;
+    const disposition = direntDisposition(entry);
+    if (disposition.action === 'stage') {
+      out.files.push(rel);
+    } else if (disposition.action === 'skip') {
+      out.skipped.push({ file: rel, reason: disposition.reason });
+    } else if (disposition.action === 'recurse') {
+      const nested = await collectIncludedFiles(walkFs, rel, excludes, seenRealDirs);
+      out.files.push(...nested.files);
+      out.skipped.push(...nested.skipped);
+    } else {
+      const resolved = await walkFs.resolveInsideRoot(rel);
+      if (!resolved) {
+        out.skipped.push({
+          file: rel,
+          reason: 'symlink that does not resolve to a path inside the service data dir',
+        });
+      } else if (!resolved.isDirectory) {
+        out.files.push(rel);
+      } else if (seenRealDirs.has(resolved.realPath)) {
+        out.skipped.push({ file: rel, reason: 'symlinked directory already walked (link loop)' });
+      } else {
+        seenRealDirs.add(resolved.realPath);
+        const nested = await collectIncludedFiles(walkFs, rel, excludes, seenRealDirs);
+        out.files.push(...nested.files);
+        out.skipped.push(...nested.skipped);
+      }
+    }
+  }
+  return out;
+}

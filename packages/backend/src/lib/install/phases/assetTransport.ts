@@ -71,6 +71,35 @@ export function findEmptyYamlVars(yaml: string, view: Record<string, string>): s
 }
 
 /**
+ * The config-file twin of {@link findEmptyYamlVars}, and unlike it a HARD gate:
+ * a `{{VAR}}` in a rendered config file that has no value becomes an empty
+ * string on disk, which is silent data loss producing a crash-looping pod with
+ * no breadcrumb.
+ *
+ * A variable the template wraps in an INVERTED section (`{{^X}}…{{/X}}`) is
+ * exempt (#2956). That is the template stating, in the one place that can know,
+ * that X is optional AND naming the value to use when it is unset. Blocking
+ * there would block on the very case the template already handles: the auth
+ * template's admin access rules name each admin host by its declaring
+ * template's subdomain variable, and that variable resolves to nothing whenever
+ * the declaring template is not part of THIS install (a lone `auth` redeploy, a
+ * box without claude-dev) — the inverted section then emits the shipped default
+ * label.
+ *
+ * Narrower than the pod-YAML twin on purpose: that one exempts a name used in
+ * ANY section, but a plain `{{#X}}` guard says nothing about what happens when
+ * X is empty — it just drops the block. An inverted section does.
+ */
+function findUnvaluedConfigVars(content: string, view: Record<string, string>): string[] {
+  const refs = new Set<string>();
+  for (const m of content.matchAll(/\{\{\s*[#^/{]?\s*([A-Z_][A-Z0-9_]*)\s*\}{1,3}/g)) refs.add(m[1]);
+  const optional = new Set(
+    [...content.matchAll(/\{\{\s*\^\s*([A-Z_][A-Z0-9_]*)\s*\}\}/g)].map(m => m[1]),
+  );
+  return [...refs].filter(r => !optional.has(r) && (!(r in view) || view[r] === ''));
+}
+
+/**
  * #2296 — post-render backstop: scan a rendered pod YAML for any `name: X`
  * env pair whose `value:` is the literal redaction sentinel (`<redacted>`).
  * The input guard in the runner already rejects the sentinel before render,
@@ -289,19 +318,16 @@ export async function runAssetTransportPhase(
   const kubeContent =
     `[Kube]\nYaml=${item.name}.yml\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
 
-  // Sanity-check that every {{VAR}} in a config file has a value. Without
-  // this, Mustache renders missing vars as empty strings — silent data
-  // loss that produces crash-looping pods with no breadcrumb.
-  const refRe = /\{\{\s*[#^/{]?\s*([A-Z_][A-Z0-9_]*)\s*\}{1,3}/g;
+  // Sanity-check that every {{VAR}} in a config file has a value — see
+  // `findUnvaluedConfigVars` for what counts as unvalued and what a template
+  // can declare optional.
   for (const cf of (item.configFiles || [])) {
     if (!cf.targetPath) continue;
     // Asset files (#1156) ship content verbatim, so {{…}} in the body
     // isn't a placeholder reference — skip the missing-var sanity check
     // for them.
     if (cf.renderContent === false) continue;
-    const refs = new Set<string>();
-    for (const m of cf.content.matchAll(refRe)) refs.add(m[1]);
-    const missing = [...refs].filter(r => !(r in view) || view[r] === '');
+    const missing = findUnvaluedConfigVars(cf.content, view);
     if (missing.length > 0) {
       const msg = `Cannot deploy ${item.name}: ${cf.filename} references variable(s) with no value: ${missing.join(', ')}. ` +
         `Go back to the Configure step and fill them in (or check the template's variables.json defaults).`;

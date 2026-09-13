@@ -12,14 +12,8 @@
  * archive is safe by construction — the hardening that `systemBackup` applies
  * on *extraction* belongs to the restore path, not here.
  */
-import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-// `node:` prefix so a stray browser-polyfill in the SSR module graph can't
-// shadow child_process with a no-op stub (see systemBackup.ts for the full
-// story) — that would make every tar come back empty without tests noticing.
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { getConfig, updateConfig } from '../config';
 import { logger } from '../logger';
 import {
@@ -34,9 +28,17 @@ import {
 import {
   applyStripRules,
   applyTransformRules,
+  collectIncludedFiles,
+  type DirWalkFs,
   type ServiceBackupManifest,
+  type SkippedWalkEntry,
+  type WalkedDir,
 } from '@servicebay/backup-manifest';
 import { resolveServiceBackupManifest } from './templateManifests';
+// The filesystem seam moved to its own module when the dirent-classification
+// walk grew it (#2951); re-exported here for back-compat.
+import { localFileBackend, type BackupFileBackend } from './fileBackend';
+export type { BackupFileBackend } from './fileBackend';
 // Re-exported for back-compat: the collector moved to its own module to break the
 // producer ↔ backupWorker/service import cycle (#1955).
 export { runBackupCollector } from './collector';
@@ -44,8 +46,6 @@ export { runBackupCollector } from './collector';
 // the same way the live run classifies an error (#2876), without reaching into
 // the transport module itself.
 export { isConnectionLevelError } from './nasClient';
-
-const execFileAsync = promisify(execFile);
 
 /** Directory on the NAS (relative to its root) holding all service backups. */
 export const NAS_BACKUP_DIR = 'sb-backup';
@@ -239,91 +239,6 @@ export interface ServiceBackupListEntry {
   createdAt: string | null;
 }
 
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await fs.access(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The few filesystem primitives the staging + tar-building logic needs. Only the
- * **local** container-filesystem backend remains (the `sb-config-upload` CLI seed
- * #1219 / the HA-OS import #1353, which extract a single uploaded archive into a
- * container-local temp dir — small, no OOM risk). The box backup's HEAVY host-side
- * walk/copy/tar moved into the resource-capped backup worker container (#1955,
- * backupWorker/) — the old host-agent backend that held every tar in this process
- * and OOM'd the box (#1894) is retired.
- *
- * The seam is kept so the local-seed path stays unit-testable; the staging tar
- * bytes are returned to the caller for upload to the NAS.
- */
-export interface BackupFileBackend {
-  /** Directory entries with their type (no recursion). */
-  readdirTypes(dir: string): Promise<{ name: string; isDir: boolean; isFile: boolean }[]>;
-  exists(target: string): Promise<boolean>;
-  isDirectory(target: string): Promise<boolean>;
-  /** Read a text (config) file — only ever called for strip-rule targets. */
-  readText(target: string): Promise<string>;
-  /** Copy a file byte-for-byte (binary-safe — sqlite, certs, …). */
-  copyFile(src: string, dest: string): Promise<void>;
-  /**
-   * Copy MANY files (relative paths under `srcRoot`) into `destRoot`, preserving
-   * their relative subdirs. `relFiles` are plain copies only; strip/transform/
-   * renamed files are still staged individually (they need a content rewrite).
-   */
-  bulkCopyFiles(srcRoot: string, relFiles: string[], destRoot: string): Promise<void>;
-  writeText(dest: string, content: string): Promise<void>;
-  mkdirp(dir: string): Promise<void>;
-  /** Make a fresh staging dir on this backend's side, return its path. */
-  makeStagingDir(): Promise<string>;
-  /** Tar the staging dir's contents and return the bytes to the container. */
-  tarStagingDir(stagingDir: string): Promise<Buffer>;
-  rmrf(target: string): Promise<void>;
-}
-
-/** Local-filesystem backend — the in-container path (CLI seed / HA-OS import). */
-const localFileBackend: BackupFileBackend = {
-  async readdirTypes(dir) {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    return entries.map(e => ({ name: e.name, isDir: e.isDirectory(), isFile: e.isFile() }));
-  },
-  exists: pathExists,
-  async isDirectory(target) {
-    return (await fs.stat(target)).isDirectory();
-  },
-  readText: target => fs.readFile(target, 'utf8'),
-  copyFile: (src, dest) => fs.copyFile(src, dest),
-  async bulkCopyFiles(srcRoot, relFiles, destRoot) {
-    // Local fs: a plain per-file copy is already cheap (no agent round-trips),
-    // so there's nothing to batch — just mkdirp + copy each.
-    for (const rel of relFiles) {
-      const dest = path.join(destRoot, rel);
-      await fs.mkdir(path.dirname(dest), { recursive: true });
-      await fs.copyFile(path.join(srcRoot, rel), dest);
-    }
-  },
-  writeText: (dest, content) => fs.writeFile(dest, content),
-  mkdirp: async dir => {
-    await fs.mkdir(dir, { recursive: true });
-  },
-  makeStagingDir: () => fs.mkdtemp(path.join(os.tmpdir(), 'sb-svcbackup-')),
-  async tarStagingDir(stagingDir) {
-    const tarPath = path.join(os.tmpdir(), `sb-svcbackup-${process.pid}-${Date.now()}.tar`);
-    try {
-      await execFileAsync('tar', ['-cf', tarPath, '-C', stagingDir, '.']);
-      return await fs.readFile(tarPath);
-    } finally {
-      await fs.rm(tarPath, { force: true });
-    }
-  },
-  rmrf: async target => {
-    await fs.rm(target, { recursive: true, force: true });
-  },
-};
-
 /** A relative path is excluded when it equals an exclude entry or lives under
  *  one (an exclude dir). Excludes always win over includes. */
 function isExcluded(relPath: string, excludes: string[]): boolean {
@@ -378,32 +293,57 @@ export async function resolveIncludeGlob(
     .map(e => path.posix.join(dir, e.name));
 }
 
-/** Walk an included directory, returning the relative (posix) paths of every
- *  file inside it that isn't excluded. */
-async function collectDirFiles(
+/**
+ * The walk seam for the local-seed staging path. The classification lives in
+ * `@servicebay/backup-manifest` (`collectIncludedFiles`) — the SAME code the
+ * worker's `engine/staging.ts` walks with, so the dirent class gate covers both
+ * paths rather than one of them plus a copy that drifts (#2951).
+ *
+ * `rootReal` is `null` when the service data dir does not resolve at all; every
+ * symlink then fails the containment check, which is the safe answer.
+ */
+function makeWalkFs(
   backend: BackupFileBackend,
   serviceDataDir: string,
-  relDir: string,
+  rootReal: string | null,
+): DirWalkFs {
+  return {
+    readdir: relDir => backend.readdirKinds(path.join(serviceDataDir, relDir)),
+    resolveInsideRoot: rel =>
+      rootReal === null
+        ? Promise.resolve(null)
+        : backend.resolveInsideRoot(rootReal, path.join(serviceDataDir, rel)),
+  };
+}
+
+/** What one declared include contributes: the relative paths to stage, plus
+ *  every entry the walk declined. A missing include contributes neither — it is
+ *  the manifest describing a file this deployment simply does not have. */
+async function includedRelFiles(
+  backend: BackupFileBackend,
+  walkFs: DirWalkFs,
+  serviceDataDir: string,
+  include: string,
   excludes: string[],
-): Promise<string[]> {
-  const out: string[] = [];
-  const entries = await backend.readdirTypes(path.join(serviceDataDir, relDir));
-  for (const entry of entries) {
-    const rel = path.posix.join(relDir, entry.name);
-    if (isExcluded(rel, excludes)) continue;
-    if (entry.isDir) {
-      out.push(...(await collectDirFiles(backend, serviceDataDir, rel, excludes)));
-    } else if (entry.isFile) {
-      out.push(rel);
-    }
-  }
-  return out;
+): Promise<WalkedDir> {
+  const absInclude = path.join(serviceDataDir, include);
+  if (!(await backend.exists(absInclude))) return { files: [], skipped: [] };
+  if (!(await backend.isDirectory(absInclude))) return { files: [include], skipped: [] };
+  return collectIncludedFiles(walkFs, include, excludes);
+}
+
+/** What the local-seed staging produced: the paths that landed, plus every
+ *  entry the walk declined with its reason (#2951 — nothing is dropped in
+ *  silence, on this path either). */
+export interface LocalStagedConfig {
+  staged: string[];
+  skipped: SkippedWalkEntry[];
 }
 
 /**
  * Copy the manifest-selected config files from `serviceDataDir` into
  * `stagingDir`, applying excludes and strip rules. Returns the sorted list of
- * relative paths actually staged. The `backend` decides whether source +
+ * relative paths actually staged plus the entries the walk declined. The `backend` decides whether source +
  * staging live in-container (local) or on the host via the agent (#1597) — the
  * selection logic is identical, and unit-testable on the local backend.
  */
@@ -412,8 +352,11 @@ export async function stageServiceBackup(
   manifest: ServiceBackupManifest,
   stagingDir: string,
   backend: BackupFileBackend = localFileBackend,
-): Promise<string[]> {
+): Promise<LocalStagedConfig> {
   const staged: string[] = [];
+  const skipped: SkippedWalkEntry[] = [];
+  const rootReal = await backend.realpath(serviceDataDir).catch(() => null);
+  const walkFs = makeWalkFs(backend, serviceDataDir, rootReal);
   // Expand any trailing-`*` glob includes (HA dashboards `.storage/lovelace*`,
   // HACS data `.storage/hacs*`) to the concrete paths on disk first.
   const includes: string[] = [];
@@ -428,12 +371,9 @@ export async function stageServiceBackup(
   const plainCopies: string[] = [];
   for (const include of includes) {
     if (isExcluded(include, manifest.exclude)) continue;
-    const absInclude = path.join(serviceDataDir, include);
-    if (!(await backend.exists(absInclude))) continue;
-    const relFiles = (await backend.isDirectory(absInclude))
-      ? await collectDirFiles(backend, serviceDataDir, include, manifest.exclude)
-      : [include];
-    for (const rel of relFiles) {
+    const walked = await includedRelFiles(backend, walkFs, serviceDataDir, include, manifest.exclude);
+    skipped.push(...walked.skipped);
+    for (const rel of walked.files) {
       // A collector may stage a snapshot file under a canonical name (e.g.
       // database.sqlite.sb-backup → database.sqlite) so restore lands it right.
       const tarRel = manifest.renames?.[rel] ?? rel;
@@ -465,7 +405,7 @@ export async function stageServiceBackup(
   // One bulk copy for every byte-for-byte file (the OOM-causing bulk, e.g.
   // custom_components) — relative paths preserved under the staging dir.
   await backend.bulkCopyFiles(serviceDataDir, plainCopies, stagingDir);
-  return staged.sort();
+  return { staged: staged.sort(), skipped };
 }
 
 /**
@@ -480,7 +420,7 @@ export async function buildServiceBackupTar(
 ): Promise<Buffer> {
   const stagingDir = await backend.makeStagingDir();
   try {
-    const staged = await stageServiceBackup(serviceDataDir, manifest, stagingDir, backend);
+    const { staged } = await stageServiceBackup(serviceDataDir, manifest, stagingDir, backend);
     if (staged.length === 0) {
       throw new Error(`No config files to back up for "${manifest.service}" under ${serviceDataDir}`);
     }
@@ -617,9 +557,24 @@ async function uploadBackupRun(
  * the result (one bad service doesn't abort the rest).
  */
 export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEntry[]> {
-  const { runBackupForInstalled } = await import('../backupWorker/service');
+  const { runBackupForServices } = await import('../backupWorker/service');
+  const { resolveInstalledBackupDeclarations } = await import('./templateManifests');
   try {
-    const completed = await runBackupForInstalled();
+    // The DENOMINATOR first (#2950). The run used to derive its service list
+    // from the manifests that resolved, so a template whose declaration is
+    // missing, unparseable or refused simply left the list — numerator and
+    // denominator shrank together and the run recorded `success` over a
+    // smaller set than the operator believes exists. Resolving the
+    // declarations here keeps the failures in hand: each becomes a visible
+    // `ok: false` row, so the tally counts what was PROMISED, not what
+    // happened to resolve.
+    const declarations = await resolveInstalledBackupDeclarations();
+    const undeclared: ServiceBackupRunEntry[] = declarations.unresolved.map(u => ({
+      service: u.template,
+      ok: false,
+      error: `no backup declaration this run could use — ${u.reason}`,
+    }));
+    const services = declarations.manifests.map(m => m.service);
     // Nothing installed ships a manifest — a real, recordable 0/0 outcome, not
     // a success and not a failure. The probe names that state; recording it
     // here is what stops "never ran" and "had nothing to do" looking alike.
@@ -629,8 +584,10 @@ export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEn
     // connection. A connection per call opened 50–70 sessions in ~10 s, which
     // tripped the FritzBox's session budget after ~8 services and left the same
     // tail of services unbacked-up every night.
-    const results = completed ? await withNasSession(() => uploadBackupRun(completed)) : [];
-    await recordExternalBackupRun(results);
+    const completed = services.length > 0 ? await runBackupForServices(services) : null;
+    const uploaded = completed ? await withNasSession(() => uploadBackupRun(completed)) : [];
+    const results = [...uploaded, ...undeclared];
+    await recordExternalBackupRun(results, undefined, declarations.unresolved.map(u => u.template));
     return results;
   } catch (e) {
     await recordExternalBackupRun([], e);
@@ -716,7 +673,11 @@ export function summariseBackupRun(results: ServiceBackupRunEntry[]): string {
   return withNote(parts.join('. '));
 }
 
-async function recordExternalBackupRun(results: ServiceBackupRunEntry[], error?: unknown): Promise<void> {
+async function recordExternalBackupRun(
+  results: ServiceBackupRunEntry[],
+  error?: unknown,
+  undeclared: string[] = [],
+): Promise<void> {
   const total = results.length;
   const ok = results.filter(r => r.ok).length;
   // A tar that landed without its database is not a `success` — the probe reads
@@ -741,6 +702,7 @@ async function recordExternalBackupRun(results: ServiceBackupRunEntry[], error?:
         servicesOk: ok,
         servicesTotal: total,
         servicesIncomplete: incomplete,
+        servicesUndeclared: undeclared,
       },
     });
   } catch (e) {

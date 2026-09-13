@@ -56,9 +56,15 @@ async function mintBridgedCookie(token: typeof READ_ONLY_TOKEN): Promise<string>
   return decodeURIComponent(match![1]);
 }
 
-const withCookie = (cookie: string) =>
-  new Request('http://localhost:5888/api/settings/backups/restore', {
-    method: 'POST',
+/** A request carrying that cookie. The default target is the `tokenScope:
+ *  'destroy'` restore route the #2768 cases below drive; #2958's cases name
+ *  their own path, because the classification lookup is path-and-method aware. */
+const withCookie = (
+  cookie: string,
+  target = { method: 'POST', path: '/api/settings/backups/restore' },
+) =>
+  new Request(`http://localhost:5888${target.path}`, {
+    method: target.method,
     headers: { cookie: `session=${encodeURIComponent(cookie)}` },
   });
 
@@ -73,7 +79,11 @@ describe('bridged session is held to its source token scopes (#2768)', () => {
 
   it('mints a cookie carrying exactly the token scopes', async () => {
     const cookie = await mintBridgedCookie(READ_ONLY_TOKEN);
-    const auth = await requireSession(withCookie(cookie));
+    // A route a `read` principal is classified for, so what is under test here
+    // is the payload the bridge minted, not the gate (#2958 covers the gate).
+    const auth = await requireSession(
+      withCookie(cookie, { method: 'GET', path: '/api/system/version' }),
+    );
     expect(auth instanceof NextResponse).toBe(false);
     expect((auth as { user: string }).user).toBe('token:readonly');
     expect((auth as { scopes?: string[] }).scopes).toEqual(['read']);
@@ -108,5 +118,76 @@ describe('bridged session is held to its source token scopes (#2768)', () => {
     });
     const auth = await requireSession(withCookie(cookie), { tokenScope: 'destroy' });
     expect(auth instanceof NextResponse).toBe(false);
+  });
+});
+
+/**
+ * Criterion 1 of #2958, end-to-end through the real bridge and the real session
+ * crypto: a `read` token that mints itself a cookie must reach nothing through
+ * that cookie that its bearer may not reach.
+ *
+ * The routes below declare no scope at all, which is exactly what made them
+ * invisible to #2768's check: `requireSession` had nothing to compare against
+ * and returned the session unchanged. The bearer path never had that problem —
+ * it refuses a token outright on a route without `tokenScope`.
+ */
+describe('bridged cookie is held to the classification of a scopeless route (#2958)', () => {
+  beforeEach(() => {
+    mocks.verifyToken.mockReset();
+    mocks.tokenIsLive.mockReset();
+    mocks.tokenIsLive.mockResolvedValue(true);
+  });
+
+  it('REFUSES a read-only bridged cookie on a scopeless destructive route', async () => {
+    const cookie = await mintBridgedCookie(READ_ONLY_TOKEN);
+    const auth = await requireSession(
+      withCookie(cookie, { method: 'POST', path: '/api/system/factory-reset' }),
+    );
+    expect(auth instanceof NextResponse).toBe(true);
+    expect((auth as NextResponse).status).toBe(403);
+  });
+
+  it('refuses the same token its own bearer there too — both transports agree', async () => {
+    // No `tokenScope` on that route, so `requireSession` never opens the Bearer
+    // branch and the cookie is now no better. That equality is the whole unit.
+    const auth = await requireSession(
+      new Request('http://localhost:5888/api/system/factory-reset', {
+        method: 'POST',
+        headers: { authorization: 'Bearer sb_a1b2c3d4_SECRET' },
+      }),
+    );
+    expect(auth instanceof NextResponse).toBe(true);
+  });
+
+  it('REFUSES it on a scopeless route that hands back stored credentials', async () => {
+    const cookie = await mintBridgedCookie(READ_ONLY_TOKEN);
+    const auth = await requireSession(
+      withCookie(cookie, { method: 'GET', path: '/api/system/credentials' }),
+    );
+    expect(auth instanceof NextResponse).toBe(true);
+    expect((auth as NextResponse).status).toBe(403);
+  });
+
+  it('still admits it on a scopeless read view classified for a `read` principal', async () => {
+    const cookie = await mintBridgedCookie(READ_ONLY_TOKEN);
+    const auth = await requireSession(
+      withCookie(cookie, { method: 'GET', path: '/api/containers/abc123/logs' }),
+    );
+    expect(auth instanceof NextResponse).toBe(false);
+    expect((auth as { user: string }).user).toBe('token:readonly');
+  });
+
+  it('leaves a password login reaching the same destructive route — criterion 2', async () => {
+    // Minted the way `POST /api/auth/login` mints it: no `scopes`, no `viaToken`.
+    const { encryptSession } = await import('@/lib/auth/session');
+    const cookie = await encryptSession({
+      user: 'admin',
+      expires: new Date(Date.now() + 60 * 60 * 1000),
+    });
+    const auth = await requireSession(
+      withCookie(cookie, { method: 'POST', path: '/api/system/factory-reset' }),
+    );
+    expect(auth instanceof NextResponse).toBe(false);
+    expect((auth as { user: string }).user).toBe('admin');
   });
 });
