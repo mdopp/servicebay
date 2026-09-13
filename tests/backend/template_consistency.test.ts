@@ -39,6 +39,7 @@ import {
   authTemplateAccessControl,
   isAllowed,
   policyFor,
+  type AccessControlTable,
   type Subject,
 } from '../fixtures/autheliaAccessControl';
 
@@ -2150,6 +2151,114 @@ describe('Authelia audience: declared reach matches the enforced rules', () => {
         true,
       );
     }
+  });
+});
+
+// ─── 4c. …and those rules bind to the CONFIGURED subdomain, not to the
+//         default label the template happens to ship (#2956) ───────────────
+//
+// #2936 named every admin host by its template's DEFAULT subdomain label. A
+// rename in the wizard is then a two-word edit with a security effect and no
+// visible difference: the host stops matching the admin rule, falls through to
+// the `*.<domain>` catch-all at the bottom of the table and becomes reachable
+// by any household account at ONE factor. The hosts behind those names include
+// an interactive coding agent with a bash tool and the dev container's own
+// configuration UI. The original four admin hosts always had this weakness;
+// #2936 inherited it rather than causing it.
+//
+// This is the class gate for it, on both axes that matter:
+//
+//   * The surfaces are enumerated FROM THE CATALOG — every `type: subdomain`
+//     variable declaring `audience: "admin"` — so a surface added later is
+//     covered by construction, not by someone remembering to extend a list.
+//   * Every assertion runs through the rebuilt Authelia matcher, never against
+//     the rendered string. A substring assertion passes just as happily when
+//     the host is absent from the table entirely, which is the exact class of
+//     fake pass #2936 replaced.
+describe('Authelia admin rules bind to the configured subdomain (#2956)', () => {
+  const PUBLIC_DOMAIN = 'example.test';
+  const family: Subject = { user: 'resident', groups: ['family'] };
+  const admins: Subject = { user: 'operator', groups: ['admins'] };
+  /** A signed-in account in NO group — the subject-mismatch path of #878. */
+  const groupless: Subject = { user: 'stranger', groups: [] };
+
+  /** Every admin-declared subdomain variable in the catalog, with its default. */
+  const adminSubdomains = templates.flatMap(t =>
+    (Object.entries(t.variables) as [string, VariableDecl][])
+      .filter(([, meta]) => meta?.type === 'subdomain' && meta?.audience === 'admin')
+      .map(([varName, meta]) => ({
+        template: t.name,
+        varName,
+        defaultLabel: String(meta.default ?? ''),
+      })),
+  );
+
+  /** The value the operator's rename produces — one DNS label, unique per host
+   *  and never equal to any shipped default, so a rule that still carries the
+   *  default cannot accidentally match it. */
+  const renamedLabel = (varName: string) =>
+    `renamed-${varName.toLowerCase().replace(/_/g, '-')}`;
+
+  it('finds admin surfaces to check (guards against a vacuous pass)', () => {
+    expect(adminSubdomains.length).toBeGreaterThanOrEqual(6);
+    for (const s of adminSubdomains) {
+      expect(s.defaultLabel, `${s.template}/${s.varName} has no default label`).not.toBe('');
+    }
+  });
+
+  /** `host` is admin-only under `table`: two factors for an admin account,
+   *  refused for everyone else.
+   *
+   *  `deny` for the family subject — not merely "not allowed" — is what proves
+   *  the PAIRED DENY RULE names the host as well. Drop the host from that twin
+   *  and the family subject skips the admins-only rule and lands on the
+   *  `*.<domain>` catch-all, which answers `one_factor`. */
+  function expectAdminOnly(table: AccessControlTable, host: string) {
+    expect(policyFor(table, host, admins), `${host}: admins`).toBe('two_factor');
+    expect(policyFor(table, host, family), `${host}: family`).toBe('deny');
+    expect(policyFor(table, host, groupless), `${host}: groupless`).toBe('deny');
+    expect(isAllowed(policyFor(table, host, null)), `${host}: anonymous`).toBe(false);
+  }
+
+  for (const { template, varName, defaultLabel } of adminSubdomains) {
+    const renamed = renamedLabel(varName);
+
+    it(`${template}/${varName}: renamed to '${renamed}' stays admin-only`, () => {
+      const table = authTemplateAccessControl(REPO_ROOT, PUBLIC_DOMAIN, { [varName]: renamed });
+      expectAdminOnly(table, `${renamed}.${PUBLIC_DOMAIN}`);
+      // …and the renamed host is what the table itself reports as an admin
+      // surface, read back out of the rendered rules rather than out of a list
+      // written here.
+      expect(adminOnlyHostLabels(table, PUBLIC_DOMAIN)).toContain(renamed);
+    });
+
+    it(`${template}/${varName}: unset falls back to '${defaultLabel}' and stays admin-only`, () => {
+      // A real deploy hits the unset case whenever the DECLARING template is
+      // not part of that install — a lone `auth` redeploy, a box that never
+      // installed claude-dev. The wizard resolves no value, the variable
+      // renders empty, and the template's own fallback has to supply the
+      // shipped default label.
+      const table = authTemplateAccessControl(REPO_ROOT, PUBLIC_DOMAIN, { [varName]: '' });
+      expectAdminOnly(table, `${defaultLabel}.${PUBLIC_DOMAIN}`);
+    });
+  }
+
+  it('with every admin surface renamed at once, the table moves wholesale', () => {
+    const renames = Object.fromEntries(
+      adminSubdomains.map(s => [s.varName, renamedLabel(s.varName)]),
+    );
+    const table = authTemplateAccessControl(REPO_ROOT, PUBLIC_DOMAIN, renames);
+    for (const { varName, defaultLabel } of adminSubdomains) {
+      expectAdminOnly(table, `${renamedLabel(varName)}.${PUBLIC_DOMAIN}`);
+      // The default label is an ordinary host now. Asserting that it MOVED —
+      // rather than the configured name merely being appended beside a
+      // hard-coded default — is what stops a half-fix from passing.
+      expect(
+        policyFor(table, `${defaultLabel}.${PUBLIC_DOMAIN}`, family),
+        `${defaultLabel}.${PUBLIC_DOMAIN} is still protected under its default name`,
+      ).toBe('one_factor');
+    }
+    expect(adminOnlyHostLabels(table, PUBLIC_DOMAIN)).toEqual(Object.values(renames).sort());
   });
 });
 

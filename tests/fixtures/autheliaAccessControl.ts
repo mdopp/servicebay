@@ -64,14 +64,22 @@ function parseAccessControl(renderedYaml: string): AccessControlTable {
 
 /**
  * Parse the SHIPPED auth template's access_control table against a stand-in
- * public domain. Only `PUBLIC_DOMAIN` affects that table; every other
- * placeholder renders empty, which is harmless — the document is parsed, never
- * deployed. Both the class gate and the per-template tests go through here, so
- * they can never end up asserting against two different renders.
+ * public domain. Only `PUBLIC_DOMAIN` and the subdomain variables the rules
+ * name affect that table; every other placeholder renders empty, which is
+ * harmless — the document is parsed, never deployed. Both the class gate and
+ * the per-template tests go through here, so they can never end up asserting
+ * against two different renders.
+ *
+ * `subdomains` is the wizard's answer for each `type: subdomain` variable, so a
+ * test can render the table the way a box with a RENAMED admin host renders it
+ * (#2956). Omitting a name — or passing `''` — is the unset case a real deploy
+ * hits whenever the declaring template is not part of that install; the
+ * template's own inverted-section fallback supplies the default label there.
  */
 export function authTemplateAccessControl(
   repoRoot: string,
   publicDomain: string,
+  subdomains: Record<string, string> = {},
 ): AccessControlTable {
   const src = fs.readFileSync(
     path.join(repoRoot, 'templates', 'auth', 'configuration.yml.mustache'),
@@ -81,7 +89,9 @@ export function authTemplateAccessControl(
   // must see the SAME escape semantics a deploy writes to disk, and the
   // `one-renderer` invariant keeps the direct-importer set at render.ts plus
   // the one test that asserts on the raw engine.
-  return parseAccessControl(renderTemplate(src, { PUBLIC_DOMAIN: publicDomain }));
+  return parseAccessControl(
+    renderTemplate(src, { ...subdomains, PUBLIC_DOMAIN: publicDomain }),
+  );
 }
 
 function asList(v: unknown): string[] {
