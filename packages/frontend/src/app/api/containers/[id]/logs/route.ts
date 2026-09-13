@@ -11,16 +11,20 @@ export const dynamic = 'force-dynamic';
 const Query = z.object({ node: z.string().optional() });
 
 /**
- * `cookieScope: 'read'` (#2943), NOT `tokenScope` — this route stays
- * cookie/internal-only, but a session bridged from a `read` token
- * (`POST /api/auth/session-from-token`) is a token principal all the same, and
- * `podman logs` carries whatever an image dumped at first run, admin passwords
- * included. Declaring the scope is what makes `auth` visible to the handler, so
- * the redaction below can tell the two principals apart; the operator's own
- * cookie session carries no `scopes` and is untouched.
+ * No scope is declared here. This route stays cookie/internal-only, and the
+ * `read` a token principal needs to reach it is written down once, with every
+ * other scopeless route, in `lib/api/tokenPrincipalRoutes.ts` (#2958). Until
+ * that registry existed the only way to hold a bridged `read` session to
+ * anything was a per-route `cookieScope`, added here and on the sibling stream
+ * route by hand (#2943); the class gate replaced both.
+ *
+ * It matters because `podman logs` carries whatever an image dumped at first
+ * run, admin passwords included — so the handler redacts for a token principal.
+ * `auth` is populated for any cookie-borne request now, and the operator's own
+ * session carries no `scopes`, so it is untouched and still sees plaintext.
  */
 export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { id: string }>(
-  { query: Query, cookieScope: 'read' },
+  { query: Query },
   async ({ query, params, auth }) => {
   const check = ContainerId.safeParse(params.id);
   if (!check.success) {

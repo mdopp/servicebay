@@ -239,10 +239,30 @@ const PROBES: Record<string, Probe> = {
   },
 };
 
-const bodyFor = async (probe: Probe, principal: string): Promise<string> => {
+/**
+ * Drive one probe as `principal`.
+ *
+ * The transport matters: `withApiHandler` runs its gate — and therefore hands
+ * the handler an `auth` to redact against — only for a request that actually
+ * carries a credential. A bare `GET` with neither cookie nor Bearer is an
+ * anonymous request and always was. `requireSession` is mocked, so the header
+ * only decides *whether* the gate runs; the principal it resolves to is
+ * `state.principal`.
+ */
+const bodyFor = async (
+  probe: Probe,
+  principal: string,
+  transport: 'cookie' | 'bearer' = 'cookie',
+): Promise<string> => {
   state.principal = principal;
   const handler = await probe.load();
-  const res = await handler(new NextRequest(probe.url), { params: Promise.resolve(probe.params) });
+  const headers: Record<string, string> = transport === 'bearer'
+    ? { authorization: 'Bearer sb_synthetic_probe' }
+    : { cookie: 'session=synthetic-probe' };
+  const res = await handler(
+    new NextRequest(probe.url, { headers }),
+    { params: Promise.resolve(probe.params) },
+  );
   expect(res.status).toBe(200);
   return res.text();
 };
@@ -280,7 +300,7 @@ describe.each(Object.keys(PROBES))('%s', route => {
   const probe = PROBES[route];
 
   it('redacts for a token principal', async () => {
-    const body = await bodyFor(probe, 'token:paired-device');
+    const body = await bodyFor(probe, 'token:paired-device', 'bearer');
     expect(body).not.toContain(probe.canary);
     expect(body).toContain(REDACTION_SENTINEL);
   });

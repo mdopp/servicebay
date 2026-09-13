@@ -82,8 +82,10 @@ export interface ParsedRequest<B, Q> {
   request: NextRequest;
   /**
    * The authenticated principal, when the gate ran (mutating verbs, a route
-   * with `tokenScope`, or any request carrying a `Bearer` token). `undefined`
-   * for unauthenticated/public GETs that skip the gate. Routes branch on
+   * with `tokenScope`/`cookieScope`, or any request carrying a `Bearer` token
+   * or a readable session cookie). `undefined` for a request that carries no
+   * credential the gate could read — a public GET with neither, or one whose
+   * cookie no longer decodes. Routes branch on
    * `auth?.user` — e.g. `auth?.user.startsWith('token:')` to redact secrets
    * for a scoped API-token caller (#1275).
    */
@@ -98,6 +100,52 @@ export interface ParsedRequestWithParams<B, Q, P> extends ParsedRequest<B, Q> {
 
 const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
+/**
+ * Must `requireSession` run for this request?
+ *
+ * Yes when: a mutating verb (the original #596 check), a route that opts into
+ * token auth, a request carrying a Bearer token, or a request carrying a session
+ * cookie. The Bearer case lets a token reach an opted-in GET (the proxy passes
+ * valid tokens through, #1275) while a Bearer to a route WITHOUT `tokenScope`
+ * still 401s — requireSession ignores Bearer when no scope is set and falls
+ * through to the (absent) cookie.
+ *
+ * The cookie case is #2958. A session bridged from a token
+ * (`POST /api/auth/session-from-token`) is a token principal wearing a cookie,
+ * and on a scopeless GET the gate never ran at all — so the one check in
+ * `requireSession` never got the chance to hold it to anything, and the cookie
+ * reached what the bearer could not. Running the gate whenever a session cookie
+ * is present is what puts every cookie-borne request in front of that single
+ * check (and is what makes `auth` visible to the handlers that redact for a
+ * token principal, #2943).
+ *
+ * A genuinely anonymous request — no cookie, no Bearer — still skips the gate,
+ * so the public routes in `proxy.ts:PUBLIC_API_RULES` are unaffected.
+ *
+ * The cookie case is `'opportunistic'` rather than `'required'` for those same
+ * public routes: a caller holding a *stale* cookie on a public GET was answered
+ * before #2958 and must still be, so a 401 there falls back to anonymous rather
+ * than becoming the response. `/api/install/progress` names that scenario
+ * outright (#663 — the overlay keeps polling after a clean install invalidates
+ * the cookie mid-run). A 403 is a different animal: a real token principal the
+ * classification refused, and it is returned.
+ *
+ * The cookie test is presence only, by local regex: the authoritative parse,
+ * signature check and liveness re-check stay in `getSessionFromCookieHeader`,
+ * and the regex keeps this module clear of the cookie/JWT import chain (see the
+ * lazy import of `requireSession` below).
+ */
+type GateKind = 'skip' | 'required' | 'opportunistic';
+
+function gateKind<B, Q>(options: ApiHandlerOptions<B, Q>, request: NextRequest): GateKind {
+  if (options.skipAuth) return 'skip';
+  if (MUTATING_METHODS.has(request.method)) return 'required';
+  if (options.tokenScope !== undefined || options.cookieScope !== undefined) return 'required';
+  if ((request.headers.get('authorization') ?? '').startsWith('Bearer ')) return 'required';
+  if (/(?:^|;\s*)session=/.test(request.headers.get('cookie') ?? '')) return 'opportunistic';
+  return 'skip';
+}
+
 /** Shared validation + error-envelope core used by both wrappers. */
 async function runHandler<B, Q>(
   options: ApiHandlerOptions<B, Q>,
@@ -105,19 +153,9 @@ async function runHandler<B, Q>(
   invoke: (parsed: { body: B; query: Q; auth?: SessionPayload }) => Promise<Response | NextResponse | unknown>,
 ): Promise<Response> {
   try {
-    // Run the gate when: a mutating verb (the original #596 check), a route
-    // that opts into token auth, or ANY request carrying a Bearer token. The
-    // last case lets a token reach an opted-in GET (the proxy passes valid
-    // tokens through, #1275) while a Bearer to a route WITHOUT `tokenScope`
-    // still 401s — requireSession ignores Bearer when no scope is set and
-    // falls through to the (absent) cookie. Public GETs with no Bearer skip
-    // the gate exactly as before.
     let auth: SessionPayload | undefined;
-    const hasBearer = (request.headers.get('authorization') ?? '').startsWith('Bearer ');
-    const needsAuth = !options.skipAuth
-      && (MUTATING_METHODS.has(request.method) || options.tokenScope !== undefined
-        || options.cookieScope !== undefined || hasBearer);
-    if (needsAuth) {
+    const kind = gateKind(options, request);
+    if (kind !== 'skip') {
       // Lazy import to keep handler.ts free of the cookie-parse import
       // chain when the module is loaded by middleware-adjacent code.
       const { requireSession } = await import('./requireSession');
@@ -125,8 +163,13 @@ async function runHandler<B, Q>(
         tokenScope: options.tokenScope,
         cookieScope: options.cookieScope,
       });
-      if (result instanceof NextResponse) return result;
-      auth = result;
+      if (result instanceof NextResponse) {
+        // Opportunistic + 401 = an unreadable cookie, i.e. an anonymous caller
+        // on a route that never gated one. Proceed as before (see `gateKind`).
+        if (kind === 'required' || result.status !== 401) return result;
+      } else {
+        auth = result;
+      }
     }
 
     const rawBody = options.body ? await readJsonBody(request) : undefined;
