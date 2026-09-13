@@ -220,6 +220,7 @@ type ConfigBackupState =
   | 'connection_dropped'
   | 'target_full'
   | 'incomplete'
+  | 'undeclared_templates'
   | 'overdue'
   | 'ok';
 
@@ -313,6 +314,40 @@ function partialRunHint(cause: ReturnType<typeof diagnoseRunCause>, fallback: st
   return fallback;
 }
 
+const UNDECLARED_HINT =
+  'Each template says what it needs kept in its `servicebay.backup` annotation — or says `backup: none` ' +
+  'with a reason. A template that says neither is not "nothing to back up", it is a service nobody is ' +
+  'keeping the config of. Fix the annotation in the template (docs/TEMPLATE_AUTHORING.md), or add the ' +
+  '`backup: none` opt-out if that is genuinely the answer.';
+
+/**
+ * Installed templates whose backup declaration the run could not use (#2950),
+ * or null when every one of them declared something usable.
+ *
+ * This is the denominator, named. These templates now count as failures, so the
+ * `ok < total` branch above already refuses to go green — but "12/13 services"
+ * on its own sends the operator looking at the NAS. The state has to say the
+ * real thing: nothing was even attempted for these, because they never said
+ * what to keep.
+ */
+function classifyUndeclaredTemplates(
+  record: ExternalBackupRecord,
+  age: string,
+  tally: string,
+): ConfigBackupProbeResult | null {
+  const undeclared = record.servicesUndeclared ?? [];
+  if (undeclared.length === 0) return null;
+  return withCaveat({
+    status: 'warn',
+    state: 'undeclared_templates',
+    detail:
+      `The last config backup ran ${age} ago and covered ${tally}, but ${undeclared.length} installed ` +
+      `template(s) declare nothing to back up or declare it wrongly, so nothing was attempted for them: ` +
+      `${undeclared.join(', ')}. ${record.lastMessage ?? ''}`.trim(),
+    hint: UNDECLARED_HINT,
+  });
+}
+
 /** A run whose tars LANDED but are missing declared files (#2877), or null when
  *  every written backup is complete. */
 function classifyIncompleteRun(
@@ -361,6 +396,10 @@ function classifyRecordedConfigRun(
   const tally = `${ok}/${total} services`;
   const cause = diagnoseRunCause(record);
   if (record.lastStatus === 'error') return failedRunResult(record, age, tally, cause);
+  // Before the tally is judged: a template that declares nothing is a hole the
+  // numbers alone cannot describe (#2950).
+  const undeclaredRun = classifyUndeclaredTemplates(record, age, tally);
+  if (undeclaredRun) return undeclaredRun;
   if (total === 0) {
     return withCaveat({
       status: 'info',

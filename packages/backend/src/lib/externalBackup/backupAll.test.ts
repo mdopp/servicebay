@@ -6,8 +6,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // #1894), then streams each produced tar to the NAS. Here we mock the worker
 // service surface + the NAS client and assert the upload/skip behaviour; the worker
 // launch/poll is covered by backupWorker/service.test.ts.
-const { mockWorker, mockNas, mockCfg } = vi.hoisted(() => ({
+const { mockWorker, mockNas, mockCfg, mockDecl } = vi.hoisted(() => ({
   mockWorker: {
+    runBackupForServices: vi.fn(),
     runBackupForInstalled: vi.fn(),
     readBackupTar: vi.fn(),
     cleanupBackupRun: vi.fn(),
@@ -19,8 +20,18 @@ const { mockWorker, mockNas, mockCfg } = vi.hoisted(() => ({
     withNasSession: vi.fn(<T,>(fn: () => Promise<T>): Promise<T> => fn()),
   },
   mockCfg: { getConfig: vi.fn(), updateConfig: vi.fn() },
+  // The run resolves the installed DECLARATIONS itself now (#2950) — it is the
+  // only way it can see a template that declares nothing, which used to leave
+  // the list and take its own absence with it.
+  mockDecl: {
+    resolveInstalledBackupDeclarations: vi.fn(),
+    resolveServiceBackupManifest: vi.fn(),
+    resolveInstalledBackupManifests: vi.fn(),
+    resolveTemplateManifests: vi.fn(),
+  },
 }));
 vi.mock('../backupWorker/service', () => mockWorker);
+vi.mock('./templateManifests', () => mockDecl);
 // The connection-error classifier stays REAL: the run's recorded message is what
 // the `config_backup` probe groups on, so a stub here would let the two drift.
 vi.mock('./nasClient', async () => ({
@@ -54,8 +65,30 @@ function completed(
   };
 }
 
+/**
+ * Arm one run: `results` are the services whose declaration resolved (the
+ * worker returns these), `unresolved` the installed templates whose declaration
+ * the run could NOT use, and `optedOut` the deliberate `backup: none` ones.
+ */
+function armRun(
+  results: Parameters<typeof completed>[0],
+  opts: {
+    inconsistent?: Set<string>;
+    unresolved?: { template: string; reason: string }[];
+    optedOut?: { template: string; reason: string }[];
+  } = {},
+): void {
+  mockDecl.resolveInstalledBackupDeclarations.mockResolvedValue({
+    manifests: results.map(r => ({ service: r.service, include: ['config'], exclude: [] })),
+    unresolved: opts.unresolved ?? [],
+    optedOut: opts.optedOut ?? [],
+  });
+  mockWorker.runBackupForServices.mockResolvedValue(completed(results, opts.inconsistent));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  armRun([]);
   mockCfg.getConfig.mockResolvedValue({});
   mockCfg.updateConfig.mockResolvedValue({});
   mockNas.nasUpload.mockResolvedValue(undefined);
@@ -67,7 +100,7 @@ beforeEach(() => {
 
 describe('backupInstalledServicesToNas', () => {
   it('uploads each ok tar as a dated NAS slot and cleans up the run', async () => {
-    mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'adguard', ok: true }]));
+    armRun([{ service: 'adguard', ok: true }]);
 
     const results = await backupInstalledServicesToNas();
 
@@ -80,12 +113,10 @@ describe('backupInstalledServicesToNas', () => {
   });
 
   it('records a worker skip/error as a per-service failure without uploading it', async () => {
-    mockWorker.runBackupForInstalled.mockResolvedValue(
-      completed([
-        { service: 'adguard', ok: false, outcome: 'skip', detail: 'No config files to back up' },
-        { service: 'nginx', ok: true },
-      ]),
-    );
+    armRun([
+      { service: 'adguard', ok: false, outcome: 'skip', detail: 'No config files to back up' },
+      { service: 'nginx', ok: true },
+    ]);
 
     const results = await backupInstalledServicesToNas();
     expect(results.find(r => r.service === 'adguard')).toMatchObject({ ok: false });
@@ -95,7 +126,7 @@ describe('backupInstalledServicesToNas', () => {
   });
 
   it('returns empty when nothing with a manifest is installed (no launch)', async () => {
-    mockWorker.runBackupForInstalled.mockResolvedValue(null);
+    armRun([]);
     expect(await backupInstalledServicesToNas()).toEqual([]);
     expect(mockNas.nasUpload).not.toHaveBeenCalled();
   });
@@ -108,48 +139,45 @@ describe('backupInstalledServicesToNas — recording the run outcome (#2615)', (
   const recorded = () => mockCfg.updateConfig.mock.calls.at(-1)?.[0]?.externalBackup;
 
   it('records a full run as success with the ok/total tally', async () => {
-    mockWorker.runBackupForInstalled.mockResolvedValue(
-      completed([{ service: 'adguard', ok: true }, { service: 'nginx', ok: true }]),
-    );
+    armRun([{ service: 'adguard', ok: true }, { service: 'nginx', ok: true }]);
     await backupInstalledServicesToNas();
     expect(recorded()).toMatchObject({ lastStatus: 'success', servicesOk: 2, servicesTotal: 2 });
     expect(recorded().lastRun).toEqual(expect.any(String));
   });
 
   it('records a mixed run as partial, naming what was NOT backed up', async () => {
-    mockWorker.runBackupForInstalled.mockResolvedValue(
-      completed([
+    armRun([
         { service: 'adguard', ok: false, outcome: 'skip', detail: 'No config files to back up' },
         { service: 'nginx', ok: true },
-      ]),
-    );
+      ]);
     await backupInstalledServicesToNas();
     expect(recorded()).toMatchObject({ lastStatus: 'partial', servicesOk: 1, servicesTotal: 2 });
     expect(recorded().lastMessage).toMatch(/adguard/);
   });
 
   it('records a 0/0 run rather than leaving it indistinguishable from never-ran', async () => {
-    mockWorker.runBackupForInstalled.mockResolvedValue(null);
+    armRun([]);
     await backupInstalledServicesToNas();
     expect(recorded()).toMatchObject({ servicesOk: 0, servicesTotal: 0 });
   });
 
   it('records a thrown run as an error and still rethrows', async () => {
-    mockWorker.runBackupForInstalled.mockRejectedValue(new Error('worker never came up'));
+    armRun([{ service: 'adguard', ok: true }]);
+    mockWorker.runBackupForServices.mockRejectedValue(new Error('worker never came up'));
     await expect(backupInstalledServicesToNas()).rejects.toThrow('worker never came up');
     expect(recorded()).toMatchObject({ lastStatus: 'error', lastMessage: 'worker never came up' });
   });
 
   it('never turns a completed backup into a failure when the config write fails', async () => {
     mockCfg.updateConfig.mockRejectedValue(new Error('config is read-only'));
-    mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'adguard', ok: true }]));
+    armRun([{ service: 'adguard', ok: true }]);
     const results = await backupInstalledServicesToNas();
     expect(results).toMatchObject([{ service: 'adguard', ok: true }]);
   });
 
   it('preserves the existing externalBackup settings it writes alongside', async () => {
     mockCfg.getConfig.mockResolvedValue({ externalBackup: { enabled: true, time: '04:15', retention: 3 } });
-    mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'adguard', ok: true }]));
+    armRun([{ service: 'adguard', ok: true }]);
     await backupInstalledServicesToNas();
     expect(recorded()).toMatchObject({ enabled: true, time: '04:15', retention: 3 });
   });
@@ -166,37 +194,31 @@ describe('backupInstalledServicesToNas — one destination session, honest meta'
   };
 
   it('runs the whole upload phase inside ONE destination session (#2876)', async () => {
-    mockWorker.runBackupForInstalled.mockResolvedValue(
-      completed([{ service: 'adguard', ok: true }, { service: 'nginx', ok: true }]),
-    );
+    armRun([{ service: 'adguard', ok: true }, { service: 'nginx', ok: true }]);
     await backupInstalledServicesToNas();
     // One session for the run — not one per service, and not one per call.
     expect(mockNas.withNasSession).toHaveBeenCalledTimes(1);
   });
 
   it('records the run message with the connection drop grouped, not per service (#2876)', async () => {
-    mockWorker.runBackupForInstalled.mockResolvedValue(
-      completed([
+    armRun([
         { service: 'adguard', ok: true },
         { service: 'paperless', ok: false, detail: 'connect ECONNREFUSED 192.168.178.1:21 (control socket)' },
         { service: 'beets', ok: false, detail: 'connect ECONNREFUSED 192.168.178.1:21 (control socket)' },
-      ]),
-    );
+      ]);
     await backupInstalledServicesToNas();
     expect(recorded().lastMessage).toMatch(/dropped the connection after 1 of 3 services/);
     expect(recorded().lastMessage).toContain('paperless, beets');
   });
 
   it('marks a live (inconsistent) collector copy in the tar meta (#2877)', async () => {
-    mockWorker.runBackupForInstalled.mockResolvedValue(
-      completed([{ service: 'nginx', ok: true }], new Set(['nginx'])),
-    );
+    armRun([{ service: 'nginx', ok: true }], { inconsistent: new Set(['nginx']) });
     await backupInstalledServicesToNas();
     expect(uploadedMeta()).toMatchObject({ service: 'nginx', consistent: false });
   });
 
   it('leaves `consistent` absent when the snapshot was torn-free', async () => {
-    mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'nginx', ok: true }]));
+    armRun([{ service: 'nginx', ok: true }]);
     await backupInstalledServicesToNas();
     expect(uploadedMeta()).not.toHaveProperty('consistent');
   });
@@ -205,9 +227,7 @@ describe('backupInstalledServicesToNas — one destination session, honest meta'
     // nginx's tar reaches the NAS but has no database.sqlite: the file is
     // root-owned 0600 and no collector snapshot was taken. The run must not read
     // as a clean success — the restore, and the operator, have to be told.
-    mockWorker.runBackupForInstalled.mockResolvedValue(
-      completed([{ service: 'nginx', ok: true, skipped: ['data/database.sqlite'] }]),
-    );
+    armRun([{ service: 'nginx', ok: true, skipped: ['data/database.sqlite'] }]);
     const results = await backupInstalledServicesToNas();
 
     expect(results[0]).toMatchObject({ service: 'nginx', ok: true, skipped: ['data/database.sqlite'] });
@@ -222,7 +242,7 @@ describe('backupInstalledServicesToNas — one destination session, honest meta'
   });
 
   it('leaves `skippedFiles` absent and the run a success when every file made it', async () => {
-    mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'nginx', ok: true }]));
+    armRun([{ service: 'nginx', ok: true }]);
     await backupInstalledServicesToNas();
     expect(uploadedMeta()).not.toHaveProperty('skippedFiles');
     expect(recorded()).toMatchObject({ lastStatus: 'success', servicesIncomplete: [] });

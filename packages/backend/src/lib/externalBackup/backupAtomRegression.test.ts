@@ -115,7 +115,7 @@ describe('GOLDEN: stageServiceBackup selection per real manifest', () => {
     await write(src, 'data/sessions.db', 'SESS');
     await write(src, 'data/filters/0.txt', 'rules');
     const staging = await mkTmp();
-    const staged = await stageServiceBackup(src, builtinManifest('adguard'), staging);
+    const { staged } = await stageServiceBackup(src, builtinManifest('adguard'), staging);
     expect(staged).toEqual(['conf/AdGuardHome.yaml']);
   });
 
@@ -128,7 +128,7 @@ describe('GOLDEN: stageServiceBackup selection per real manifest', () => {
     // stray file is present, it must NOT enter the tarball.
     await write(src, 'users_database.yml', 'users:\n  alice:\n    password: $argon2id$SECRET\n');
     const staging = await mkTmp();
-    const staged = await stageServiceBackup(src, builtinManifest('authelia'), staging);
+    const { staged } = await stageServiceBackup(src, builtinManifest('authelia'), staging);
     expect(staged).toEqual(['db.sqlite3']);
     expect(await fs.readFile(path.join(staging, 'db.sqlite3'), 'utf8')).toBe('AUTHELIA-SQLITE-SECRETS');
     await expect(fs.access(path.join(staging, 'users_database.yml'))).rejects.toThrow();
@@ -176,7 +176,7 @@ describe('GOLDEN: stageServiceBackup selection per real manifest', () => {
     await write(src, 'deps/lib.py', 'dep');
 
     const staging = await mkTmp();
-    const staged = await stageServiceBackup(src, builtinManifest('home-assistant'), staging);
+    const { staged } = await stageServiceBackup(src, builtinManifest('home-assistant'), staging);
 
     expect(staged).toEqual([
       '.storage/core.area_registry',
@@ -217,7 +217,7 @@ describe('GOLDEN: stageServiceBackup selection per real manifest', () => {
     await write(src, 'logs/zwave.log', 'noise');
     const manifest = builtinManifest('home-assistant-zwave');
     const staging = await mkTmp();
-    const staged = await stageServiceBackup(src, manifest, staging);
+    const { staged } = await stageServiceBackup(src, manifest, staging);
     expect(staged).toEqual(['sb-external-settings.json', 'settings.json']);
     // No strip on this manifest — keys are kept verbatim.
     expect(await fs.readFile(path.join(staging, 'settings.json'), 'utf8')).toContain('KEY');
@@ -233,7 +233,7 @@ describe('GOLDEN: stageServiceBackup selection per real manifest', () => {
     await write(src, 'data/logs/access.log', 'noise');
     const staging = await mkTmp();
     // No collector runs here (stageServiceBackup is the pure selection step).
-    const staged = await stageServiceBackup(src, builtinManifest('nginx'), staging);
+    const { staged } = await stageServiceBackup(src, builtinManifest('nginx'), staging);
     expect(staged).toEqual([
       'data/custom_ssl/cert.pem',
       'data/database.sqlite',

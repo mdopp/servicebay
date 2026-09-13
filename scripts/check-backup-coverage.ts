@@ -569,7 +569,7 @@ function reportUncovered(
  * silence is not an opt-out.
  */
 function reportUndeclared(declarations: ReadonlyMap<string, TemplateBackupResolution>): void {
-  const rows = [...declarations.values()].flatMap(r => r.problems);
+  const rows = [...declarations.values()].flatMap(r => r.problems.map(p => p.message));
   if (rows.length > 0) {
     fail(
       '✗ backup-coverage contract (#2858): template(s) whose `servicebay.backup` declaration is missing or refused:',

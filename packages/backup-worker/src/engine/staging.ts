@@ -23,6 +23,8 @@ import { promisify } from 'node:util';
 import {
   applyStripRules,
   applyTransformRules,
+  collectIncludedFiles,
+  type DirWalkFs,
   type ServiceBackupManifest,
 } from '@servicebay/backup-manifest';
 
@@ -91,25 +93,21 @@ async function resolveIncludeGlob(
     .map(e => path.posix.join(dir, e.name));
 }
 
-/** Walk an included directory, returning the relative (posix) paths of every
- *  file inside it that isn't excluded. */
-async function collectDirFiles(
-  serviceDataDir: string,
-  relDir: string,
-  excludes: string[],
-): Promise<string[]> {
-  const out: string[] = [];
-  const entries = await fs.readdir(path.join(serviceDataDir, relDir), { withFileTypes: true });
-  for (const entry of entries) {
-    const rel = path.posix.join(relDir, entry.name);
-    if (isExcluded(rel, excludes)) continue;
-    if (entry.isDirectory()) {
-      out.push(...(await collectDirFiles(serviceDataDir, rel, excludes)));
-    } else if (entry.isFile()) {
-      out.push(rel);
-    }
-  }
-  return out;
+/**
+ * The walk seam for this service's data dir. The classification itself lives in
+ * `@servicebay/backup-manifest` (`collectIncludedFiles`) so the backend's
+ * local-seed staging runs the SAME dispositions — one walk, one class gate, no
+ * second copy to drift (#2951).
+ */
+function makeWalkFs(serviceDataDir: string, dataDirReal: string): DirWalkFs {
+  return {
+    readdir: relDir => fs.readdir(path.join(serviceDataDir, relDir), { withFileTypes: true }),
+    async resolveInsideRoot(rel) {
+      const realPath = await realPathInsideRoot(dataDirReal, path.join(serviceDataDir, rel));
+      if (!realPath) return null;
+      return { realPath, isDirectory: (await fs.stat(realPath)).isDirectory() };
+    },
+  };
 }
 
 /** One config file the staging could not read, with the reason. Reported per
@@ -205,6 +203,7 @@ export async function stageServiceBackup(
   // original must never be copied over it — it would race the snapshot for the
   // same tar path, and it is exactly the file the worker cannot read anyway.
   const renameTargets = new Set(Object.values(manifest.renames ?? {}));
+  const walkFs = makeWalkFs(serviceDataDir, dataDirReal);
   const includes: string[] = [];
   for (const include of manifest.include) {
     includes.push(...(await resolveIncludeGlob(serviceDataDir, dataDirReal, include)));
@@ -216,15 +215,24 @@ export async function stageServiceBackup(
     const realInclude = await realPathInsideRoot(dataDirReal, absInclude);
     if (!realInclude) {
       // #2454 — symlink (or `..`) escape out of the service's own data dir.
+      // Reported, not merely logged (#2951): a declared include that the run
+      // refused to follow is a hole in the backup, and the operator learns
+      // about a hole from the run tally, not from a container log line.
       console.warn(
         `[backup-worker] "${manifest.service}": skipping include "${include}" — it resolves outside the service data dir`,
       );
+      skipped.push({ file: include, reason: 'declared include resolves outside the service data dir' });
       continue;
     }
     const isDir = (await fs.stat(realInclude)).isDirectory();
-    const relFiles = isDir
-      ? await collectDirFiles(serviceDataDir, include, manifest.exclude)
-      : [include];
+    let relFiles: string[];
+    if (isDir) {
+      const walked = await collectIncludedFiles(walkFs, include, manifest.exclude);
+      relFiles = walked.files;
+      skipped.push(...walked.skipped);
+    } else {
+      relFiles = [include];
+    }
     for (const rel of relFiles) {
       const tarRel = manifest.renames?.[rel] ?? rel;
       // The collector already snapshotted this one under its own name.
