@@ -61,6 +61,11 @@ const EXEMPT: Record<string, string> = {
     + 'is narrower than any scope could express — a parent may revoke ITS OWN children and '
     + 'nothing else, enforced in `revokeDelegatedToken`. This is the door the claude-dev '
     + 'config UI uses; it holds one token and has no session at all.',
+  '/api/system/api-tokens/me#GET':
+    'Self-description (#2984, `servicebay whoami`). `skipAuth` for the same reason as the '
+    + 'delegate pair: the Bearer presented IS the credential, verified by `verifyToken` in the '
+    + 'handler, and there is no scope to hold — a token of any scope may ask what it is. '
+    + 'Answers id/name/scopes/parent/expiry only: never the hash, never the prefix.',
   '/api/auth/token-from-authelia-session#POST':
     'Authelia forward-auth mint (#2246/#2249). Identity comes only from proxy-injected '
     + 'Remote-User/Remote-Groups, it REFUSES any caller presenting a Bearer (so no token '

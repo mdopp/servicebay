@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   listTokens,
+  verifyToken,
   createToken,
   createDelegatedToken,
   revokeDelegatedToken,
@@ -307,4 +308,37 @@ export async function deleteTokenHandler({ query }: { query: z.infer<typeof Dele
   const ok = await revokeToken(id);
   if (!ok) return NextResponse.json({ error: 'token not found' }, { status: 404 });
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * Describe the token that is calling (#2984 — `servicebay whoami`).
+ *
+ * Same credential model as the delegate pair: `Authorization: Bearer sb_…` IS
+ * the authentication, verified here, and there is no scope to hold — a token
+ * of any scope may ask what it is. That is the whole point. The one question
+ * an agent could not answer was "what may I do", and the only source it had
+ * was a document, which cannot know (#2982: a session read "read-scoped",
+ * believed it, and waited for an operator while force-update was open to it).
+ *
+ * Answers with the store's own record minus everything secret: never the
+ * hash, never the prefix. `verifyToken` stamps lastUsedAt as for any call.
+ */
+export async function whoamiHandler({ request }: { request: Request }) {
+  const authz = request.headers.get('authorization') ?? '';
+  const raw = authz.startsWith('Bearer ') ? authz.slice(7).trim() : '';
+  if (!raw) {
+    return NextResponse.json({ error: 'Bearer token required' }, { status: 401 });
+  }
+  const token = await verifyToken(raw);
+  if (!token) {
+    return NextResponse.json({ error: 'token unknown, revoked or expired' }, { status: 401 });
+  }
+  return NextResponse.json({
+    id: token.id,
+    name: token.name,
+    scopes: token.scopes,
+    createdAt: token.createdAt,
+    expiresAt: token.expiresAt ?? null,
+    parentId: token.parentId ?? null,
+  });
 }

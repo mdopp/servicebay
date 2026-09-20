@@ -314,6 +314,33 @@ export const VERBS = {
    * one and can do nothing else.
    */
 
+  whoami: {
+    summary: 'say what the token you hold is: name, scopes, parent, expiry',
+    usage: 'whoami',
+    effect: 'own-credential',
+    auth: 'parent-token',
+    // Same credential model as delegate/revoke, but the phrase must not say
+    // "delegation parent": nothing is delegated here, the token is only asked
+    // what it is.
+    need: 'the token that is to be described (this verb carries no scope gate — a token of any scope may ask what it is)',
+    scope: null,
+    method: 'GET',
+    positionals: [],
+    options: [],
+    path: () => '/api/system/api-tokens/me',
+    reads: ['id', 'name', 'scopes'],
+    // The one question a document cannot answer (#2984). A refusal here means
+    // the token itself is unknown, revoked or expired — there is nothing
+    // narrower to be under-scoped for.
+    text: body => [
+      line('id      ', String(body?.id ?? '?')),
+      line('name    ', String(body?.name ?? '?')),
+      line('scopes  ', (Array.isArray(body?.scopes) ? body.scopes : []).join(',') || '?'),
+      line('parent  ', String(body?.parentId ?? '-')),
+      line('expires ', String(body?.expiresAt ?? 'never')),
+    ].join(String.fromCharCode(10)),
+  },
+
   'request-install': {
     summary: 'ASK the operator to install a template — files a request, installs nothing',
     usage: 'request-install <template> --as <service> --reason <text> [--subdomain <label>] [--mount <host:container[:ro]>] [--port <host:container[/udp]>] [--var <NAME=value>] [--source <name>] [--node <name>]',
@@ -539,6 +566,7 @@ export function parseArgs(argv) {
  * models differ in wording, so every message below reads the same either way.
  */
 function credentialNeed(verb) {
+  if (verb.need) return verb.need;
   return verb.auth === 'parent-token'
     ? 'the token that is to be the delegation parent (this verb carries no scope gate — the token it presents IS the credential)'
     : `a token with the \`${verb.scope}\` scope`;

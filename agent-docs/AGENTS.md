@@ -85,6 +85,7 @@ Add `--json` to any verb for the raw payload instead of the rendered text.
 | `servicebay assist <id>` | Print one assist in full, frontmatter and body. |
 | `servicebay delegate <name> [--scopes read,lifecycle] [--expires <iso8601>]` | Mint a child of YOUR token, never wider than it. Prints the child secret once. |
 | `servicebay revoke <id>` | Revoke one child token you delegated. |
+| `servicebay whoami` | Say what the token you hold is — name, scopes, parent, expiry. The answer to "what may I do", from the server, not from this file. |
 | `servicebay request-install <template> --as <service> --reason <text> [--subdomain <label>] [--mount <host:container[:ro]>] [--port <host:container[/udp]>] [--var <NAME=value>] [--source <name>] [--node <name>]` | ASK the operator to install a template. It files a request and installs nothing; ServiceBay runs the approved plan. Prints a request id. |
 | `servicebay request-status <id>` | Read what really happened to your request: waiting, approved, installed, rejected or failed. Exit 4 means still waiting. |
 
@@ -95,9 +96,10 @@ contract; a verb or an option that is not in it does not exist.
 
 Your token carries the scopes it was minted with, and **you cannot tell which
 by looking at this file** — boxes differ, and an operator may widen one at any
-time. Do not assume. Find out: a refused call answers with the scope it needed,
-which is the cheapest probe there is, and `list_requests` or any read verb
-proves the token is live at all.
+time. Do not assume. Ask: `servicebay whoami` answers with the token's name,
+scopes, parent and expiry — from the server, the only thing that knows. A
+refused call also names the scope it needed, so a refusal is never a dead end,
+only an answer.
 
 What the scopes mean:
 
@@ -138,12 +140,13 @@ What the scopes mean:
   Authentication required`, which is useless to act on. A `403` carries the
   server's own `'<scope>' scope required`, relayed verbatim.
 
-So: use the CLI to *observe* (and, where a sub-agent or a project of its own
-needs its own narrower credential, to delegate one). If a task needs a change on
-the box, ask for it the way the CLI provides — `request-install` for a template
-you have finished, and otherwise say what you need and why. Do not go looking for
-a side door such as `podman` on a host socket or a second credential lying
-around the container.
+So: observe with the CLI, and act through the same gate — the CLI where it has
+a verb, the MCP endpoint (next section) where it does not — within the scopes
+`whoami` shows you. A change you are not scoped for is asked for, not worked
+around: `request-install` for a template you have finished, and otherwise say
+what you need and why. What stays out of bounds is any credential used for a
+purpose it was not handed to you for: `podman` on a host socket, a token found
+lying in a file, a git credential pointed at anything but git.
 
 ## When the CLI has no verb for it
 
