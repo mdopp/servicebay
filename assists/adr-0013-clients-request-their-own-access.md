@@ -191,11 +191,10 @@ Oberfläche, jeder Typ und jede Erklärung leitet sich daraus ab, und ein Test h
 statt sich auf den Typprüfer zu verlassen — denn der hat hier bewiesen, dass er es nicht
 merkt.
 
-## Decided points — the six the draft left open
+### Festgelegte Parameter
 
-Der Entwurf ließ sechs Punkte offen. Der Betreiber hat sie delegiert; sie sind hiermit
-**gemäß der Empfehlung des Entwurfs entschieden** und stehen bei erster Umsetzungserfahrung
-zur Revision.
+Vom Betreiber delegiert und gemäß Empfehlung des Entwurfs entschieden (2026-08-25); bei
+erster Umsetzungserfahrung zur Revision.
 
 1. **Erhält ein selbstbeantragter Zugang `propose` automatisch dazu?** → **Ja, aber sichtbar
    auf der Karte** („zusätzlich: darf Wissensvorschläge einreichen"). Der Scope ist
@@ -216,38 +215,13 @@ zur Revision.
 5. **Was passiert mit den Alt-Anträgen?** → **Verfallen lassen** (siehe Migrationsschritt 3).
    Ein Teil davon sind Testanträge, die im Text ausdrücklich um Ablehnung bitten; es gibt
    nichts zu sichten.
-6. **Zählt die Nummer 0012?** → **Nein — dieser ADR ist 0013.** Die Kollision aus dem
-   Entwurf ist inzwischen aufgelöst: #2617 hat den zweiten „0009" zu
-   [ADR 0012](adr-0012-repair-is-reconciliation-not-reinstallation.md) umnummeriert, und
-   #2607 hat die ADRs in den Assist-Katalog verschoben. 0012 ist vergeben.
 
-## Migration path — and what of it is built here
+### Umsetzung
 
-Jeder Schritt ist für sich auslieferbar und für sich nützlich.
-
-| # | Schritt | Zustand |
-|---|---|---|
-| 1 | **`propose` erreichbar machen** — die doppelte Scope-Liste im Frontend entfernen, Liste und Typ aus der Backend-Quelle beziehen, das Badge ergänzen, **plus ein Test, der die UI-Liste gegen `apiScope.ts` prüft** | **gebaut** (#2609) |
-| 2 | **Die Antragsschlange sichtbar machen** — eine Section unter *Settings → Access*, die die vorhandenen Routen bedient: auflisten, bestätigen (mit Verengung), ablehnen. Behebt Bruch 1 | Folgearbeit |
-| 3 | **Antragsverfall** — Status `expired` + ein Sweep am bestehenden Boot-Timer. Behebt Bruch 2; der Altbestand verfällt beim ersten Lauf | Folgearbeit |
-| 4 | **Klassifikation** neben `apiScope.ts` + Prüfung bei der Antragstellung. Ab hier ist der Weg sicherheitsseitig vollständig | Folgearbeit |
-| 5 | **Alle Anträge über die Genehmigungskarte** — den bestehenden One-Shot-Zweig auf „immer" ausweiten. Ab hier landen Anträge auf dem Telefon | Folgearbeit |
-| 6 | **`client_label`, Cooldown, Erneuerung** — die Bedien-Politur. Erst danach kann das Von-Hand-Minten als Ausnahme markiert werden | Folgearbeit |
-| 7 | *(optional, separat)* **Review-Fläche für Lernvorschläge** — der Nebenbefund oben. Ohne ihn erzeugt Schritt 1 Vorschläge, die nur über MCP sichtbar sind. Gehört fachlich zu #2607 | offen |
-
-**Nur zu verdrahten** (Code existiert, wird nicht aufgerufen oder nicht angeboten): Antrag
-stellen, abholen, auflisten, bestätigen/ablehnen per API, Verengungs-Garantie,
-Einmal-Übergabe des Geheimnisses, One-Shot-Bindung, Genehmigungskarten samt
-Selbstgenehmigungs-Sperre und Telefon-Push, `propose` als Scope im Backend, Token-Sweep mit
-Karenz, Sammel-Widerruf.
-
-**Wirklich neu:** die Section für die Antragsschlange; der Antragsverfall; die
-Scope-Klassifikation samt Verweigerung stehender erhöhter Zugänge; die gestufte Bestätigung
-auf der Genehmigungskarte; `client_label`; der Cooldown; der Erneuerungsantrag mit Ersetzen
-des Vorgängers; die Klartext-Übersetzung von Scopes in Wirkung.
-
-Grob: **der sicherheitskritische Kern ist gebaut, die Entscheidungsfläche für den Menschen
-ist es nicht.**
+Schrittweise ausgeliefert. Stand und Reihenfolge stehen in den verknüpften Issues
+(#2609, #2139, #2245, #2326, #2325, #2606/#2608), nicht hier — eine Bautabelle in
+einem ADR veraltet mit dem ersten Merge. Was diesen ADR trägt, ist die Entscheidung
+oben; was davon gebaut ist, sagt der Tracker.
 
 ## Consequences
 

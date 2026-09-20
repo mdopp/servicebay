@@ -7,6 +7,10 @@ tags: [adr, decision, install, deploy, templates, assets, deletion, destructive,
 
 # ADR 0015 — A template deletes only what it demonstrably delivered; the record is a delivered-files manifest
 
+- **Status:** Accepted (2026-08-31, #2703)
+- **Date:** 2026-08-31
+- **Deciders:** @mdopp
+
 ## Status
 
 Accepted (2026-08-31, #2703).
