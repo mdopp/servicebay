@@ -29,29 +29,23 @@ guessing, and rather than re-deriving what is already decided.
 
 ## Where you start
 
-- **Your working tree** is the project checkout you were pointed at. That is the
-  only place you write. Commit there; the project's own `CLAUDE.md` /
-  `AGENTS.md` (if it has one) governs its conventions and wins over this file
-  for anything project-specific.
-- **The agent kit** is mounted **read-only** at the path in
-  `$SERVICEBAY_AGENT_KIT` (a template picks the mount point; there is no fixed
-  one to hard-code). It holds:
-  - `assists/` — the assist catalog, the box's binding know-how.
-  - `agent-cli/servicebay.mjs` — the CLI below.
-  - `agent-docs/AGENTS.md` — this file.
-  Do not edit anything under it. It is a git checkout that ServiceBay refreshes
-  from `mdopp/servicebay` at boot and hourly, so your edit is gone within the
-  hour and reached nobody. To change an assist, the CLI or this file, open a PR
-  against that repo.
-- **The box's API** answers at `$SERVICEBAY_API_URL`, defaulting to
+- **Your working tree** is the project checkout you were pointed at — the only
+  place you write. Its own `CLAUDE.md` / `AGENTS.md` wins over this file for
+  anything project-specific.
+- **The agent kit** is mounted read-only at `$SERVICEBAY_AGENT_KIT` (the
+  template picks the path; there is no fixed one to hard-code): `assists/` (the
+  catalog, the box's binding know-how), `agent-cli/servicebay.mjs` (the CLI
+  below), `agent-docs/AGENTS.md` (this file). ServiceBay refreshes it from
+  `mdopp/servicebay` at boot and hourly, so an edit there is gone within the
+  hour and reached nobody — change any of it by PR against that repo.
+- **The box's API** answers at `$SERVICEBAY_API_URL`, default
   `http://host.containers.internal:5888` — the pod-crossing name from ADR 0007.
   Never a LAN IP: a reinstall or a new address breaks a hard-coded one.
-- **Your token** is read from the file named by `$SERVICEBAY_MCP_TOKEN_FILE`
-  — a file only your user may read, 0600 or tighter — or, failing that, from
-  `$SERVICEBAY_MCP_TOKEN`. Never put it in a
-  command line — `/proc/<pid>/cmdline` is world-readable and this container has
-  real user logins on it. The CLI has no `--token` flag on purpose, and passing
-  one is a usage error.
+- **Your token** comes from the file named by `$SERVICEBAY_MCP_TOKEN_FILE` (a
+  file only your user may read, 0600 or tighter), else `$SERVICEBAY_MCP_TOKEN`.
+  Never on a command line — `/proc/<pid>/cmdline` is world-readable and this
+  container has real user logins. The CLI has no `--token` flag on purpose;
+  passing one is a usage error.
 
 ## The CLI: reading the box from a shell
 
@@ -94,57 +88,41 @@ contract; a verb or an option that is not in it does not exist.
 
 ## What your token can and cannot do
 
-Your token carries the scopes it was minted with, and **you cannot tell which
-by looking at this file** — boxes differ, and an operator may widen one at any
-time. Do not assume. Ask: `servicebay whoami` answers with the token's name,
-scopes, parent and expiry — from the server, the only thing that knows. A
-refused call also names the scope it needed, so a refusal is never a dead end,
-only an answer.
+Your token carries the scopes it was minted with, and this file cannot tell you
+which — boxes differ, and an operator may widen a token at any time. Do not
+assume; ask: `servicebay whoami` answers with name, scopes, parent and expiry,
+from the server, the only thing that knows. A refused call names **the scope it
+needed** (ServiceBay's flat `401 Authentication required` is translated; a `403`
+relays the server's own `'<scope>' scope required` verbatim), so a refusal is
+an answer, never a dead end.
 
-What the scopes mean:
-
-- **It can** list and inspect services, read unit files and pod manifests, pull
-  logs, read health checks, run the diagnosis (a POST that only inspects), and
-  read the assist catalog.
-- **It can also hand a narrower copy of itself onward.** `delegate` mints a
-  CHILD of the token you are holding and `revoke` takes one back. This is not a
-  hole in any scope: a child is never wider than its parent, so a token can
-  only ever mint children within its own scopes, and a parent may
-  revoke only what it minted. These two are gated on lineage rather than on a
-  scope — the token you present IS the credential being acted on — so a refusal
-  there means your token was rejected as a *parent*, not under-scoped. The
-  secret comes back once, on stdout; it is never accepted as an argument.
-- **`lifecycle` and `mutate`, where a token carries them**, are what install,
-  deploy, force-update, start/stop/restart, service YAML and proxy routes sit
-  behind. A token with only `read` is refused there, and the refusal says so.
-  A token that has them is not asking permission any more: it is the operator's
-  reach, lent out. Treat it that way — what you created is yours to move; what
-  was already on the box is not, and goes through `request-install` even when
-  the scope would let you skip that.
+- **`read`** — list and inspect services, unit files, pod manifests, logs,
+  health checks, the diagnosis (a POST that only inspects), the assist catalog.
+- **`propose`** — `request-install` files an installation *request* (template,
+  service name, subdomain, mounts, ports) as an approval in front of the
+  operator (ADR 0013, `servicebay assist adr-0013-clients-request-their-own-access`).
+  It installs nothing — not while it waits, not after approval; ServiceBay runs
+  the plan the operator approved, and a later edit of the request cannot change
+  it. Read the outcome with `request-status <id>`: **exit 4 means the operator
+  has not decided and nothing is installed.** Never report a filed request as a
+  finished install.
+- **`lifecycle`, `mutate`** — install, deploy, force-update, start/stop/restart,
+  service YAML, proxy routes. A token that has them is not asking permission
+  any more: it is the operator's reach, lent out. What you created is yours to
+  move; what was already on the box is not, and goes through `request-install`
+  even when the scope would let you skip that.
+- **Lineage, not scope** — `delegate` mints a CHILD of the token you hold
+  (never wider than its parent) and `revoke` takes one back; the secret comes
+  back once, on stdout, never as an argument. A refusal there means your token
+  was rejected as a *parent*, not under-scoped.
 - **Never conclude from silence.** "I have no write access" is a claim about
-  your token, and the only honest source for it is a refusal you actually
-  received. Saying it without one has stalled work here for hours while the
-  scope was there the whole time.
-- **It can ask** (ADR 0013, `servicebay assist adr-0013-clients-request-their-own-access`). `request-install` files an installation *request*: it names
-  the template, the service name you want, the subdomain, the mounts and the
-  ports, and it puts that in front of the operator as an approval. It installs
-  nothing — not while it waits, and not after the operator approves. ServiceBay
-  runs the plan the operator approved; a later edit of the request cannot change
-  what runs. If your token is refused, this verb needs the `propose` scope, which
-  is the ladder's separate "ask a human" capability, not a write scope. Read the
-  outcome with `request-status <id>`, and read it honestly: **exit 4 means the
-  operator has not decided and nothing is installed.** Do not report a filed
-  request as a finished install.
-- When a call is refused, the CLI names **the scope it needed**, not the bare
-  status — ServiceBay's REST gate answers a refused Bearer with a flat `401
-  Authentication required`, which is useless to act on. A `403` carries the
-  server's own `'<scope>' scope required`, relayed verbatim.
+  your token, and its only honest source is a refusal you actually received.
+  Saying it without one has stalled work here for hours while the scope was
+  there the whole time.
 
-So: observe with the CLI, and act through the same gate — the CLI where it has
-a verb, the MCP endpoint (next section) where it does not — within the scopes
-`whoami` shows you. A change you are not scoped for is asked for, not worked
-around: `request-install` for a template you have finished, and otherwise say
-what you need and why. What stays out of bounds is any credential used for a
+Observe with the CLI and act through the same gate — the CLI where it has a
+verb, the MCP endpoint (next section) where it does not — within the scopes
+`whoami` shows you. What stays out of bounds is any credential used for a
 purpose it was not handed to you for: `podman` on a host socket, a token found
 lying in a file, a git credential pointed at anything but git.
 
