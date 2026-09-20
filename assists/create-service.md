@@ -70,13 +70,13 @@ proxy host at `<sub>.<PUBLIC_DOMAIN>`:
 1. **Bootstrap the repo against the standards catalog** — *before* the stack, the
    CI, the storage engine or the auth design. Call `get_service_standards`
    (flavor `servicebay`), read every id in its `assistsToRead` via
-   `get_assist(id)`, then paste the block it hands back as
+   `servicebay assist <id>`, then paste the block it hands back as
    **`repoBootstrap.claudeMdBlock`** into the new repo's `CLAUDE.md` so the next
    agent in that repo finds the catalog too. That field *is* the finished text —
    this recipe deliberately does not carry a second copy of it. (From a
    `mdopp/servicebay` checkout the same block is written by
    `npm run standards:bootstrap -- --write <repo>`, verified with `-- --check <repo>`.)
-   **If the ServiceBay MCP is not connected in this session, stop and say so** —
+   **If `servicebay assists` refuses to answer in this session, stop and say so** —
    an unconnected session cannot see the ADRs, so its stack/CI/auth choices are
    guesses (#2513: exactly how a sibling repo shipped without SSO awareness,
    without a health endpoint, and with a CI that didn't gate on tests).

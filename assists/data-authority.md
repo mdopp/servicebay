@@ -15,7 +15,7 @@ with the equivalent for *data*.
 
 1. **Consume the canonical index, don't re-scan.** If another on-box service is
    already authoritative for a dataset — Jellyfin for the media library, Immich
-   for photos, Radicale for cal/contacts — read *its* index/API rather than
+   for photos, Home Assistant for device state — read *its* index/API rather than
    re-deriving from the raw files. Re-scanning duplicates work, re-implements the
    messy parsing (tags, compilations, dedupe) the owner already solved, and
    diverges from the owner's view over time.

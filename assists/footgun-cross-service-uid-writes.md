@@ -8,10 +8,10 @@ tags: [uid, subuid, userns, podman, permissions, cross-service, mount, ownership
 # Writing another service's files: the uid-ownership reality
 
 ## Symptom
-Your service writes a file into another service's store (say Radicale's
+Your service writes a file into another service's store (say Immich's
 collection dir), the write appears to succeed or fails with `EACCES`, and then:
 the owning app can't manage the file (it's foreign-owned), or a mode-644 lock
-file (`.Radicale.lock`) blocks your writer, or the owning app's rights model
+file (a lock or index file the app keeps) blocks your writer, or the owning app's rights model
 (`rights = owner_only`) rejects the record even though the file is on disk.
 
 ## Cause — container uid → host uid mapping under rootless Podman
@@ -20,16 +20,16 @@ to a **different host uid** per service:
 
 - an app container running as **root** commonly maps to **host uid 1000** (the
   box's `servicebay` user);
-- another service in its own userns maps to a **subuid range** — e.g. Radicale's
+- another service in its own userns maps to a **subuid range** — e.g. Immich's
   container-root landed at host uid **527286**.
 
-So a file your service writes into Radicale's tree is owned by *your* host uid,
-which is **foreign** to Radicale. Radicale (running as its subuid) then can't
+So a file your service writes into Immich's tree is owned by *your* host uid,
+which is **foreign** to Immich. Immich (running as its subuid) then can't
 rewrite/lock/delete it, and combined with an owner-only rights model the record
 silently never appears. The tree looks written; the owning app disagrees.
 
 ## The pattern — prefer the API, and if you must touch the filesystem, state the contract
-1. **Prefer the owning service's protocol/API.** Radicale speaks CalDAV/CardDAV;
+1. **Prefer the owning service's protocol/API.** Immich has a REST API and a CLI;
    write through DAV (as an authorized principal) instead of poking its files.
    Jellyfin/Immich/etc. have their own ingest APIs. The API respects the app's
    own ownership + rights model, so nothing is foreign-owned.

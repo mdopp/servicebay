@@ -64,7 +64,7 @@ Podman's journald log driver keeps the line terminator **inside** `MESSAGE`:
 ```
 
 `journalctl -o cat` appends its own newline on top, so every entry is followed
-by a blank line — for `radicale`, `mosquitto` and every other service on the
+by a blank line — for `immich`, `mosquitto` and every other service on the
 box, not just ServiceBay. Counting those blanks once produced "96,409 of
 202,055 lines (47.7%) are blank", read as a ServiceBay bug, fixed, released,
 and then found to be nobody's bug at all.
