@@ -124,6 +124,43 @@ you have finished, and otherwise say what you need and why. Do not go looking fo
 a side door such as `podman` on a host socket or a second credential lying
 around the container.
 
+## When the CLI has no verb for it
+
+The eleven verbs above are the read path and the asking path. They are not the
+whole control plane — the assists name tools like `manage_service`,
+`install_template` and `deploy_service`, and none of those is a CLI verb. They
+are MCP tools, and **the MCP endpoint takes the same token you already hold**:
+
+```sh
+node -e '
+  const fs = require("node:fs");
+  const token = fs.readFileSync(process.env.SERVICEBAY_MCP_TOKEN_FILE || TOKEN_FILE, "utf8").trim();
+  const base  = process.env.SERVICEBAY_API_URL || "http://host.containers.internal:5888";
+  fetch(base + "/mcp", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json",
+               Accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+  }).then(r => r.text()).then(console.log);
+'
+```
+
+`SERVICEBAY_MCP_TOKEN_FILE` is set for the CLI's own process and may be **unset
+in your shell** — that is not a fault, it is the wrapper keeping the token out of
+your environment. Where the file lives is a property of your container, so its
+own `AGENTS.md` names it; substitute that path for `TOKEN_FILE`.
+
+Swap `tools/list` for `{"method":"tools/call","params":{"name":"<tool>","arguments":{…}}}`
+to call one. The reply is a `text/event-stream` frame with the JSON inside it.
+
+What you may call is still the scopes your token carries — an under-scoped call
+is refused with the scope it needed, exactly as through the CLI. This is not a
+side door; it is the same gate, reached directly because the CLI does not front
+every tool.
+
+Read `servicebay assist <id>` first when a recipe names a tool. The recipe says
+which tool and why; this says how to reach it.
+
 ## How you test
 
 Your change is proved by the project's own gate, not by the box:
@@ -131,7 +168,7 @@ Your change is proved by the project's own gate, not by the box:
 - Run the project's declared gate before you commit — typically lint, typecheck
   and its test suite. If you cannot find it, read the repo's `CLAUDE.md` and its
   CI workflow; do not invent a substitute.
-- `get_assist("testing-and-ci-gate")` is the standard those gates are written
+- `servicebay assist testing-and-ci-gate` is the standard those gates are written
   to, including what counts as a real test versus a test that cannot fail.
 - The CLI's read verbs are how you check the box **after** something is
   deployed — `servicebay health`, `servicebay diagnose`, `servicebay logs <svc>`
@@ -145,14 +182,14 @@ Your change is proved by the project's own gate, not by the box:
 1. **Commit and push in the project repo.** Conventional Commits.
 2. **Releases go through release-please only** — never hand-bump a version, edit
    a changelog, or tag by hand (ADR 0003:
-   `get_assist("adr-0003-releases-via-release-please-only")`).
+   `servicebay assist adr-0003-releases-via-release-please-only`).
 3. **The new image reaches the running service through ServiceBay**, as an
    install/update the operator or a write-scoped session performs. The recipe is
-   `get_assist("recipe-roll-new-image-to-running-service")`.
+   `servicebay assist recipe-roll-new-image-to-running-service`.
 4. **Assists, the CLI and this file are the exception**: they are delivered from
    the repo checkout, not from an image, so a `docs(assists):` commit on `main`
    reaches a running box within the hour with **no release**
-   (`get_assist("adr-0014-assist-catalog-delivered-at-runtime")`).
+   (`servicebay assist adr-0014-assist-catalog-delivered-at-runtime`).
 
 ## The assist catalog — read it, do not re-derive it
 
