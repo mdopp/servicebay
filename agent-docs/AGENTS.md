@@ -85,23 +85,36 @@ contract; a verb or an option that is not in it does not exist.
 
 ## What your token can and cannot do
 
-The token is **read-scoped**, and that is the whole story:
+Your token carries the scopes it was minted with, and **you cannot tell which
+by looking at this file** — boxes differ, and an operator may widen one at any
+time. Do not assume. Find out: a refused call answers with the scope it needed,
+which is the cheapest probe there is, and `list_requests` or any read verb
+proves the token is live at all.
+
+What the scopes mean:
 
 - **It can** list and inspect services, read unit files and pod manifests, pull
   logs, read health checks, run the diagnosis (a POST that only inspects), and
   read the assist catalog.
 - **It can also hand a narrower copy of itself onward.** `delegate` mints a
   CHILD of the token you are holding and `revoke` takes one back. This is not a
-  hole in the read scope: a child is never wider than its parent, so a
-  read-scoped token can only ever mint read-scoped children, and a parent may
+  hole in any scope: a child is never wider than its parent, so a token can
+  only ever mint children within its own scopes, and a parent may
   revoke only what it minted. These two are gated on lineage rather than on a
   scope — the token you present IS the credential being acted on — so a refusal
   there means your token was rejected as a *parent*, not under-scoped. The
   secret comes back once, on stdout; it is never accepted as an argument.
-- **It cannot** install, deploy, update, start, stop or restart anything, edit a
-  service's YAML, write files on the host, create or remove proxy routes, or
-  read stored secrets. Those need a write-scoped session, which is the
-  operator's, not yours.
+- **`lifecycle` and `mutate`, where a token carries them**, are what install,
+  deploy, force-update, start/stop/restart, service YAML and proxy routes sit
+  behind. A token with only `read` is refused there, and the refusal says so.
+  A token that has them is not asking permission any more: it is the operator's
+  reach, lent out. Treat it that way — what you created is yours to move; what
+  was already on the box is not, and goes through `request-install` even when
+  the scope would let you skip that.
+- **Never conclude from silence.** "I have no write access" is a claim about
+  your token, and the only honest source for it is a refusal you actually
+  received. Saying it without one has stalled work here for hours while the
+  scope was there the whole time.
 - **It can ask.** `request-install` files an installation *request*: it names
   the template, the service name you want, the subdomain, the mounts and the
   ports, and it puts that in front of the operator as an approval. It installs
