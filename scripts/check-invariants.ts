@@ -730,8 +730,13 @@ async function checkCiRunsEveryCheckScript() {
 // ---------------------------------------------------------------------------
 const CREATE_SERVICE_ASSIST = path.join(REPO_ROOT, 'assists', 'create-service.md');
 const BOOTSTRAP_BEGIN_RE = /<!-- BEGIN SERVICEBAY STANDARDS POINTER/;
-/** The recipe must route the reader to the served field, and to the tool that serves it. */
-const BOOTSTRAP_POINTER_REFS = ['get_service_standards', 'get_assist', 'repoBootstrap.claudeMdBlock'];
+/**
+ * The recipe must route the reader to the served field, and to the door that
+ * serves it. Since #2988 the catalog recipes name the agent CLI (`servicebay
+ * assist <id>`), not the MCP twin `get_assist` — pi is shell-native and reads
+ * the CLI, so the pointer the recipe owes is the one that reader can follow.
+ */
+const BOOTSTRAP_POINTER_REFS = ['get_service_standards', 'servicebay assist', 'repoBootstrap.claudeMdBlock'];
 
 /**
  * Pure audit of the `create-service` recipe text. Returns one detail string per

@@ -8,11 +8,12 @@ tags: [standards, new-service, adr, invariants, template-contract, index, servic
 # ServiceBay service-standards index
 
 A curated *pointer* index (not the full text) for building a new ServiceBay
-service. Fetch the referenced assists in full via `get_assist(id)`, and read the
+service. Fetch the referenced assists in full via `servicebay assist <id>` (or the
+`get_assist` MCP tool), and read the
 referenced `docs/` files directly. The `get_service_standards` MCP tool
 (`flavor: 'servicebay'`) assembles a live version of this index — the ADRs are
 read from the assist catalog at runtime, so their titles never drift and every
-pointer is one you can actually follow with `get_assist(id)`.
+pointer is one you can actually follow with `servicebay assist <id>`.
 
 ## repoBootstrap — step 1, before any stack/CI/storage/auth choice
 
@@ -21,14 +22,14 @@ service repo is consulting this catalog, and the new repo carries the pointer
 back to it **from its first commit** (#2513):
 
 - Call `get_service_standards` (flavor `servicebay`) and read every id it lists
-  under `assistsToRead` via `get_assist(id)` **before** picking a stack, a CI
+  under `assistsToRead` via `servicebay assist <id>` **before** picking a stack, a CI
   shape, a storage engine, or an auth design.
 - Write the generated pointer block into the new repo's `CLAUDE.md`:
   `npm run standards:bootstrap -- --write <repo>`; verify with `-- --check <repo>`
   (exit 1 when the pointer is missing or has drifted). The block itself is the
   `repoBootstrap.claudeMdBlock` field of the tool's output and is reproduced
   verbatim in the `create-service` recipe.
-- **If the ServiceBay MCP is not connected, stop and say so.** A session that
+- **If `servicebay assists` refuses to answer, stop and say so.** A session that
   cannot reach the catalog cannot make these decisions; connecting it is the
   first task, not an optional extra.
 
@@ -61,7 +62,7 @@ opening a PR:
 - `npm run lint` — zero errors; don't raise the warning count.
 - Diff-coverage floor: **70 %** on changed lines.
 
-## assistsToRead — fetch these in full via `get_assist(id)`
+## assistsToRead — fetch these in full via `servicebay assist <id>`
 
 - `new-service-architecture` — recommended defaults (language, structure,
   libraries, tests, storage, secrets) plus the ADRs a new service must respect.
@@ -75,7 +76,7 @@ opening a PR:
   `footgun-subdomain-needs-public-domain`.
 
 Read `whenToUse` on each (via `list_assists`) to self-select, then
-`get_assist(id)` for the full body.
+`servicebay assist <id>` for the full body.
 
 ## templateContract — where the template rules live
 

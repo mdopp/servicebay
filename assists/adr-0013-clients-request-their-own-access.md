@@ -1,250 +1,255 @@
 ---
-title: "ADR 0013 — Clients beantragen ihre Zugänge selbst; der Mensch bestätigt nur noch"
+title: "ADR 0013 — Clients request their own access; the human only confirms"
 whenToUse: "You are about to hand an agent, script or companion app a hand-minted API token, add a scope to apiScope.ts, wire the token-request/approval queue, or you found a built feature nobody ever used because no token carries the scope it needs — this decides how a machine credential comes into existence (client requests, human confirms), which scopes may be self-requested at all, and why the scope vocabulary must exist exactly once."
 kind: adr
 tags: [adr, decision, tokens, scopes, approvals, mcp, least-privilege, propose]
 ---
-# ADR 0013 — Clients beantragen ihre Zugänge selbst; der Mensch bestätigt nur noch
+# ADR 0013 — Clients request their own access; the human only confirms
 
-- **Status:** Accepted (2026-08-25). Die sechs offenen Punkte aus dem Entwurf hat der
-  Betreiber delegiert; sie sind unten als *per Empfehlung entschieden* festgehalten.
+- **Status:** Accepted (2026-08-25). The six points the draft left open were
+  delegated by the operator; they are recorded below as *decided per
+  recommendation*.
 - **Date:** 2026-08-25
 - **Deciders:** @mdopp
-- **Betrifft / löst ab:** #2609 (Rückkanal unbenutzbar), #2139 (Token-Antragsschlange),
-  #2245 (One-Shot-Elevation), #2326 (Lern-Rückkanal), #2325 (Scope-Sichtbarkeit),
-  #2606/#2608 (Token-Bestand, Sammel-Widerruf)
-- **Related ADRs:** [0009](adr-0009-service-tokens-and-trust.md) (Token- und
-  Vertrauensmodell — dieser ADR ergänzt es um den *Ausstellungsweg*, ändert nichts
-  an Scope-Leiter, Speicherformat oder Auflösungsreihenfolge),
-  [0011](adr-0011-app-integrations-aggregate-server-side.md) (Companion-App, Pairing)
+- **Concerns / supersedes:** #2609 (return channel unusable), #2139 (token request
+  queue), #2245 (one-shot elevation), #2326 (learning return channel), #2325
+  (scope visibility), #2606/#2608 (token inventory, bulk revoke)
+- **Related ADRs:** [0009](adr-0009-service-tokens-and-trust.md) (the token and
+  trust model — this ADR adds the *issuance path* to it and changes nothing about
+  the scope ladder, the storage format or the resolution order),
+  [0011](adr-0011-app-integrations-aggregate-server-side.md) (companion app, pairing)
 
-> Format: Status / Kontext / Entscheidung / Konsequenzen, wie die übrigen ADRs.
-> Festgehalten wird, was **nicht aus dem Code ableitbar** ist — inklusive des
-> Vorfalls, der die Entscheidung erzwungen hat.
+> Format: Status / Context / Decision / Consequences, like the other ADRs. What
+> is recorded is what is **not derivable from the code** — including the incident
+> that forced the decision.
 
 ## Context
 
-### Der Auslöser
+### The trigger
 
-Der Lern-Rückkanal aus #2326 ist über vier Slices gebaut — Einreichen, Prüfliste,
-Abruf, Drift-Erkennung — und wurde **nie benutzt**: `list_learning_proposals` lieferte
-eine leere Liste, dauerhaft. Der Grund war kein Desinteresse. `propose_learning`
-verlangt den Scope `propose`, und von 34 Token auf der Referenzbox trug ihn **keines**.
-Weil Werkzeuge seit #2325 nach Scope sichtbar sind, erschien das Werkzeug in *keiner*
-Sitzung. Die Schreibseite existierte, war aber unerreichbar.
+The learning return channel from #2326 was built over four slices — submit,
+checklist, retrieval, drift detection — and was **never used**:
+`list_learning_proposals` returned an empty list, permanently. The reason was not
+disinterest. `propose_learning` requires the `propose` scope, and of 34 tokens on
+the reference box **none** carried it. Because tools have been visible by scope
+since #2325, the tool appeared in *no* session. The write side existed and was
+unreachable.
 
-Das ist die Fehlerform, um die es hier geht: **etwas ist wirkungslos und sieht aus wie
-nichts.** Es gab keine Fehlermeldung, keinen roten Build, keine leere Stelle in der
-Oberfläche — nur eine Funktion, die niemand je aufrief.
+That is the failure shape this ADR is about: **something is ineffective and looks
+like nothing.** There was no error message, no red build, no empty spot in the
+UI — only a function nobody ever called.
 
-### Was schon existiert — und wo es abbricht
+### What already exists — and where it breaks off
 
-Der Antrags-/Bestätigungsweg aus #2139/#2245 ist **weitgehend gebaut**: Antrag stellen
-(`request_token`, verlangt bewusst nur `read` — sonst bräuchte man die Rechte, die man
-beantragt), Antragsspeicher unter `DATA_DIR` mit `0600`, eine Verengungs-Garantie (eine
-Bestätigung kann nur *einschränken*, nie erweitern), TTL-Deckel, Einmal-Übergabe des
-Geheimnisses beim Abholen (`poll_token_request`), Ansehen über `list_requests`, eine
-sitzungsgeschützte Admin-Route zum Bestätigen/Ablehnen, der Genehmigungskern samt
-Selbstgenehmigungs-Sperre, die Genehmigungskarten-UI, der SSE-Push auf das Telefon, die
-One-Shot-Elevation für `destroy`/`exec` und der delegierte Kind-Mint mit ⊆-Scopes.
+The request/approval path from #2139/#2245 is **largely built**: filing a request
+(`request_token`, deliberately requiring only `read` — otherwise you would need the
+rights you are requesting), a request store under `DATA_DIR` at `0600`, a
+narrowing guarantee (an approval can only *restrict*, never widen), a TTL cap,
+one-time hand-over of the secret on collection (`poll_token_request`), inspection
+via `list_requests`, a session-protected admin route for approve/reject, the
+approval core with its self-approval lock, the approval-card UI, the SSE push to
+the phone, one-shot elevation for `destroy`/`exec`, and the delegated child mint
+with ⊆ scopes.
 
-Er endet an drei Stellen — alle drei derselbe Bautyp: *Mechanik fertig,
-Entscheidungsfläche fehlt.*
+It breaks off at three places — all three the same build type: *mechanism
+finished, decision surface missing.*
 
-**Bruch 1 — der einfache Antrag hat keine Bedienoberfläche.** Die Admin-Route existiert,
-aber kein Frontend-Modul ruft sie auf. Der Antragstext verspricht dem Agenten wörtlich
-eine Bestätigung unter *Settings → MCP*; dort stehen aber nur die Genehmigungen für
-destruktive Werkzeugaufrufe. Belegt auf der laufenden Box: neun Anträge, **acht seit
-Wochen `pending`**, der älteste rund sieben Wochen alt. Genau einer wurde je bestätigt —
-der One-Shot-Antrag, und der lief über die **Genehmigungskarte**, nicht über die Route.
-*Der Weg, der eine Oberfläche hat, wird benutzt; der ohne bleibt liegen.*
+**Gap 1 — the plain request has no user interface.** The admin route exists, but
+no frontend module calls it. The request text literally promises the agent an
+approval under *Settings → MCP*; what is there are only the approvals for
+destructive tool calls. Documented on the running box: nine requests, **eight
+`pending` for weeks**, the oldest about seven weeks old. Exactly one was ever
+approved — the one-shot request, and that one went through the **approval card**,
+not the route. *The path that has a surface gets used; the one without stays put.*
 
-**Bruch 2 — Anträge verfallen nie.** Ein `pending`-Eintrag bleibt ewig stehen und zählt
-gegen die Obergrenze offener Anträge. Am selben bestätigten Antrag: Bestätigung drei Tage
-nach Antragstellung, bei 300 s TTL — der Token war fünf Minuten nach der Bestätigung tot,
-und wäre ohnehin nicht mehr ausgehändigt worden. **Eine Bestätigung, die zu spät kommt,
-ist wertlos** — ein Argument für Verfall *und* für Push statt Pull.
+**Gap 2 — requests never expire.** A `pending` entry stays forever and counts
+against the cap on open requests. On that same approved request: approval three
+days after filing, at a 300 s TTL — the token was dead five minutes after the
+approval, and would not have been handed out anyway. **An approval that comes
+too late is worthless** — an argument for expiry *and* for push over pull.
 
-**Bruch 3 — `propose` wurde nirgends angeboten.** Das Backend akzeptierte den Scope
-(`apiTokenRoutes.ts` nutzt das vollständige `ALL_SCOPES` aus `apiScope.ts`). Die
-Anlege-Oberfläche führte aber eine **eigene, verkürzte Kopie** der Liste, und der
-Frontend-Typ war eine zweite Kopie ohne `propose`. Die Checkbox war nie da. Und weil das
-Badge-Mapping ein `Record` über den *lokalen* Typ war, hätte ein Erweitern des
-Backend-Typs den Build **nicht einmal rot gemacht**.
+**Gap 3 — `propose` was offered nowhere.** The backend accepted the scope
+(`apiTokenRoutes.ts` uses the complete `ALL_SCOPES` from `apiScope.ts`). But the
+creation UI kept its **own, shortened copy** of the list, and the frontend type was
+a second copy without `propose`. The checkbox was never there. And because the
+badge mapping was a `Record` over the *local* type, widening the backend type
+would **not even have turned the build red**.
 
-Weder Ausstellung noch Prüfung waren kaputt. Es fehlten (a) das *Angebot* des Scopes
-beim Anlegen und (b) die *Bestätigungsfläche* für den Antragsweg.
+Neither issuance nor verification was broken. What was missing was (a) the
+*offer* of the scope at creation and (b) the *approval surface* for the request
+path.
 
-**Nebenbefund, gleiche Klasse:** auch der Review-Weg für Lernvorschläge hat Routen, aber
-kein Frontend ruft sie auf. Ein `propose`-Token allein erzeugt also Vorschläge, die im
-Dashboard niemand sieht.
+**Side finding, same class:** the review path for learning proposals also has
+routes, but no frontend calls them. A `propose` token alone therefore produces
+proposals nobody sees in the dashboard.
 
-### Warum jetzt, und in diese Richtung
+### Why now, and in this direction
 
-Die Kleinlösungen (Scope beim Anlegen anbieten / automatisch vergeben / sein Fehlen
-anzeigen) hätten genau diesen einen Scope repariert. Die gesetzte Zielrichtung ist
-stattdessen strukturell: *Clients sollen sich für die Entwicklung eigene Schlüssel holen
-können, die nur noch bestätigt werden müssen.*
+The small fixes (offer the scope at creation / grant it automatically / show its
+absence) would have repaired exactly this one scope. The direction set instead is
+structural: *clients should be able to obtain their own keys for development,
+which then only need confirming.*
 
-Dazu kommt das Prinzip aus dem Token-Hygiene-Umbau (#2606/#2608): **Reibung skaliert mit
-der Tragweite, nicht mit der Wiederholung** — eine getippte Bestätigung, deren Wortlaut
-mit dem Blast-Radius der Auswahl wächst. Ein Selbstbedienungsweg, der daneben eine
-zweite, reibungsarme Genehmigungsfläche aufmacht, würde diese Arbeit entwerten.
+Added to that is the principle from the token-hygiene rework (#2606/#2608):
+**friction scales with blast radius, not with repetition** — a typed confirmation
+whose wording grows with the blast radius of the selection. A self-service path
+that opened a second, low-friction approval surface beside it would devalue that
+work.
 
 ## Decision
 
-**Der Ausstellungsweg für Maschinen-Zugänge kehrt sich um: nicht der Mensch stellt aus und
-reicht weiter, sondern der Client beantragt und der Mensch bestätigt.** Der bestehende
-Antragsweg wird dafür nicht ersetzt, sondern **fertigverdrahtet, sichtbar gemacht,
-klassifiziert und mit Verfall versehen.**
+**The issuance path for machine access is inverted: the human no longer issues
+and hands over; the client requests and the human confirms.** The existing request
+path is not replaced for this but **wired up completely, made visible, classified,
+and given expiry.**
 
-### Der Ablauf
+### The flow
 
-0. **Minimaler Ausgangszugang.** Der Client weist sich mit einem der drei bereits
-   existierenden Ausweise aus: dem LAN-only-Bootstrap-Token (ADR 0009 §4, der Regelfall
-   für eine frische Entwicklungssitzung), einem vorhandenen schmalen Token, oder einer
-   Sitzung, wenn ein Mensch am Gerät sitzt.
-1. **Der Client beantragt** — `request_token(scopes, reason, ttl_seconds)`, ergänzt um ein
-   Pflichtfeld **`client_label`**: eine selbstgewählte, stabile Kennung der Anwendung. Sie
-   wird zum Namen des späteren Tokens und zur Zeile, die der Mensch liest. Die Herkunft
-   (`requestedBy`) bleibt daneben **serverseitig gesetzt und nicht client-beschreibbar**.
-2. **Der Antrag parkt als Genehmigungskarte.** Die zentrale Änderung: **jeder** Antrag geht
-   künftig den Weg, den heute nur der One-Shot-Antrag geht. Damit erbt der einfache Antrag
-   ohne neue Infrastruktur die Karte im Dashboard, die Selbstgenehmigungs-Sperre, die
-   Persistenz über Neustarts und den **SSE-Push auf das Telefon**. Die Admin-Route bleibt
-   als Zweitweg für Scope-Verengung, ist aber nicht mehr der einzige Weg.
-3. **Was der Mensch sieht.** Die Karte nennt in dieser Reihenfolge: *wer* (`client_label`
-   + Herkunft), *was* in Klartext statt Scope-Namen („darf Dienste anlegen und ändern —
-   nicht löschen, keine Shell"), *warum*, *wie lange* (als Datum, nicht als Sekunden), und
-   die **Risikoklasse**. Dazu zwei Angaben, die es heute nicht gibt und die die
-   Entscheidung erst ermöglichen: *hat dieser `client_label` schon Token?* und *wurde ein
-   gleichartiger Antrag kürzlich abgelehnt?*
-4. **Der Schlüssel erreicht den Client** — unverändert über den Abruf, **genau einmal**,
-   danach aus dem Speicher gelöscht. Das Geheimnis geht nie über die Genehmigungsfläche,
-   nie über E-Mail, nie über eine Liste. **Der Mensch kopiert nichts.** Genau darin liegt
-   der Gewinn gegenüber heute.
-5. **Ablehnung ist ein Endzustand** mit **Cooldown**: ein Antrag *derselben Form* (gleicher
-   `client_label`, gleiche Scope-Menge) ist erst nach Ablauf wieder zulässig. Ohne das ist
-   „Ablehnen" nur eine Verzögerung, und ein hartnäckiger Client trainiert den Menschen aufs
-   Wegklicken.
-6. **Zeitablauf** — ein `pending`-Antrag **verfällt**. Ein verfallener Antrag ist nicht mehr
-   bestätigbar; der Client muss neu fragen, mit frischer Begründung. Das behebt Bruch 2 und
-   verhindert, dass eine Bestätigung einen längst toten Grant mintet.
+0. **Minimal initial access.** The client identifies itself with one of the three
+   credentials that already exist: the LAN-only bootstrap token (ADR 0009 §4, the
+   normal case for a fresh development session), an existing narrow token, or a
+   session when a human is at the device.
+1. **The client requests** — `request_token(scopes, reason, ttl_seconds)`, extended
+   by a mandatory field **`client_label`**: a self-chosen, stable identifier of the
+   application. It becomes the name of the eventual token and the line the human
+   reads. The origin (`requestedBy`) stays beside it, **set server-side and not
+   client-writable**.
+2. **The request parks as an approval card.** The central change: **every** request
+   now takes the path that today only the one-shot request takes. The plain request
+   thereby inherits, with no new infrastructure, the card in the dashboard, the
+   self-approval lock, persistence across restarts, and the **SSE push to the
+   phone**. The admin route remains as a secondary path for scope narrowing but is
+   no longer the only path.
+3. **What the human sees.** The card names, in this order: *who* (`client_label` +
+   origin), *what* in plain words instead of scope names ("may create and change
+   services — not delete, no shell"), *why*, *for how long* (as a date, not as
+   seconds), and the **risk class**. Plus two facts that do not exist today and that
+   make the decision possible in the first place: *does this `client_label` already
+   hold tokens?* and *was a request of the same kind recently rejected?*
+4. **The key reaches the client** — unchanged, via collection, **exactly once**, then
+   deleted from the store. The secret never travels over the approval surface, never
+   by e-mail, never in a list. **The human copies nothing.** That is precisely the
+   gain over today.
+5. **Rejection is a terminal state** with a **cooldown**: a request *of the same
+   shape* (same `client_label`, same scope set) is admissible again only after it
+   elapses. Without that, "reject" is only a delay, and a persistent client trains
+   the human to click it away.
+6. **Expiry** — a `pending` request **expires**. An expired request can no longer be
+   approved; the client has to ask again, with a fresh reason. That fixes Gap 2 and
+   prevents an approval from minting a grant that died long ago.
 
-### Welche Rechte auf diesem Weg beantragt werden dürfen
+### Which rights may be requested on this path
 
-Die Selbstbedienung senkt die Hürde zum Rechteerwerb — das ist ihr Zweck **und** ihr
-Risiko. Der Scope-Raum wird deshalb in drei Klassen geteilt, und die Klasse bestimmt die
-Reibung. Die Klassifikation gehört **neben `apiScope.ts`**, damit sie nicht zwischen UI und
-Backend auseinanderläuft — das ist die Lehre aus Bruch 3.
+Self-service lowers the bar to acquiring rights — that is its purpose **and** its
+risk. The scope space is therefore split into three classes, and the class
+determines the friction. The classification belongs **next to `apiScope.ts`**, so
+that it cannot drift apart between UI and backend — that is the lesson of Gap 3.
 
-| Klasse | Scopes | Selbstbedienung | Bestätigung | TTL-Deckel |
+| Class | Scopes | Self-service | Confirmation | TTL cap |
 |---|---|---|---|---|
-| **A — harmlos** | `read`, `propose` | ja | ein Klick | 30 d |
-| **B — aufbauend** | `lifecycle`, `mutate` | ja | ein Klick, aber die Karte listet die Wirkung in Klartext und der Knopf ist erst nach dem Aufklappen aktiv | 7 d |
-| **C — erhöht** | `destroy`, `exec`, `reboot` | **nie als stehender Zugang** | nur als **One-Shot**, an eine Operation gebunden, single-use, plus getippte Bestätigung | 10 min |
+| **A — harmless** | `read`, `propose` | yes | one click | 30 d |
+| **B — constructive** | `lifecycle`, `mutate` | yes | one click, but the card lists the effect in plain words and the button is active only after expanding it | 7 d |
+| **C — elevated** | `destroy`, `exec`, `reboot` | **never as standing access** | only as a **one-shot**, bound to one operation, single-use, plus a typed confirmation | 10 min |
 
-Damit ist die Frage „was hindert einen kompromittierten Client daran, sich `destroy` zu
-erbitten?" strukturell beantwortet: **er kann es nicht.** Ein Klasse-C-Antrag auf einen
-stehenden Zugang wird schon bei der Antragstellung abgelehnt, nicht erst beim Bestätigen.
-Er kann höchstens eine *einzelne, benannte* destruktive Operation erbitten, die an genau
-dieses Werkzeug und diesen Dienst gebunden ist, nach der ersten Nutzung verbrennt und nach
-zehn Minuten ohnehin tot ist.
+With that, the question "what stops a compromised client from asking itself for
+`destroy`?" is answered structurally: **it cannot.** A class-C request for standing
+access is rejected at filing time, not at approval time. At most it can request a
+*single, named* destructive operation, bound to exactly this tool and this service,
+burned after first use, and dead after ten minutes regardless.
 
-Die getippte Bestätigung für Klasse C folgt dem Muster aus #2608 wörtlich: die Phrase
-**nennt die Operation**, nicht nur eine Zahl. Wer das tippt, hat gelesen, was er tippt. Das
-ist der Unterschied zwischen einer Entscheidung und einem Reflex — und der Grund, warum die
-Reibung für Klasse A *nicht* gilt: **eine Bestätigung, die immer weh tut, tut bald gar
-nichts mehr.**
+The typed confirmation for class C follows the pattern from #2608 to the letter: the
+phrase **names the operation**, not just a number. Whoever types it has read what
+they are typing. That is the difference between a decision and a reflex — and the
+reason the friction does *not* apply to class A: **a confirmation that always hurts
+soon does nothing at all.**
 
-Der **übereifrige** (nicht kompromittierte) Client ist der häufigere Fall. Gegen ihn wirken
-Cooldown, Antragsobergrenze, Antragsverfall und die Angabe auf der Karte, ob dieser
-`client_label` schon Token besitzt.
+The **over-eager** (not compromised) client is the more common case. Against it work
+the cooldown, the cap on open requests, request expiry, and the note on the card
+whether this `client_label` already holds tokens.
 
-**Ausdrücklich nicht angefasst:** die Sitzungs-Cookie-Brücke mit vollen Scopes (ADR 0009)
-und der delegierte Kind-Mint, der ohne Menschen auskommt. Der delegierte Mint kann nie
-erweitern (`scopesAreSubset`), ist also kein Umweg um die Klassifikation — aber auch kein
-Ersatz für sie, denn er setzt einen bereits breiten Eltern-Token voraus.
+**Explicitly untouched:** the session-cookie bridge with full scopes (ADR 0009) and
+the delegated child mint, which needs no human. The delegated mint can never widen
+(`scopesAreSubset`), so it is no detour around the classification — but no
+substitute for it either, because it presupposes an already broad parent token.
 
-### Ablauf und Erneuerung
+### Expiry and renewal
 
-Der Bestand auf der Box ist entstanden, weil jeder Zugang von Hand gemintet und nie wieder
-angefasst wurde. Ein Weg, der das Ausstellen *leichter* macht, verschlimmert das, wenn er
-nichts dagegen setzt:
+The inventory on the box came about because every access was minted by hand and
+never touched again. A path that makes issuing *easier* makes that worse unless it
+sets something against it:
 
-1. **Kein selbstbeantragter Token ohne Ablauf.** „Never expires" ist auf diesem Pfad nicht
-   anwählbar; der TTL-Deckel je Klasse ist die Obergrenze, nicht der Vorschlag.
-2. **Erneuern statt neu ausstellen.** Läuft ein Token in die Karenzzeit, stellt der Client
-   einen **Erneuerungsantrag**: gleicher `client_label`, gleiche oder engere Scopes, Verweis
-   auf den auslaufenden Token. Die Karte zeigt das als Erneuerung — eine unveränderte
-   Erneuerung der Klassen A/B ist eine leichtere Entscheidung als ein Erstantrag. Der alte
-   Token wird bei Bestätigung widerrufen, statt danebenzuliegen.
-3. **Der Bestand bleibt lesbar.** Die Hygiene-Übersicht aus #2606 bekommt den
-   selbstbeantragten Zugang als eigene Herkunft (`createdBy` ist bereits gesetzt), damit
-   sichtbar ist, wie viel des Bestands über diesen Weg entstand.
+1. **No self-requested token without expiry.** "Never expires" is not selectable on
+   this path; the TTL cap per class is the ceiling, not the suggestion.
+2. **Renew instead of re-issue.** When a token enters its grace period, the client
+   files a **renewal request**: same `client_label`, same or narrower scopes, a
+   reference to the expiring token. The card shows it as a renewal — an unchanged
+   renewal in classes A/B is a lighter decision than a first request. The old token
+   is revoked on approval instead of lying beside the new one.
+3. **The inventory stays readable.** The hygiene overview from #2606 gets
+   self-requested access as an origin of its own (`createdBy` is already set), so
+   it is visible how much of the inventory came about this way.
 
-### Die Scope-Aufzählung existiert genau einmal
+### The scope enumeration exists exactly once
 
-Bruch 3 war keine Nachlässigkeit im Einzelfall, sondern **eine Kopie, die niemand rot machen
-konnte**. Ab hier gilt: `apiScope.ts` ist die einzige Quelle der Scope-Liste; jede
-Oberfläche, jeder Typ und jede Erklärung leitet sich daraus ab, und ein Test hält das fest,
-statt sich auf den Typprüfer zu verlassen — denn der hat hier bewiesen, dass er es nicht
-merkt.
+Gap 3 was not carelessness in one place but **a copy nobody could turn red**. From
+here on: `apiScope.ts` is the sole source of the scope list; every surface, every
+type and every explanation derives from it, and a test pins that rather than
+trusting the type checker — which proved here that it does not notice.
 
-### Festgelegte Parameter
+### Settled parameters
 
-Vom Betreiber delegiert und gemäß Empfehlung des Entwurfs entschieden (2026-08-25); bei
-erster Umsetzungserfahrung zur Revision.
+Delegated by the operator and decided per the draft's recommendation (2026-08-25);
+open to revision at the first implementation experience.
 
-1. **Erhält ein selbstbeantragter Zugang `propose` automatisch dazu?** → **Ja, aber sichtbar
-   auf der Karte** („zusätzlich: darf Wissensvorschläge einreichen"). Der Scope ist
-   niedrigprivilegiert und unabhängig; ihn mitzugeben belebt den Rückkanal in einem Zug. Die
-   Sichtbarkeit ist die Bedingung — *stille* Rechteerweiterung ist genau das, was dieser ADR
-   sonst vermeidet. Das ist eine ausdrückliche Empfehlung des Entwurfs.
-2. **Wie lange darf ein Antrag offen stehen?** → **48 h für Klassen A/B, 30 min für Klasse C.**
-   Kürzer heißt mehr Neuanträge, länger heißt wieder Karteileichen.
-3. **Darf ein `read`-Token einen `mutate`-Zugang beantragen, oder nur ein Mensch am Gerät?**
-   → **Es bleibt beim heutigen Verhalten** (der Antrag verlangt nur `read`). Eine
-   kompromittierte Sitzung ist damit einen Klick von mehr Rechten entfernt — aber von einem
-   *menschlichen* Klick, auf einer Karte, die Wirkung und Herkunft in Klartext nennt. Der
-   Entwurf gab hier keine ausdrückliche Empfehlung; die Abwägung im Text trägt den Status quo.
-4. **Ist `client_label` frei wählbar oder aus einer Liste?** → **Frei wählbar.** Es ist
-   fälschbar, aber es steht nicht allein: die nicht-fälschbare Herkunft (`requestedBy`) wird
-   serverseitig danebengesetzt. Eine gepflegte Liste wäre ehrlicher und wieder Handarbeit
-   beim Aufsetzen — der Preis lohnt nicht, solange die harte Angabe daneben steht.
-5. **Was passiert mit den Alt-Anträgen?** → **Verfallen lassen** (siehe Migrationsschritt 3).
-   Ein Teil davon sind Testanträge, die im Text ausdrücklich um Ablehnung bitten; es gibt
-   nichts zu sichten.
+1. **Does self-requested access get `propose` automatically?** → **Yes, but visibly
+   on the card** ("additionally: may submit knowledge proposals"). The scope is
+   low-privilege and independent; granting it along revives the return channel in
+   one move. Visibility is the condition — *silent* widening of rights is exactly
+   what this ADR otherwise avoids. This is an explicit recommendation of the draft.
+2. **How long may a request stay open?** → **48 h for classes A/B, 30 min for
+   class C.** Shorter means more re-requests, longer means dead entries again.
+3. **May a `read` token request `mutate` access, or only a human at the device?**
+   → **Today's behaviour stays** (the request requires only `read`). A compromised
+   session is thereby one click away from more rights — but from a *human* click,
+   on a card that names effect and origin in plain words. The draft gave no explicit
+   recommendation here; the weighing in the text carries the status quo.
+4. **Is `client_label` free-form or from a list?** → **Free-form.** It is forgeable,
+   but it does not stand alone: the non-forgeable origin (`requestedBy`) is placed
+   beside it server-side. A curated list would be more honest and again manual work
+   at setup — the price is not worth it as long as the hard fact stands beside it.
+5. **What happens to the legacy requests?** → **Let them expire.** Some of them are
+   test requests that explicitly ask to be rejected; there is nothing to review.
 
-### Umsetzung
+### Implementation
 
-Schrittweise ausgeliefert. Stand und Reihenfolge stehen in den verknüpften Issues
-(#2609, #2139, #2245, #2326, #2325, #2606/#2608), nicht hier — eine Bautabelle in
-einem ADR veraltet mit dem ersten Merge. Was diesen ADR trägt, ist die Entscheidung
-oben; was davon gebaut ist, sagt der Tracker.
+Delivered incrementally. State and order live in the linked issues (#2609, #2139,
+#2245, #2326, #2325, #2606/#2608), not here — a build table in an ADR is stale by
+the first merge. What carries this ADR is the decision above; what of it is built,
+the tracker says.
 
 ## Consequences
 
-- **Der Mensch kopiert keine Geheimnisse mehr.** Der Token entsteht nach der Bestätigung und
-  wird vom Client abgeholt — der Betreiber sieht ihn nie. Das ist sicherer als der heutige
-  Weg (Secret einmal im Browser, dann von Hand weitergereicht) und nebenbei bequemer.
-- **Bestätigen wird zur häufigen Handlung.** Damit wird die Qualität der Karte zum
-  Sicherheitsmerkmal: eine Karte, die nur eine Scope-Liste zeigt, erzeugt Reflexe. Deshalb
-  die Klartext-Wirkung und die Klassenstufung — und deshalb dürfen Klasse-A-Anträge *nicht*
-  wehtun.
-- **Erhöhte Rechte sind auf diesem Weg nur noch als Einzelfall zu haben.** Wer einen
-  stehenden `destroy`-Zugang braucht, mintet ihn weiterhin von Hand unter *Settings →
-  Access* — bewusst unbequemer als der Selbstbedienungsweg. Die Bequemlichkeit liegt damit
-  auf der sicheren Seite.
-- **ADR 0009 bleibt gültig und wird ergänzt.** Scope-Leiter, Speicherformat, LAN-Schranke
-  und Auflösungsreihenfolge sind unberührt; dieser ADR beschreibt nur, *wie ein Token
-  entsteht*. `propose` ist der erste Scope, der nicht auf der Blast-Radius-Leiter liegt —
-  die Klassifikation oben hält das aus, eine reine Leiter täte es nicht.
-- **Doppelte Scope-Listen sind ab sofort ein Fehler.** Kandidat für
-  [`ARCHITECTURE_INVARIANTS.md`](../docs/ARCHITECTURE_INVARIANTS.md): die Scope-Aufzählung
-  existiert genau einmal.
-- **Die allgemeine Lehre, über Token hinaus:** eine gebaute Fähigkeit, deren *Zugang* nirgends
-  angeboten wird, ist nicht „ungenutzt" — sie ist unerreichbar, und sie sieht von außen
-  genauso aus wie eine, die niemand braucht. Wer einen Rückkanal, ein Werkzeug oder eine
-  Rolle einführt, liefert im selben Zug den Weg dorthin **und** eine Stelle, an der sein
-  Fehlen ablesbar ist.
+- **The human copies no more secrets.** The token comes into existence after the
+  approval and is collected by the client — the operator never sees it. That is
+  safer than today's path (secret once in the browser, then handed on by hand) and
+  more convenient besides.
+- **Confirming becomes a frequent action.** With that, the quality of the card
+  becomes a security property: a card that shows only a scope list produces
+  reflexes. Hence the plain-words effect and the class tiers — and hence class-A
+  requests must *not* hurt.
+- **Elevated rights are available on this path only case by case.** Whoever needs
+  standing `destroy` access still mints it by hand under *Settings → Access* —
+  deliberately less convenient than the self-service path. Convenience thereby
+  sits on the safe side.
+- **ADR 0009 stays valid and is extended.** Scope ladder, storage format, LAN gate
+  and resolution order are untouched; this ADR describes only *how a token comes
+  into existence*. `propose` is the first scope not on the blast-radius ladder —
+  the classification above accommodates that, a pure ladder would not.
+- **Duplicate scope lists are a defect from now on.** Candidate for
+  [`ARCHITECTURE_INVARIANTS.md`](../docs/ARCHITECTURE_INVARIANTS.md): the scope
+  enumeration exists exactly once.
+- **The general lesson, beyond tokens:** a built capability whose *access* is
+  offered nowhere is not "unused" — it is unreachable, and from the outside it
+  looks exactly like one nobody needs. Whoever introduces a return channel, a tool
+  or a role delivers in the same move the way to it **and** a place where its
+  absence can be read off.

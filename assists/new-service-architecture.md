@@ -1,7 +1,7 @@
 ---
 title: Architecture recommendations for a new ServiceBay service (ADR-style)
 whenToUse: You're about to design a new service and want recommended defaults — language, structure, libraries, tests, data storage, secrets — plus the platform decisions a new service must respect.
-kind: adr
+kind: guide
 tags: [architecture, adr, new-service, language, libraries, tests, storage, secrets, recommendations]
 ---
 

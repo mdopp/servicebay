@@ -16,7 +16,7 @@ inside a root-owned dir.
 
 ## Cause
 The `local-templates` tree is owned by the box's `servicebay` user (**host uid
-1000**) — the same ownership as any existing Local template (e.g. `buerolicht`).
+1000**) — the same ownership as any existing Local template (e.g. `usage-metrics`).
 A write path that runs as root (or a mismatched uid) can create the parent dir as
 root before it fails, so ownership diverges and the retry is wedged.
 
