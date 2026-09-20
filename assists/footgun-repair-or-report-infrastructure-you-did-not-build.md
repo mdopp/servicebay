@@ -1,6 +1,7 @@
 ---
 title: Repair or report — infrastructure you did not build
 whenToUse: You have found something broken on infrastructure you do not own — a service that will not start, wrong permissions, a failing database, a container someone else is working in. Read this before you fix it.
+skill: always
 kind: footgun
 tags: [operations, ownership, self-healing, diagnosis, incident, box, credentials]
 ---

@@ -1,6 +1,7 @@
 ---
 title: ServiceBay service-standards index — what a new service must respect
 whenToUse: You're starting a new ServiceBay service and need the curated pointer index — which platform ADRs to respect, the enforced invariants + gate commands, which assists to read in full, and where the template contract lives.
+skill: always
 kind: checklist
 tags: [standards, new-service, adr, invariants, template-contract, index, servicebay]
 ---

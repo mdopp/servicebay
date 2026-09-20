@@ -1,6 +1,7 @@
 ---
 title: When to ask the operator, and how to put a decision to them
 whenToUse: You need something from the operator — a decision, a review, a device test, a piece of manual work, or an approval — or you are wondering whether you need one. Also before you end a turn, and before you write a closing summary.
+skill: always
 kind: guide
 tags: [decisions, questions, steering, reporting, autonomy, communication, handover, manual-work, reviews]
 ---
