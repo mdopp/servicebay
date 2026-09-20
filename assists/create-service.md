@@ -13,7 +13,36 @@ that image and wires ports, mounts, subdomain, SSO, and health.
 
 ## Repo & image
 - App code + `Dockerfile` + CI live in their **own repo**; CI builds a container
-  image (e.g. `ghcr.io/<you>/<name>:latest`). The box must be able to **pull** it
+  image (e.g. `ghcr.io/<you>/<name>:latest`). Start from the workflow below —
+  it is the one `asteroids-bubblegum` ships with and it is known to work. The
+  `permissions` block is not decoration: without `contents: read` the checkout
+  of a **private** repo fails with `Repository not found`, which reads like a
+  wrong URL and is not.
+
+  ```yaml
+  name: CI
+  on:
+    push: { branches: [main] }
+    pull_request: { branches: [main] }
+  permissions:
+    contents: read
+    packages: write
+  jobs:
+    build:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: docker/setup-buildx-action@v3
+        - uses: docker/login-action@v3
+          with: { registry: ghcr.io, username: ${{ github.actor }}, password: ${{ secrets.GITHUB_TOKEN }} }
+        - uses: docker/build-push-action@v5
+          with:
+            push: ${{ github.event_name == 'push' }}
+            tags: ghcr.io/<you>/<name>:latest
+            cache-from: type=gha
+            cache-to: type=gha,mode=max
+  ```
+  The box must be able to **pull** it
   (public package, or registry credentials configured on the box).
 - The **template** references that image; it does not build code.
 

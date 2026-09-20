@@ -1,6 +1,7 @@
 ---
 title: Testing, coverage & CI gate for a new service
 whenToUse: You are building or changing a ServiceBay service and need the required standard for tests, coverage, and the CI gate so the box only ever runs code that passed tests. Read this before writing the CI or shipping a service.
+skill: always
 kind: checklist
 tags: [tests, coverage, ci, gate, quality, new-service, standard]
 ---

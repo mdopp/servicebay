@@ -64,7 +64,10 @@ token found"*, exit 3. If you must use the bare form, set
 `SERVICEBAY_MCP_TOKEN_FILE` yourself first; your container's own `AGENTS.md`
 names the file.
 
-Add `--json` to any verb for the raw payload instead of the rendered text.
+Add `--json` to any verb for the raw payload instead of the rendered text —
+and pipe it through a filter (`jq`, `node -e`, `grep`) rather than reading it
+whole: `services --json` and `service <name> --json` are tens of kilobytes, and
+one unfiltered dump costs more of your context than the rest of this file.
 
 <!-- verb-table: pinned against agent-cli/servicebay.mjs by tests/scripts/agents_md_template.test.ts — a new verb fails the suite until it is listed here -->
 
@@ -177,6 +180,14 @@ Your change is proved by the project's own gate, not by the box:
 - Run the project's declared gate before you commit — typically lint, typecheck
   and its test suite. If you cannot find it, read the repo's `CLAUDE.md` and its
   CI workflow; do not invent a substitute.
+- **When a step fails twice, read its log before you touch anything else** —
+  `gh run view <id> --log-failed` for CI, `servicebay logs <svc>` on the box. A
+  step rewritten without reading why it failed is a guess with a commit
+  attached; four guesses in a row is how a session spent an afternoon on a
+  missing `contents: read`. If the log does not tell you, stop and report
+  (`servicebay assist guide-when-to-ask-and-how-to-put-a-decision-to-the-operator`)
+  — do not route around the failure through another service, another tool, or
+  the host filesystem.
 - `servicebay assist testing-and-ci-gate` is the standard those gates are written
   to, including what counts as a real test versus a test that cannot fail.
 - The CLI's read verbs are how you check the box **after** something is
@@ -191,11 +202,20 @@ Your change is proved by the project's own gate, not by the box:
 
 ## How a change rolls out
 
-1. **Commit and push in the project repo.** Conventional Commits.
-2. **Releases go through release-please only** — never hand-bump a version, edit
+1. **Commit and push in the project repo.** Conventional Commits. The git
+   credential is already configured (`credential.helper store`); a plain
+   `git push` works. Never put a token into a remote URL or a command line —
+   `git remote -v` and `/proc/<pid>/cmdline` would print it for everyone.
+2. **Replacing what a domain serves means updating the service that owns it.**
+   If `<name>.<domain>` already points at a service, that service gets the new
+   image (`servicebay assist recipe-roll-new-image-to-running-service`) — you do
+   not deploy a second service beside it, and you do not rewrite the old one's
+   definition to free its port. A service that is to go away is removed by the
+   operator (destroy tier): say so in your report and carry on with what you own.
+3. **Releases go through release-please only** — never hand-bump a version, edit
    a changelog, or tag by hand (ADR 0003:
    `servicebay assist adr-0003-releases-via-release-please-only`).
-3. **The new image reaches the running service through ServiceBay** — and not
+4. **The new image reaches the running service through ServiceBay** — and not
    through the tool whose name suggests it. For a service that is **already
    installed**, `install_template` re-pulls the image and leaves the running
    container on the old layers, and a plain restart reuses the cached image.
@@ -207,7 +227,7 @@ Your change is proved by the project's own gate, not by the box:
    `changed: false` with `stale: true` means retry with `fresh: true`. The full
    recipe, including rollback anchors, is
    `servicebay assist recipe-roll-new-image-to-running-service`.
-4. **Assists, the CLI and this file are the exception**: they are delivered from
+5. **Assists, the CLI and this file are the exception**: they are delivered from
    the repo checkout, not from an image, so a `docs(assists):` commit on `main`
    reaches a running box within the hour with **no release**
    (`servicebay assist adr-0014-assist-catalog-delivered-at-runtime`).
