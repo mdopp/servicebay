@@ -183,8 +183,17 @@ Your change is proved by the project's own gate, not by the box:
 2. **Releases go through release-please only** — never hand-bump a version, edit
    a changelog, or tag by hand (ADR 0003:
    `servicebay assist adr-0003-releases-via-release-please-only`).
-3. **The new image reaches the running service through ServiceBay**, as an
-   install/update the operator or a write-scoped session performs. The recipe is
+3. **The new image reaches the running service through ServiceBay** — and not
+   through the tool whose name suggests it. For a service that is **already
+   installed**, `install_template` re-pulls the image and leaves the running
+   container on the old layers, and a plain restart reuses the cached image.
+   Installing again therefore reports success and changes nothing, however many
+   times you do it. The one call that moves it is
+   `manage_service(action="force-update", name="<service>")`, which re-pulls and
+   force-recreates the containers, and answers with `before` / `registry` /
+   `after` digests so you can see whether anything moved instead of assuming it.
+   `changed: false` with `stale: true` means retry with `fresh: true`. The full
+   recipe, including rollback anchors, is
    `servicebay assist recipe-roll-new-image-to-running-service`.
 4. **Assists, the CLI and this file are the exception**: they are delivered from
    the repo checkout, not from an image, so a `docs(assists):` commit on `main`
