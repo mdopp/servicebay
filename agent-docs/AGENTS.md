@@ -9,8 +9,11 @@
       ln -sfn "$SERVICEBAY_AGENT_KIT/agent-docs/AGENTS.md" ~/.pi/agent/AGENTS.md
       ln -sfn "$SERVICEBAY_AGENT_KIT/agent-docs/AGENTS.md" ~/.claude/CLAUDE.md
 
-  A copy would age against the box the moment the kit refreshes, and a second
-  hand-written file beside it is the exact failure ADR 0014 exists to prevent.
+  A container that instead GENERATES its copy at pod start (pi-web does) buys
+  itself a prefix of its own and pays for it: the copy is a snapshot, so a fix
+  landing here reaches that container only at its next restart, while the kit
+  itself refreshes hourly. Either mechanism is fine; a hand-written second file
+  beside it is not — that is the exact failure ADR 0014 exists to prevent.
   This file is maintained in `mdopp/servicebay` at `agent-docs/AGENTS.md` and
   nowhere else. It is the template for containers ON the box — it is NOT the
   instructions for the ServiceBay repo itself (that is the repo's `CLAUDE.md`).
@@ -44,25 +47,30 @@ guessing, and rather than re-deriving what is already decided.
   `http://host.containers.internal:5888` — the pod-crossing name from ADR 0007.
   Never a LAN IP: a reinstall or a new address breaks a hard-coded one.
 - **Your token** is read from the file named by `$SERVICEBAY_MCP_TOKEN_FILE`
-  (mode 0400) or, failing that, from `$SERVICEBAY_MCP_TOKEN`. Never put it in a
+  — a file only your user may read, 0600 or tighter — or, failing that, from
+  `$SERVICEBAY_MCP_TOKEN`. Never put it in a
   command line — `/proc/<pid>/cmdline` is world-readable and this container has
   real user logins on it. The CLI has no `--token` flag on purpose, and passing
   one is a usage error.
 
 ## The CLI: reading the box from a shell
 
-Your tools are read/write/edit/bash, so the shell is the access path. Run the
-delivered file with plain `node` — it imports `node:` builtins only, so there is
-no build step and no `npm install`:
+The shell is the access path. **Use `servicebay` from `$PATH`.** Most containers
+put a wrapper there, and the wrapper is not cosmetic: it finds the token file
+this container was given and points the CLI at it. The bare file is dependency-
+free JS, so it also runs under plain `node` —
 
 ```sh
-node "$SERVICEBAY_AGENT_KIT/agent-cli/servicebay.mjs" services
+servicebay services                                        # the way that works
+node "$SERVICEBAY_AGENT_KIT/agent-cli/servicebay.mjs" services   # no token, exits 3
 ```
 
+— but invoked that way it has no credential and answers *"no ServiceBay API
+token found"*, exit 3. If you must use the bare form, set
+`SERVICEBAY_MCP_TOKEN_FILE` yourself first; your container's own `AGENTS.md`
+names the file.
+
 Add `--json` to any verb for the raw payload instead of the rendered text.
-In the table below, `servicebay` stands for that invocation — some containers
-put a wrapper of the same name on `$PATH`; if `servicebay --help` is not found,
-spell the `node …` form out.
 
 <!-- verb-table: pinned against agent-cli/servicebay.mjs by tests/scripts/agents_md_template.test.ts — a new verb fails the suite until it is listed here -->
 
@@ -187,8 +195,11 @@ Your change is proved by the project's own gate, not by the box:
   deployed — `servicebay health`, `servicebay diagnose`, `servicebay logs <svc>`
   — not how you prove a change is correct. A green box says nothing about code
   that has not shipped yet.
-- Nothing you can run in this container proves a change reached the box. That
-  proof comes from reading the running box, and only after a rollout.
+- Nothing you can run in this container proves a change reached the box
+  *before* a rollout. Afterwards you can and should check it from here: the
+  read verbs answer about the running box, not about your checkout, and a
+  container carrying a browser can load the deployed page and read its console.
+  What you may not do is call a green gate a rollout.
 
 ## How a change rolls out
 
@@ -210,8 +221,8 @@ The catalog is delivered beside this file, at
 `$SERVICEBAY_AGENT_KIT/assists/*.md`. Two ways in, same source:
 
 ```sh
-node "$SERVICEBAY_AGENT_KIT/agent-cli/servicebay.mjs" assists --query backup
-node "$SERVICEBAY_AGENT_KIT/agent-cli/servicebay.mjs" assist adr-0007-container-network-isolation-and-carveouts
+servicebay assists --query backup
+servicebay assist adr-0007-container-network-isolation-and-carveouts
 ls "$SERVICEBAY_AGENT_KIT/assists"
 ```
 

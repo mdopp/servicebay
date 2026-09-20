@@ -427,8 +427,8 @@ export function parseVariables(value) {
 /**
  * Read the ServiceBay token the way the container is given it.
  *
- * `SERVICEBAY_MCP_TOKEN_FILE` is the path the entrypoint writes — a mode-0400
- * file, because the environment is readable by other accounts on the container.
+ * `SERVICEBAY_MCP_TOKEN_FILE` is the path the entrypoint writes — a file only
+ * the CLI's user may read, because the environment is readable by other accounts on the container.
  * The plain env var is the fallback for running by hand. One-for-one with
  * `readServicebayToken` in `templates/claude-dev/config-ui/server.mjs`, which
  * deliberately keeps its own copy: that server must read the token
@@ -470,7 +470,7 @@ export function usage() {
     '  5 the operator rejected the request, or the approved install failed',
     '',
     'Environment:',
-    '  SERVICEBAY_MCP_TOKEN_FILE  path to the token file (preferred; mode 0400)',
+    '  SERVICEBAY_MCP_TOKEN_FILE  path to the token file (preferred; readable only by this user)',
     '  SERVICEBAY_MCP_TOKEN       the token itself (fallback, for running by hand)',
     `  SERVICEBAY_API_URL         base URL (default ${DEFAULT_BASE_URL})`,
     '',
@@ -604,7 +604,7 @@ export async function run(argv, deps = {}) {
       code: 'NO_TOKEN',
       requiredScope: verb.scope,
       message: `no ServiceBay API token found, so \`${verbName}\` cannot authenticate. This verb needs ${credentialNeed(verb)}. `
-        + 'Point SERVICEBAY_MCP_TOKEN_FILE at the token file this container was given (a mode-0400 file), or set SERVICEBAY_MCP_TOKEN. '
+        + 'Point SERVICEBAY_MCP_TOKEN_FILE at the token file this container was given (a file only this user may read), or set SERVICEBAY_MCP_TOKEN. '
         + 'The token is never passed as an argument: /proc/<pid>/cmdline is world-readable.',
     }, json);
   }
