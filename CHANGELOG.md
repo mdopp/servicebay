@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.36.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.36.0...servicebay-v5.36.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* **auth:** bind the Authelia admin rules to the configured subdomain ([e23721c](https://github.com/mdopp/servicebay/commit/e23721cc9c9a5e4e93899fedbc9e112bd61618db)), closes [#2956](https://github.com/mdopp/servicebay/issues/2956)
+* **auth:** bind token-request collection to the principal that filed it ([bad96ad](https://github.com/mdopp/servicebay/commit/bad96ad314c0de1165b2113787c9f0d0176dc787)), closes [#2930](https://github.com/mdopp/servicebay/issues/2930)
+* **auth:** hold a bridged session cookie to the same scope its bearer faces ([b143010](https://github.com/mdopp/servicebay/commit/b143010ab38d3cb05aefd58cda65d5e512a2df97)), closes [#2958](https://github.com/mdopp/servicebay/issues/2958)
+* **backup:** count the templates that declare nothing, and stop dropping symlinks ([4315158](https://github.com/mdopp/servicebay/commit/431515835835f9d83bca2f174f6ab50a506e689c)), closes [#2950](https://github.com/mdopp/servicebay/issues/2950) [#2951](https://github.com/mdopp/servicebay/issues/2951)
+
 ## [5.36.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.35.2...servicebay-v5.36.0) (2026-09-09)
 
 
