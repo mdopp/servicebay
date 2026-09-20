@@ -83,6 +83,9 @@ one unfiltered dump costs more of your context than the rest of this file.
 | `servicebay delegate <name> [--scopes read,lifecycle] [--expires <iso8601>]` | Mint a child of YOUR token, never wider than it. Prints the child secret once. |
 | `servicebay revoke <id>` | Revoke one child token you delegated. |
 | `servicebay whoami` | Say what the token you hold is — name, scopes, parent, expiry. The answer to "what may I do", from the server, not from this file. |
+| `servicebay progress` | Show the install job running right now: phase, current item, what it has deployed so far. |
+| `servicebay update <service> [--mode fresh] [--node <name>]` | Move a service onto the image its registry publishes and force-recreate its containers, so it cannot come back up on the cached one. Prints before/after digests per image. **CHANGES the box**; needs `lifecycle`. `--mode fresh` deletes the local image first — the fallback for a stuck one. Exit 6 means the pull did not take. |
+| `servicebay install <template> [--var <NAME=value>] [--source <name>] [--node <name>]` | Install a template the full wizard way (variables, secrets, subdomain, proxy, SSO wiring). The service is named after the template. **CHANGES the box**; needs `mutate`. Additive always — there is no wipe. |
 | `servicebay request-install <template> --as <service> --reason <text> [--subdomain <label>] [--mount <host:container[:ro]>] [--port <host:container[/udp]>] [--var <NAME=value>] [--source <name>] [--node <name>]` | ASK the operator to install a template. It files a request and installs nothing; ServiceBay runs the approved plan. Prints a request id. |
 | `servicebay request-status <id>` | Read what really happened to your request: waiting, approved, installed, rejected or failed. Exit 4 means still waiting. |
 
@@ -94,10 +97,10 @@ contract; a verb or an option that is not in it does not exist.
 Your token carries the scopes it was minted with, and this file cannot tell you
 which — boxes differ, and an operator may widen a token at any time. Do not
 assume; ask: `servicebay whoami` answers with name, scopes, parent and expiry,
-from the server, the only thing that knows. A refused call names **the scope it
-needed** (ServiceBay's flat `401 Authentication required` is translated; a `403`
-relays the server's own `'<scope>' scope required` verbatim), so a refusal is
-an answer, never a dead end.
+from the server, the only thing that knows. A refused call names the scope it
+needed (ServiceBay's flat `401 Authentication required` is translated; a `403`
+relays the server's own `'<scope>' scope required` verbatim), so **a refusal is
+an answer, never a dead end** — and the scope it needed is the one to ask for.
 
 - **`read`** — list and inspect services, unit files, pod manifests, logs,
   health checks, the diagnosis (a POST that only inspects), the assist catalog.
@@ -109,11 +112,19 @@ an answer, never a dead end.
   it. Read the outcome with `request-status <id>`: **exit 4 means the operator
   has not decided and nothing is installed.** Never report a filed request as a
   finished install.
-- **`lifecycle`, `mutate`** — install, deploy, force-update, start/stop/restart,
-  service YAML, proxy routes. A token that has them is not asking permission
-  any more: it is the operator's reach, lent out. What you created is yours to
-  move; what was already on the box is not, and goes through `request-install`
-  even when the scope would let you skip that.
+- **`lifecycle`** — `update` moves a service onto a new image and restarts it.
+- **`mutate`** — `install` installs a template outright, no approval in front
+  of it. A token that has these is not asking permission any more: it is the
+  operator's reach, lent out. What you created is yours to move; what was
+  already on the box is not, and goes through `request-install` even when the
+  scope would let you skip that (ADR 0017,
+  `servicebay assist adr-0017-the-agent-cli-may-change-the-box-when-the-token-may`).
+- **Nothing here removes anything.** There is no verb that deletes, wipes,
+  resets or opens a shell, and no scope makes one appear: `destroy`, `reboot`
+  and `exec` are reachable only through an operator's approval. If you were
+  told an existing service "can go", you still may not remove it — say so and
+  leave it running. Redeploying it with a placeholder to free its port is not a
+  workaround, it is a second outage.
 - **Lineage, not scope** — `delegate` mints a CHILD of the token you hold
   (never wider than its parent) and `revoke` takes one back; the secret comes
   back once, on stdout, never as an argument. A refusal there means your token
@@ -123,45 +134,19 @@ an answer, never a dead end.
   Saying it without one has stalled work here for hours while the scope was
   there the whole time.
 
-Observe with the CLI and act through the same gate — the CLI where it has a
-verb, the MCP endpoint (next section) where it does not — within the scopes
-`whoami` shows you. What stays out of bounds is any credential used for a
-purpose it was not handed to you for: `podman` on a host socket, a token found
-lying in a file, a git credential pointed at anything but git.
+Observe and act through the CLI, within the scopes `whoami` shows you. **The
+verb table is the whole of what you may do from a shell.** A job it has no verb
+for is not an invitation to hand-roll an HTTP call — it is either a
+`request-install`, or something to report and leave alone; if a verb is missing
+that should exist, say which one and why, and it gets built (that is what #2990
+was). What stays out of bounds is any credential used for a purpose it was not
+handed to you for: `podman` on a host socket, a token found lying in a file, a
+git credential pointed at anything but git.
 
-## When the CLI has no verb for it
-
-The eleven verbs above are the read path and the asking path. They are not the
-whole control plane — the assists name tools like `manage_service`,
-`install_template` and `deploy_service`, and none of those is a CLI verb. They
-are MCP tools, and **the MCP endpoint takes the same token you already hold**:
-
-```sh
-node -e '
-  const fs = require("node:fs");
-  const token = fs.readFileSync(process.env.SERVICEBAY_MCP_TOKEN_FILE || TOKEN_FILE, "utf8").trim();
-  const base  = process.env.SERVICEBAY_API_URL || "http://host.containers.internal:5888";
-  fetch(base + "/mcp", {
-    method: "POST",
-    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json",
-               Accept: "application/json, text/event-stream" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-  }).then(r => r.text()).then(console.log);
-'
-```
-
-`SERVICEBAY_MCP_TOKEN_FILE` is set for the CLI's own process and may be **unset
-in your shell** — that is not a fault, it is the wrapper keeping the token out of
-your environment. Where the file lives is a property of your container, so its
-own `AGENTS.md` names it; substitute that path for `TOKEN_FILE`.
-
-Swap `tools/list` for `{"method":"tools/call","params":{"name":"<tool>","arguments":{…}}}`
-to call one. The reply is a `text/event-stream` frame with the JSON inside it.
-
-**Only this form — and this is about `exec`, not about quoting style.** A shell
-expands every substitution *before* it hands the arguments to the program, so
-all three of these put the secret into argv, where `/proc/<pid>/cmdline` shows
-it to every login on this container:
+**A token never reaches a command line — and this is about `exec`, not about
+quoting style.** A shell expands every substitution *before* it hands the
+arguments to the program, so all three of these put the secret into argv, where
+`/proc/<pid>/cmdline` shows it to every login on this container:
 
 ```sh
 curl -H "Authorization: Bearer $(cat /path/to/token)" ...    # obviously
@@ -170,23 +155,15 @@ curl -H "Authorization: Bearer ${TOKEN}" ...                 # still identical
 ```
 
 Assigning to a variable first hides it from you, not from the process table.
-The only safe shape is the one above: **the process that makes the request
-reads the file itself** (`node -e`, `python3 -c`, or the CLI, which is why it
-has no `--token` flag). If you catch yourself writing `$TOKEN` inside a `curl`
+The safe shape is the one the CLI already is: **the process that makes the
+request reads the token file itself**, which is why `servicebay` has no
+`--token` flag. If you catch yourself writing `$TOKEN` inside a `curl`
 argument, that is the moment to stop — a session on this box did it 35 times in
-one evening and left a box credential in its transcript.
+one evening and left a box credential in its transcript. And do not mint a
+`delegate` child "to look around": it is a live credential the moment it is
+printed, and a probe you forget to `revoke` stays valid until someone else
+notices it.
 
-And do not mint a `delegate` child "to look around": it is a live credential the
-moment it is printed, and a probe you forget to `revoke` stays valid until
-someone else notices it.
-
-What you may call is still the scopes your token carries — an under-scoped call
-is refused with the scope it needed, exactly as through the CLI. This is not a
-side door; it is the same gate, reached directly because the CLI does not front
-every tool.
-
-Read `servicebay assist <id>` first when a recipe names a tool. The recipe says
-which tool and why; this says how to reach it.
 
 ## How you test
 
@@ -227,7 +204,8 @@ Your change is proved by the project's own gate, not by the box:
    credential is already configured (`credential.helper store`); a plain
    `git push` works. Never put a token into a remote URL — `git remote -v`
    prints it, and so does `.git/config` to anyone who reads the checkout. The
-   same holds for any command line: see the `exec` note in the MCP section.
+   same holds for any command line: see the `exec` note under **What your
+   token can and cannot do**.
 2. **Replacing what a domain serves means updating the service that owns it.**
    If `<name>.<domain>` already points at a service, that service gets the new
    image (`servicebay assist recipe-roll-new-image-to-running-service`) — you do

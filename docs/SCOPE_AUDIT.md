@@ -138,6 +138,7 @@ not listed here reject Bearer tokens (cookie/internal-token only).
 | `/api/install/skip-credentials` | POST | `lifecycle` | resolve a credential step |
 | `/api/install/start` | POST | `lifecycle` | start a stack install |
 | `/api/install/abort` | POST | `lifecycle` | abort a stuck install |
+| `/api/services/[name]/action` | POST | `lifecycle` | start/stop/restart/update/force-update one service — the REST twin of `manage_service`, and the route the agent CLI's `update` verb speaks. Cookie-only until #2990: a scoped session that needed to move a service onto a new image had no door but raw `/mcp` |
 | `/api/settings/backups` | POST | `lifecycle` | trigger a backup |
 | `/api/system/external-backup/export-lldap` | POST | `lifecycle` | stage LLDAP export onto NAS |
 | `/api/system/external-backup/import-ha` | POST | `lifecycle` | stage an HA-OS backup onto NAS |
@@ -148,6 +149,7 @@ not listed here reject Bearer tokens (cookie/internal-token only).
 | `/api/system/boot/usb-next` | POST/DELETE | `mutate` | set/clear firmware BootNext |
 | `/api/system/disk-import/*` | GET/POST | `mutate` | scan/plan/apply a drive import (file moves into canonical folders = additive) |
 | `/api/system/nginx/proxy-hosts` | POST | `mutate` | create/update a live NPM proxy host (additive; the `create_proxy_route` tool path) |
+| `/api/install/template` | POST | `mutate` | install one template the full wizard way (assemble → job → start) — the REST twin of `install_template`, which has carried `mutate` since #2141, and the route the agent CLI's `install` verb speaks. Additive always: it takes no `wipeMode` (ADR 0004). Its `propose`-tier sibling `/api/install/requests` only asks |
 | `/api/system/external-backup/register` | POST | `mutate` | register a NAS backup source (config write) |
 | `/api/system/external-backup/target` | POST | `mutate` | write NAS target config |
 | `/api/system/external-backup/delete` | POST | `mutate` | delete one NAS archive file |

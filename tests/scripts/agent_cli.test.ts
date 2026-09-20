@@ -91,6 +91,33 @@ const SUCCESS_BODY: Record<string, unknown> = {
     jobId: 'job-1',
     error: null,
   },
+  // The mutating pair (#2990). Shaped like `ForceUpdateResult` and the install
+  // route's answer. This `update` body is the SUCCESS case — one image that
+  // genuinely advanced; the stale case exits non-zero and has its own block.
+  update: {
+    service: 'asteroids-bubblegum',
+    node: 'Local',
+    mode: 'pull',
+    images: [{
+      image: 'ghcr.io/mdopp/asteroids:latest',
+      before: 'sha256:1111111111112222',
+      registry: 'sha256:3333333333334444',
+      after: 'sha256:3333333333334444',
+      pulled: true,
+      changed: true,
+      stale: false,
+    }],
+    recreated: ['asteroids-bubblegum-web'],
+    changed: true,
+    stale: false,
+    status: 'active',
+    logs: [],
+  },
+  install: { jobId: 'job-2f11', phase: 'running' },
+  progress: {
+    job: { id: 'job-2f11', phase: 'running', progress: { currentItem: 'asteroids', deployedNames: [], totalCount: 1 } },
+    jobIsActive: true,
+  },
 };
 
 /** The positional arguments each verb needs, for the table-driven cases. */
@@ -107,6 +134,9 @@ const ARGV: Record<string, string[]> = {
   whoami: ['whoami'],
   'request-install': ['request-install', 'linkwarden', '--as', 'linkwarden', '--reason', 'the template is finished'],
   'request-status': ['request-status', 'req-7f3a'],
+  update: ['update', 'asteroids-bubblegum'],
+  install: ['install', 'asteroids'],
+  progress: ['progress'],
 };
 
 function envWith(extra: Record<string, string> = {}) {
@@ -387,6 +417,149 @@ describe('request-status never reports waiting as success (#2965 criterion 5)', 
     expect(verb.method).toBe('GET');
     expect(verb.options).toEqual([]);
     expect(verb.path({ id: 'req-7f3a' }, {})).toBe('/api/install/requests/req-7f3a');
+  });
+});
+
+describe('update never reports a no-op as an update (#2990, and #2983 behind it)', () => {
+  /** One image, described by the three flags the route really returns. */
+  function body(image: Partial<{ before: string; after: string; changed: boolean; stale: boolean }>) {
+    return {
+      service: 'asteroids-bubblegum',
+      node: 'Local',
+      mode: 'pull',
+      images: [{
+        image: 'ghcr.io/mdopp/asteroids:latest',
+        before: image.before ?? 'sha256:1111111111112222',
+        registry: 'sha256:3333333333334444',
+        after: image.after ?? 'sha256:3333333333334444',
+        pulled: true,
+        changed: image.changed ?? false,
+        stale: image.stale ?? false,
+      }],
+      recreated: [],
+      changed: image.changed ?? false,
+      stale: image.stale ?? false,
+      status: 'active',
+      logs: [],
+    };
+  }
+
+  it('speaks force-update, never the plain update action', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.update) };
+    await cli.run(['update', 'asteroids-bubblegum'], { env: envWith() });
+    expect(seen.method).toBe('POST');
+    expect(seen.url).toBe('/api/services/asteroids-bubblegum/action');
+    // `update` restarts without proving the image moved; `force-update`
+    // returns the digests that let the caller tell the two apart.
+    expect(JSON.parse(seen.body)).toEqual({ action: 'force-update' });
+  });
+
+  it('passes --mode fresh through, and nothing else', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.update) };
+    await cli.run(['update', 'asteroids-bubblegum', '--mode', 'fresh', '--node', 'Local'], { env: envWith() });
+    expect(JSON.parse(seen.body)).toEqual({ action: 'force-update', mode: 'fresh' });
+    expect(seen.url).toBe('/api/services/asteroids-bubblegum/action?node=Local');
+  });
+
+  it('a service already on the published image exits 0 and says so', async () => {
+    reply = { status: 200, body: JSON.stringify(body({ before: 'sha256:3333333333334444', changed: false, stale: false })) };
+    const result = await cli.run(['update', 'asteroids-bubblegum'], { env: envWith() });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('already on');
+  });
+
+  it('an image that genuinely advanced exits 0 and shows both digests', async () => {
+    reply = { status: 200, body: JSON.stringify(body({ changed: true })) };
+    const result = await cli.run(['update', 'asteroids-bubblegum'], { env: envWith() });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('updated');
+    expect(result.stdout).toContain('111111111111');
+    expect(result.stdout).toContain('333333333333');
+  });
+
+  it('a pull that did NOT take exits non-zero, even though the HTTP call was a 200', async () => {
+    // The whole point. A 200 here means "the action ran". #2983 is a 200 that
+    // moved nothing being read as success; an exit code is the only part of
+    // this a shell script reads.
+    reply = { status: 200, body: JSON.stringify(body({ after: 'sha256:1111111111112222', changed: false, stale: true })) };
+    const result = await cli.run(['update', 'asteroids-bubblegum'], { env: envWith() });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toContain('STALE');
+    expect(result.stdout).toContain('--mode fresh');
+  });
+
+  it('--json cannot read as ok while the pull did not take', async () => {
+    reply = { status: 200, body: JSON.stringify(body({ after: 'sha256:1111111111112222', stale: true })) };
+    const result = await cli.run(['update', 'asteroids-bubblegum', '--json'], { env: envWith() });
+    expect(JSON.parse(result.stdout).ok).toBe(false);
+  });
+
+  it('names the lifecycle scope when the token is refused, not the HTTP status', async () => {
+    // The acceptance criterion from #2990: a read-only token must be told what
+    // to ask for. ServiceBay answers a refused Bearer with a flat 401.
+    reply = { status: 401, body: JSON.stringify({ error: 'Authentication required' }) };
+    const result = await cli.run(['update', 'asteroids-bubblegum'], { env: envWith() });
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr).toContain('lifecycle');
+  });
+
+  it('relays the server\'s own under-scoped refusal verbatim (the 403 half)', async () => {
+    // A token that IS valid but lacks the tier gets a 403 naming the scope.
+    // The CLI parses that word out and leads with it, so the agent's next move
+    // is "ask for `lifecycle`", not "guess".
+    reply = { status: 403, body: JSON.stringify({ error: "Forbidden: 'lifecycle' scope required" }) };
+    const result = await cli.run(['update', 'asteroids-bubblegum'], { env: envWith() });
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr).toContain("'lifecycle' scope required");
+    expect(result.stderr).toContain('under-scoped');
+  });
+
+  it('has no flag that would delete, wipe or reset anything', async () => {
+    for (const flag of ['--force', '--wipe', '--remove', '--yes']) {
+      const result = await cli.run(['update', 'asteroids-bubblegum', flag], { env: envWith() });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('has no option');
+    }
+  });
+});
+
+describe('install starts the wizard flow and nothing wider (#2990)', () => {
+  it('speaks the mutate-tier route, with the template and its variables', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.install) };
+    await cli.run(['install', 'asteroids', '--var', 'PORT=8080', '--var', 'TZ=Europe/Berlin'], { env: envWith() });
+    expect(seen.method).toBe('POST');
+    expect(seen.url).toBe('/api/install/template');
+    expect(JSON.parse(seen.body)).toEqual({
+      template: 'asteroids',
+      variables: { PORT: '8080', TZ: 'Europe/Berlin' },
+    });
+  });
+
+  it('cannot ask for a wipe: an install started this way is additive (ADR 0004)', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.install) };
+    await cli.run(['install', 'asteroids'], { env: envWith() });
+    expect(JSON.parse(seen.body).wipeMode).toBeUndefined();
+    for (const flag of ['--wipe', '--wipe-config', '--wipe-all', '--mode']) {
+      const result = await cli.run(['install', 'asteroids', flag, 'wipe-all'], { env: envWith() });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('has no option');
+    }
+  });
+
+  it('names the mutate scope when the token is refused', async () => {
+    reply = { status: 401, body: JSON.stringify({ error: 'Authentication required' }) };
+    const result = await cli.run(['install', 'asteroids'], { env: envWith() });
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr).toContain('mutate');
+  });
+
+  it('points the agent at a verb that exists for the job it just started', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.install) };
+    const result = await cli.run(['install', 'asteroids'], { env: envWith() });
+    const pointer = result.stdout.split('\n').find(l => l.includes('servicebay '));
+    expect(pointer).toBeDefined();
+    const verb = pointer!.slice(pointer!.indexOf('servicebay ') + 'servicebay '.length).trim().split(' ')[0];
+    expect(Object.keys(cli.VERBS)).toContain(verb);
   });
 });
 

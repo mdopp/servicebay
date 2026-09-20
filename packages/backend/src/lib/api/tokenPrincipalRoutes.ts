@@ -130,7 +130,6 @@ export const TOKEN_PRINCIPAL_ROUTES: readonly TokenPrincipalRule[] = [
   { method: 'POST', path: '/api/services', gate: 'deny', reason: R.MUTATE_ADMIN },
   { method: 'DELETE', path: '/api/services/[name]', gate: 'deny', reason: R.DESTRUCTIVE },
   { method: 'PUT', path: '/api/services/[name]', gate: 'deny', reason: R.MUTATE_ADMIN },
-  { method: 'POST', path: '/api/services/[name]/action', gate: 'deny', reason: R.MUTATE_ADMIN },
   { method: 'POST', path: '/api/services/[name]/action-stream', gate: 'deny', reason: R.MUTATE_ADMIN },
   { method: 'GET', path: '/api/services/[name]/reconfigure-preview', gate: 'read', reason: R.DASH_READ },
   { method: 'POST', path: '/api/services/[name]/rename', gate: 'deny', reason: R.MUTATE_ADMIN },

@@ -52,6 +52,14 @@ function clip(value, max = 4000) {
   return text.length > max ? `${text.slice(0, max)}\n… (${text.length - max} more characters, use --json for all of it)` : text;
 }
 
+/** `sha256:abcdef…` → `abcdef12`, so a digest pair fits one line. */
+function shortDigest(value) {
+  if (value === null || value === undefined || value === '') return '?';
+  const text = String(value);
+  const hex = text.includes(':') ? text.slice(text.indexOf(':') + 1) : text;
+  return hex.length > 12 ? hex.slice(0, 12) : hex;
+}
+
 function line(...parts) {
   return parts.filter(p => p !== '' && p !== undefined && p !== null).join('  ');
 }
@@ -61,15 +69,20 @@ function line(...parts) {
  *
  * Each entry declares everything a caller (or #2907's contract test) needs
  * without executing anything:
- *   `effect`  WHAT THIS VERB IS ALLOWED TO DO, from a closed set of three
- *             (#2965). `'read'` — it only inspects; `'own-credential'` — it
- *             acts on the caller's own token lineage and nothing else;
- *             `'request'` — it files a request an operator must approve, and
- *             ServiceBay, not this CLI, executes what was approved. There is
- *             deliberately no fourth value: a verb that would change the box
- *             directly has nowhere to declare itself, and
- *             `tests/scripts/agent_cli_mutation_gate.test.ts` walks this whole
- *             table and fails on one.
+ *   `effect`  WHAT THIS VERB IS ALLOWED TO DO, from a closed set of four
+ *             (#2965, widened by #2990). `'read'` — it only inspects;
+ *             `'own-credential'` — it acts on the caller's own token lineage
+ *             and nothing else; `'request'` — it files a request an operator
+ *             must approve, and ServiceBay, not this CLI, executes what was
+ *             approved; `'mutate'` — it changes the box directly, and may do
+ *             so ONLY because the token presented already carries the tier the
+ *             route demands (ADR 0017). The fourth value is not a loophole:
+ *             `tests/scripts/agent_cli_mutation_gate.test.ts` holds a
+ *             `'mutate'` verb's declared `scope` against the route's real
+ *             `tokenScope` and fails closed in BOTH directions — a read verb
+ *             on a mutating route and a mutate verb on a read route are each
+ *             red. What the CLI still may not do is decide: destroy-tier work
+ *             (removal, reset, exec) has no verb and stays an approval.
  *   `auth`    how the route authenticates. Absent (the default) means the
  *             ServiceBay scope gate: the route carries `tokenScope` and the
  *             CLI quotes `scope` back in every auth error. `'parent-token'`
@@ -339,6 +352,117 @@ export const VERBS = {
       line('parent  ', String(body?.parentId ?? '-')),
       line('expires ', String(body?.expiresAt ?? 'never')),
     ].join(String.fromCharCode(10)),
+  },
+
+  progress: {
+    summary: 'show the install job running right now — phase, item, what it has deployed',
+    usage: 'progress',
+    effect: 'read',
+    scope: 'read',
+    method: 'GET',
+    positionals: [],
+    options: [],
+    // `/api/install/current` is the token-readable, sanitised view: id, phase
+    // and counts, never `input.variables`. The sibling `/api/install/status`
+    // carries the operator's secrets and stays cookie-only — do not point a
+    // verb at it.
+    path: () => '/api/install/current',
+    reads: ['job', 'jobIsActive'],
+    text: body => {
+      const job = body?.job;
+      if (!job) return 'no install job is running';
+      const p = job?.progress ?? {};
+      const deployed = Array.isArray(p?.deployedNames) ? p.deployedNames : [];
+      return [
+        line('job     ', String(job?.id ?? '?')),
+        line('phase   ', String(job?.phase ?? '?'), body?.jobIsActive === true ? '(active)' : '(finished)'),
+        line('current ', String(p?.currentItem ?? '-'), `of ${String(p?.totalCount ?? '?')}`),
+        line('deployed', deployed.length > 0 ? deployed.join(', ') : '-'),
+      ].join('\n');
+    },
+  },
+
+  /* ── the mutating pair (#2990, ADR 0017) ──────────────────────────────
+   *
+   * These change the box. They are here because the pi-web token already
+   * carries `lifecycle,mutate`: before them the handbook's "when the CLI has
+   * no verb for it" section sent a session to the raw `/mcp` endpoint with the
+   * token in argv — the CLI was not preventing the mutation, it was only
+   * forcing it through the worse door. The token decides; the door only has
+   * to say what it is.
+   */
+
+  update: {
+    summary: 'move a service onto the image its registry publishes — CHANGES the box',
+    usage: 'update <service> [--mode fresh] [--node <name>]',
+    effect: 'mutate',
+    scope: 'lifecycle',
+    method: 'POST',
+    positionals: ['service'],
+    options: ['mode', 'node'],
+    path: (args, opts) => `/api/services/${enc(args.service)}/action${opts.node ? `?node=${enc(opts.node)}` : ''}`,
+    // `force-update` re-checks the registry, re-pulls and force-recreates the
+    // containers, so the unit cannot come back up on the cached image (#2397).
+    // Plain `update` is deliberately NOT reachable from here: it restarts
+    // without proving the image moved, which is exactly the false success
+    // #2983 is about.
+    body: (_args, opts) => ({ action: 'force-update', ...(opts.mode ? { mode: opts.mode } : {}) }),
+    reads: ['service', 'images', 'changed', 'stale'],
+    text: body => {
+      const images = Array.isArray(body?.images) ? body.images : [];
+      const rows = images.map(img => {
+        const before = shortDigest(img?.before);
+        const after = shortDigest(img?.after);
+        const verdict = img?.stale === true
+          ? 'STALE — the pull did not take'
+          : img?.changed === true
+            ? `updated ${before} → ${after}`
+            : `already on ${after}`;
+        return line(String(img?.image ?? '?').padEnd(40), verdict);
+      });
+      const head = line(String(body?.service ?? '?'), `mode=${String(body?.mode ?? '?')}`, String(body?.status ?? ''));
+      const recreated = Array.isArray(body?.recreated) ? body.recreated : [];
+      const tail = [
+        recreated.length > 0 ? line('recreated', recreated.join(', ')) : '',
+        body?.stale === true
+          ? 'At least one image is still behind the registry. Retry with --mode fresh, which deletes the local image before pulling.'
+          : '',
+      ].filter(Boolean);
+      return [head, ...(rows.length > 0 ? rows : ['no images declared']), ...tail].join('\n');
+    },
+    // A 200 here means "the action ran", never "the image moved". `stale` is
+    // the server's own word for "the pull did not take" — an agent scripting
+    // on `$?` must not read that as success, or #2983 is merely relocated.
+    exit: body => (body?.stale === true ? 6 : 0),
+  },
+
+  install: {
+    summary: 'install a template the full wizard way — CHANGES the box',
+    usage: 'install <template> [--var <NAME=value>] [--source <name>] [--node <name>]',
+    effect: 'mutate',
+    scope: 'mutate',
+    method: 'POST',
+    positionals: ['template'],
+    options: ['var', 'source', 'node'],
+    repeatable: ['var'],
+    path: () => '/api/install/template',
+    // The service is named after the TEMPLATE — assembleManifest takes template
+    // names, and even an approved install request starts `names: [template]`.
+    // There is deliberately no `--name`: the install pipeline has no per-install
+    // rename, so the flag could only ever have been decorative. Renaming after
+    // the fact is `rename_service`, a separate decision.
+    body: (args, opts) => ({
+      template: args.template,
+      variables: parseVariables(opts.var),
+      ...(opts.source ? { templateSource: opts.source } : {}),
+      ...(opts.node ? { node: opts.node } : {}),
+    }),
+    reads: ['jobId', 'phase'],
+    text: body => [
+      line('job  ', String(body?.jobId ?? '?')),
+      line('phase', String(body?.phase ?? '?')),
+      'Watch it with: servicebay progress',
+    ].join('\n'),
   },
 
   'request-install': {
