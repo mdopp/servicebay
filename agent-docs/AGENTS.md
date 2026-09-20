@@ -125,7 +125,7 @@ What the scopes mean:
   your token, and the only honest source for it is a refusal you actually
   received. Saying it without one has stalled work here for hours while the
   scope was there the whole time.
-- **It can ask.** `request-install` files an installation *request*: it names
+- **It can ask** (ADR 0013, `servicebay assist adr-0013-clients-request-their-own-access`). `request-install` files an installation *request*: it names
   the template, the service name you want, the subdomain, the mounts and the
   ports, and it puts that in front of the operator as an approval. It installs
   nothing — not while it waits, and not after the operator approves. ServiceBay

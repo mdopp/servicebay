@@ -7,6 +7,10 @@ tags: [adr, decision, backend, storage, persistence, migration, schema, versioni
 
 # ADR 0016 — Durable JSON stores declare a version; migrations are forward-only and a newer file is refused loudly
 
+- **Status:** Accepted (2026-09-03, #2739)
+- **Date:** 2026-09-03
+- **Deciders:** @mdopp
+
 ## Status
 
 Accepted (2026-09-03, #2739).

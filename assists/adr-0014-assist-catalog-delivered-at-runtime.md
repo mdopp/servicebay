@@ -7,6 +7,10 @@ tags: [assists, catalog, delivery, release, docs-commit, image, one-source, mcp,
 
 # ADR 0014 — The assist catalog is delivered at runtime, not baked into the image
 
+- **Status:** Accepted (2026-08-31, #2701)
+- **Date:** 2026-08-31
+- **Deciders:** @mdopp
+
 ## Status
 
 Accepted (2026-08-31, #2701). Operator decision, 30.08.2026.

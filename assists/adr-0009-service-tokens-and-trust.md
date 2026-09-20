@@ -22,9 +22,9 @@ ServiceBay is a single-node home server where several principals must authentica
 to each other across process and network boundaries:
 
 - the **operator** (browser / phone) → the proxied web apps and ServiceBay itself;
-- **external agents** — the Claude Code MCP client, OSCAR/Hermes — → ServiceBay's MCP + REST API;
+- **external agents** — the Claude Code MCP client, an agent container's `servicebay` CLI (#2906), Solaris — → ServiceBay's MCP + REST API;
 - the **`sb` CLI** and **scripts** → the REST API;
-- **service → service** (e.g. Hermes → ServiceBay MCP, Radicale → LLDAP, every OIDC app → Authelia);
+- **service → service** (e.g. Solaris → ServiceBay REST (ADR 0011), Immich → Authelia OIDC, every LDAP app → LLDAP);
 - the **ServiceBay backend** → the **host** (mount, rsync, write files).
 
 The box is reinstalled often (FCoS wipe-and-reinstall), credentials rotate on every
@@ -82,13 +82,15 @@ is for UI display. **One token authenticates both the MCP server and the REST AP
   `reboot` only; **`exec` is never implied** — an explicit grant is the only way to
   hold shell, #2623). The authoritative per-capability / per-route mapping —
   *which scope gates which endpoint* — lives in [`SCOPE_AUDIT.md`](../docs/SCOPE_AUDIT.md).
-- **Consumers:** the `sb` CLI, OSCAR/Hermes (`oscar-hermes`, `hermes-mcp`), scripts.
+  **`propose`** (ADR 0013) sits *beside* the ladder, not on it: it is the "ask a human"
+  capability — file a request, submit a proposal — and implies no write.
+- **Consumers:** the `sb` CLI, the agent CLI (`servicebay`, one token per container or project), Solaris (server-to-server), scripts.
 - **Decision:** named scoped tokens are the **preferred** machine credential — least
   privilege, individually revocable, hash-at-rest. A consumer is granted only the scopes
-  it needs (Hermes ≈ `read,mutate,lifecycle`; never `destroy`/`exec` unless required).
+  it needs (a household hub like Solaris ≈ `read,mutate,lifecycle`; never `destroy`/`exec` unless required).
 - **Caveat (#1639):** a service's *stored* token goes stale on reinstall (the id no
   longer exists) → `401`. The install flow is responsible for re-minting and re-wiring
-  it (the OSCAR auto-mint, #921); a stale stored token is a re-mint, not a re-activate.
+  it (the Solaris auto-mint, #921 — then named OSCAR); a stale stored token is a re-mint, not a re-activate.
 
 ### 4. Agent bootstrap → MCP — the low-trust reconnect bridge
 The **bootstrap token** (#322) exists so an MCP client (the Claude agent) can connect
@@ -171,15 +173,17 @@ reasoning behind it is unchanged: the model server carries no auth of its own, s
 if it is ever published beyond the box it is a forward-auth app — the proxy
 authenticates and the upstream trusts the proxy. Nothing here re-decides a layer.
 
-One thing to keep straight when you read that list: `llama` binds **loopback
-only** today (ADR 0007's carve-out), so on-box callers reach it directly at
-`127.0.0.1:11435` with **no credential at all**, and the same goes for the model
-lease at `127.0.0.1:8787/api/model-lease`. That is loopback trust, not an
-exemption you may extend — anything crossing the box boundary still goes through
-the proxy and Authelia.
+One thing to keep straight when you read that list — corrected 2026-09-20: the
+router itself (`llama-server`, 11434) binds **loopback only**, but the policy
+proxy in front of it listens on **`0.0.0.0:11435`** by operator decision, so the
+model server is reachable **on the LAN without a credential**. That is a
+deliberate LAN-trust carve-out, the same class as the bootstrap token (§5), and
+the model lease at `127.0.0.1:8787/api/model-lease` stays loopback. Neither is an
+exemption you may extend: anything crossing the box boundary — `llama.<domain>`
+included — still goes through the proxy and Authelia.
 
 ## Open items (tracked elsewhere)
 - Per-service OIDC-secret reconciliation on reinstall — **#1559** (needs design decision).
 - Command-scoped sudoers instead of `%wheel NOPASSWD` for the host bridge — owed hardening on **#1713**.
-- Machine-token auto-rewire on reinstall (OSCAR/Hermes) — **#1639** (oscar-side).
+- Machine-token auto-rewire on reinstall (Solaris) — **#1639** (solarisbay-side).
 
