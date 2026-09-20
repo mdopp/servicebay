@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.37.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.36.1...servicebay-v5.37.0) (2026-09-20)
+
+
+### Features
+
+* **agent-cli:** whoami — let a token ask what it is ([95cdf1c](https://github.com/mdopp/servicebay/commit/95cdf1c068856c194eebfcaa9dc45fb13ae66fc5))
+* **agent-cli:** whoami — let a token ask what it is ([56cb29b](https://github.com/mdopp/servicebay/commit/56cb29be0902870f32b274e89c3901f3be5afe41))
+
 ## [5.36.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.36.0...servicebay-v5.36.1) (2026-09-20)
 
 
