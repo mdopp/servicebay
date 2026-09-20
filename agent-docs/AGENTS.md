@@ -155,6 +155,13 @@ own `AGENTS.md` names it; substitute that path for `TOKEN_FILE`.
 Swap `tools/list` for `{"method":"tools/call","params":{"name":"<tool>","arguments":{…}}}`
 to call one. The reply is a `text/event-stream` frame with the JSON inside it.
 
+**Only this form.** `curl -H "Authorization: Bearer $(cat <token file>)"` puts the
+secret into the process's argv, where every login on this container can read
+it — the same leak the CLI refuses a `--token` flag for. Read the file inside
+the process, as above, or do not make the call. And do not mint a `delegate`
+child "to look around": it is a live credential the moment it is printed, and
+a probe you forget to `revoke` stays valid until someone else notices it.
+
 What you may call is still the scopes your token carries — an under-scoped call
 is refused with the scope it needed, exactly as through the CLI. This is not a
 side door; it is the same gate, reached directly because the CLI does not front
