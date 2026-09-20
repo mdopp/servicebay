@@ -174,7 +174,7 @@ describe('it says what an agent needs to start, and stays honest about the token
   it.each([
     ['start point', /^## Where you start$/m],
     ['the CLI', /^## The CLI: reading the box from a shell$/m],
-    ['what the read-scoped token cannot do', /^## What your token can and cannot do$/m],
+    ['what the token gates and how to learn its scopes', /^## What your token can and cannot do$/m],
     ['how it tests', /^## How you test$/m],
     ['how it rolls out', /^## How a change rolls out$/m],
     ['the delivered catalog path', /^## The assist catalog — read it, do not re-derive it$/m],
@@ -186,10 +186,16 @@ describe('it says what an agent needs to start, and stays honest about the token
     expect(markdown()).toContain('$SERVICEBAY_AGENT_KIT/assists');
   });
 
-  it('is explicit that the token cannot change anything on the box', () => {
+  it('does not assert a scope, and says how a session finds out instead', () => {
+    // This file is a template for every box, and an operator may widen a token
+    // at any time. Pinning "read-scoped" here pinned a falsehood: a session read
+    // it, reported "mein Token ist nur lesbar, der Operator muss neu starten",
+    // and waited — while manage_service force-update was open to it the whole
+    // time. A document cannot know a token's scopes; only a refusal can.
     const text = markdown();
-    expect(text).toMatch(/read-scoped/);
-    expect(text).toMatch(/\*\*It cannot\*\*/);
+    expect(text).not.toMatch(/token is \*\*read-scoped\*\*/);
+    expect(text).toMatch(/the scope it needed/);
+    expect(text).toMatch(/Never conclude from silence/);
   });
 
   it('tells the container to link the file rather than copy it', () => {
