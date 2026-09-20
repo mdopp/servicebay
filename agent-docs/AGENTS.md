@@ -158,12 +158,27 @@ own `AGENTS.md` names it; substitute that path for `TOKEN_FILE`.
 Swap `tools/list` for `{"method":"tools/call","params":{"name":"<tool>","arguments":{…}}}`
 to call one. The reply is a `text/event-stream` frame with the JSON inside it.
 
-**Only this form.** `curl -H "Authorization: Bearer $(cat <token file>)"` puts the
-secret into the process's argv, where every login on this container can read
-it — the same leak the CLI refuses a `--token` flag for. Read the file inside
-the process, as above, or do not make the call. And do not mint a `delegate`
-child "to look around": it is a live credential the moment it is printed, and
-a probe you forget to `revoke` stays valid until someone else notices it.
+**Only this form — and this is about `exec`, not about quoting style.** A shell
+expands every substitution *before* it hands the arguments to the program, so
+all three of these put the secret into argv, where `/proc/<pid>/cmdline` shows
+it to every login on this container:
+
+```sh
+curl -H "Authorization: Bearer $(cat /path/to/token)" ...    # obviously
+TOKEN=$(cat /path/to/token); curl -H "Authorization: Bearer $TOKEN" ...   # identical after expansion
+curl -H "Authorization: Bearer ${TOKEN}" ...                 # still identical
+```
+
+Assigning to a variable first hides it from you, not from the process table.
+The only safe shape is the one above: **the process that makes the request
+reads the file itself** (`node -e`, `python3 -c`, or the CLI, which is why it
+has no `--token` flag). If you catch yourself writing `$TOKEN` inside a `curl`
+argument, that is the moment to stop — a session on this box did it 35 times in
+one evening and left a box credential in its transcript.
+
+And do not mint a `delegate` child "to look around": it is a live credential the
+moment it is printed, and a probe you forget to `revoke` stays valid until
+someone else notices it.
 
 What you may call is still the scopes your token carries — an under-scoped call
 is refused with the scope it needed, exactly as through the CLI. This is not a
@@ -184,10 +199,16 @@ Your change is proved by the project's own gate, not by the box:
   `gh run view <id> --log-failed` for CI, `servicebay logs <svc>` on the box. A
   step rewritten without reading why it failed is a guess with a commit
   attached; four guesses in a row is how a session spent an afternoon on a
-  missing `contents: read`. If the log does not tell you, stop and report
-  (`servicebay assist guide-when-to-ask-and-how-to-put-a-decision-to-the-operator`)
-  — do not route around the failure through another service, another tool, or
-  the host filesystem.
+  missing `contents: read`.
+- **Three failed attempts at the same goal is the limit. Then you stop and say
+  so** — in your answer, to the operator, naming what you tried, what the logs
+  said, and what you believe is missing
+  (`servicebay assist guide-when-to-ask-and-how-to-put-a-decision-to-the-operator`).
+  Stopping means stopping: not a fourth approach, not a workaround through
+  another service, another tool or the host filesystem. An agent that keeps
+  going is not being thorough — it is spending someone else's box on a guess,
+  and every workaround it leaves behind is something a human has to find later.
+  A reported blocker is a finished piece of work; forty attempts are not.
 - `servicebay assist testing-and-ci-gate` is the standard those gates are written
   to, including what counts as a real test versus a test that cannot fail.
 - The CLI's read verbs are how you check the box **after** something is
@@ -204,8 +225,9 @@ Your change is proved by the project's own gate, not by the box:
 
 1. **Commit and push in the project repo.** Conventional Commits. The git
    credential is already configured (`credential.helper store`); a plain
-   `git push` works. Never put a token into a remote URL or a command line —
-   `git remote -v` and `/proc/<pid>/cmdline` would print it for everyone.
+   `git push` works. Never put a token into a remote URL — `git remote -v`
+   prints it, and so does `.git/config` to anyone who reads the checkout. The
+   same holds for any command line: see the `exec` note in the MCP section.
 2. **Replacing what a domain serves means updating the service that owns it.**
    If `<name>.<domain>` already points at a service, that service gets the new
    image (`servicebay assist recipe-roll-new-image-to-running-service`) — you do
