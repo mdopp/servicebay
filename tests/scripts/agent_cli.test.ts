@@ -71,6 +71,8 @@ const SUCCESS_BODY: Record<string, unknown> = {
   // like one only so the renderer has something to render.
   delegate: { token: { id: 'c0ffee12', name: 'claude-dev project alpha', scopes: ['read'] }, secret: FAKE_CHILD_TOKEN },
   revoke: { ok: true, revoked: 1, id: 'c0ffee12', name: 'claude-dev project alpha' },
+  // Self-description (#2984). Shaped like the store's record minus hash and prefix.
+  whoami: { id: 'deadbeef', name: 'claude-dev project alpha', scopes: ['read'], createdAt: '2026-09-20T00:00:00.000Z', expiresAt: null, parentId: null },
   // The request pair (#2965). Filing answers a request id and says, in words,
   // that nothing is installed; the status verb's SUCCESS case is the one state
   // that is genuinely a success — everything else exits non-zero (below).
@@ -102,6 +104,7 @@ const ARGV: Record<string, string[]> = {
   assist: ['assist', 'adr-0007-naming'],
   delegate: ['delegate', 'claude-dev project alpha'],
   revoke: ['revoke', 'c0ffee12'],
+  whoami: ['whoami'],
   'request-install': ['request-install', 'linkwarden', '--as', 'linkwarden', '--reason', 'the template is finished'],
   'request-status': ['request-status', 'req-7f3a'],
 };
@@ -116,6 +119,11 @@ function envWith(extra: Record<string, string> = {}) {
  * presented is itself the delegation parent — there is no scope to name.
  */
 function needPhrase(verbName: string): string {
+  // A verb may say in its own words what credential it needs (#2984: `whoami`
+  // is a parent-token verb that delegates nothing, so the shared phrase would
+  // be wrong for it). The CLI's credentialNeed() prefers the same field.
+  const need = (cli.VERBS[verbName] as { need?: string }).need;
+  if (need) return need;
   return cli.VERBS[verbName].auth === 'parent-token'
     ? 'the token that is to be the delegation parent'
     : `\`${cli.VERBS[verbName].scope}\` scope`;
