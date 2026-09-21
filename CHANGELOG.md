@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.38.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.38.0...servicebay-v5.38.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **auth:** tell an under-scoped token which tier it lacks, instead of "Authentication required" ([c24f185](https://github.com/mdopp/servicebay/commit/c24f185fca6aefb36d908146613e5123d4eeacae))
+* **auth:** tell an under-scoped token which tier it lacks, instead of "Authentication required" ([ee98d6d](https://github.com/mdopp/servicebay/commit/ee98d6d42143a68895f9e05f80a5703832c8af06)), closes [#3001](https://github.com/mdopp/servicebay/issues/3001)
+
 ## [5.38.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.37.0...servicebay-v5.38.0) (2026-09-21)
 
 
