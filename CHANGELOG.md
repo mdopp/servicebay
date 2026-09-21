@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.41.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.41.1...servicebay-v5.41.2) (2026-09-21)
+
+
+### Bug Fixes
+
+* **install:** the agent kit gets a shared SELinux label, not private categories ([#3013](https://github.com/mdopp/servicebay/issues/3013)) ([fee165d](https://github.com/mdopp/servicebay/commit/fee165d7d7d4e5c017709a71700e1c275dffd51d))
+
 ## [5.41.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.41.0...servicebay-v5.41.1) (2026-09-21)
 
 
