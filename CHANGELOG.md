@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.40.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.39.0...servicebay-v5.40.0) (2026-09-21)
+
+
+### Features
+
+* **agent:** a door for "this service can go", and a collision message that does not invite the workaround ([65e469a](https://github.com/mdopp/servicebay/commit/65e469af90e7f07a967e0eaeaa033bd9911dfd57))
+* **agent:** a door for "this service can go", and a collision message that does not invite the workaround ([c7dbc26](https://github.com/mdopp/servicebay/commit/c7dbc2680f10a1c1ba92a77c6731025b3cc7e717)), closes [#2994](https://github.com/mdopp/servicebay/issues/2994)
+
+
+### Bug Fixes
+
+* **mcp:** a file write_file wrote is now a file another container can read ([db54ffb](https://github.com/mdopp/servicebay/commit/db54ffb8e7900784566dbd42972f6ee908ec1173))
+* **mcp:** a file write_file wrote is now a file another container can read ([d7f23fa](https://github.com/mdopp/servicebay/commit/d7f23fa7c5d1f177636d4e87afe741e915ccdbf6)), closes [#2996](https://github.com/mdopp/servicebay/issues/2996)
+
 ## [5.39.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.38.1...servicebay-v5.39.0) (2026-09-21)
 
 
