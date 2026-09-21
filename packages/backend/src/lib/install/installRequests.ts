@@ -605,30 +605,18 @@ export interface InstallStart {
   node?: string;
 }
 
-/** The real installer: assemble the manifest, create the job, start it. */
+/** The real installer — the shared entry sequence, imported lazily so this
+ *  module stays loadable without the runner. ADR 0004: an agent-filed install
+ *  is additive, always, which is `startTemplateInstall`'s default. */
 async function defaultStartInstall(start: InstallStart): Promise<string> {
-  const [{ assembleManifest, applyVariableDefaults }, { createJob }, { startJob }] = await Promise.all([
-    import('./manifestAssembler'),
-    import('./jobStore'),
-    import('./runner'),
-  ]);
-  const assembled = await assembleManifest({
-    items: start.names.map(name => ({ name, checked: true })),
-    prefilled: start.variables,
-    templateSource: start.templateSource,
-  });
-  const withDefaults = await applyVariableDefaults({
-    items: assembled.items,
-    variables: assembled.variables,
-    templateSource: start.templateSource ?? 'Built-in',
-    host: 'localhost',
-    // ADR 0004: an agent-filed install is additive, always.
-    wipeMode: 'install',
+  const { startTemplateInstall } = await import('./startTemplateInstall');
+  const started = await startTemplateInstall({
+    names: start.names,
+    ...(start.templateSource ? { templateSource: start.templateSource } : {}),
+    variables: start.variables,
     ...(start.node ? { node: start.node } : {}),
-  }, start.templateSource);
-  const job = await createJob({ source: 'mcp', input: withDefaults });
-  startJob(job.id);
-  return job.id;
+  });
+  return started.jobId;
 }
 
 /**

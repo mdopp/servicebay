@@ -1,11 +1,18 @@
 /**
- * CLASS GATE: no agent-CLI verb reaches a mutating call (#2965, criterion 6).
+ * CLASS GATE: every agent-CLI verb's declared effect matches the tier of the
+ * route it really speaks (#2965; widened for the mutating verbs by #2990).
  *
- * The agent CLI is read-only by design. #2965 adds the first verb that writes
- * anything at all — `request-install`, which files a request an operator must
- * approve — and the whole security argument for it rests on a property no
- * single test of that one verb can carry: that the CLI still cannot change the
- * box, and that a verb added next month cannot quietly start to.
+ * The agent CLI was read-only by design, and #2990 ended that deliberately:
+ * the pi-web token carries `read,propose,lifecycle,mutate`, and a CLI that
+ * refused to carry a mutation did not prevent one — it sent the session to the
+ * raw `/mcp` endpoint with the token on the command line instead (ADR 0017).
+ * So the property this gate defends is no longer "the CLI cannot change the
+ * box". It is the one that still holds:
+ *
+ *   **A verb may only reach a route whose tier it declares, and it declares
+ *   the tier the route really carries.** Neither side may drift from the
+ *   other, in either direction, and a verb added next month cannot quietly
+ *   point somewhere wider than it admits.
  *
  * So this file checks the **class**. It walks `VERBS` — every entry, no
  * allow-list, no hand-kept list of "the safe ones" — and for each entry asks
@@ -35,16 +42,34 @@
  *                       `tokenScope` (the delegate pair, #2910: the presented
  *                       token IS the credential, and a child is never wider
  *                       than its parent)
+ *   `mutate`          → the route must carry a tokenScope on a MUTATING tier
+ *                       of the ladder, and that tier must be EXACTLY the one
+ *                       the verb declares in `scope` — so the CLI's own error
+ *                       message ("this verb needs `lifecycle`") is the tier the
+ *                       server will really demand, and a route quietly widened
+ *                       from `lifecycle` to `destroy` breaks the build instead
+ *                       of the operator's trust
  *
- * There is deliberately no fourth value. A verb that would install, deploy,
- * restart, delete or exec has nowhere to declare itself and no route tier it
- * may point at, so it goes red on the day it is added rather than on the day
- * someone notices.
+ * The fourth value is where the fail-closed argument lives, so it is checked in
+ * BOTH directions and neither half is redundant:
+ *
+ *   - a verb that is NOT `mutate` may never resolve to a route on a mutating
+ *     tier (the original #2965 clause, now scoped to the other three effects);
+ *   - a verb that IS `mutate` may never resolve to a route on `read` or
+ *     `propose` — a mutating verb pointed at a read route would sail through
+ *     the first clause while telling its caller the wrong tier, and a verb
+ *     declaring a scope its route does not carry is the same lie in reverse.
+ *
+ * What the CLI still may not do is decide. Destroy-tier work — removal, reset,
+ * exec — has no verb and no route it may point at here: it stays an approval
+ * (#2994), because a token that may change a service is not thereby a token
+ * that may end one.
  *
  * The `describe('the check itself')` block at the bottom is the negative
- * control: synthetic verbs — a mutating route, an invented effect, a missing
- * one, a request verb pointed somewhere that never files an approval — each
- * proving the corresponding criterion really goes red.
+ * control: synthetic verbs — an invented effect, a missing one, a read verb on
+ * a mutating route, a mutate verb on a read route, a mutate verb whose declared
+ * scope is not the route's, a request verb pointed somewhere that never files
+ * an approval — each proving the corresponding criterion really goes red.
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -84,8 +109,8 @@ export const MUTATING_SCOPES: readonly string[] = ALL_SCOPES.filter(
   s => s !== READ_SCOPE && s !== PROPOSE_SCOPE,
 );
 
-/** The closed set of effects a verb may declare. */
-const EFFECTS = ['read', 'request', 'own-credential'] as const;
+/** The closed set of effects a verb may declare (#2990 adds the fourth). */
+const EFFECTS = ['read', 'request', 'own-credential', 'mutate'] as const;
 
 /* ------------------------------------------------------------------ *
  * route resolution (same app-router rules as agent_cli_route_contract)
@@ -308,13 +333,14 @@ describe('every agent-CLI verb is read, own-credential, or a request (#2965)', (
       expect(found.file, `verb \`${name}\` speaks ${verb.method} ${found.pathname}, which resolves to no route.ts.`).not.toBeNull();
     });
 
-    it('never reaches a route on a mutating tier of the scope ladder', () => {
+    it('reaches a route on a mutating tier only if it declares effect=mutate', () => {
+      if (verb.effect === 'mutate') return;
       expect(
         MUTATING_SCOPES,
-        `verb \`${name}\` speaks ${verb.method} ${found.pathname}, whose handler carries `
-          + `tokenScope='${found.scope}' — a tier that CHANGES the box. The agent CLI never reaches one: an `
-          + 'installation is REQUESTED and ServiceBay executes what the operator approved (#2965). If this verb '
-          + 'genuinely needs to cause a change, file it as a request instead of widening the CLI.',
+        `verb \`${name}\` declares effect='${verb.effect}' but speaks ${verb.method} ${found.pathname}, whose `
+          + `handler carries tokenScope='${found.scope}' — a tier that CHANGES the box. Only a verb that declares `
+          + `effect='mutate' may reach one, and then it must declare that exact tier in \`scope\` (ADR 0017). If `
+          + 'this verb should not change the box, point it elsewhere; if it should, say so in its effect.',
       ).not.toContain(found.scope);
     });
 
@@ -328,12 +354,51 @@ describe('every agent-CLI verb is read, own-credential, or a request (#2965)', (
         expect(found.scope).toBeNull();
         return;
       }
+      if (verb.effect === 'mutate') {
+        // Half one: the route really is on a mutating tier. A `mutate` verb
+        // pointed at a read or propose route would pass the clause above (it
+        // is exempt there) and then tell its caller the wrong tier.
+        expect(
+          MUTATING_SCOPES,
+          `verb \`${name}\` declares effect='mutate', but ${verb.method} ${found.pathname} carries `
+            + `tokenScope='${found.scope ?? 'none'}' — not a mutating tier. A verb that does not change the box `
+            + 'must not claim it does: declare read, request or own-credential instead.',
+        ).toContain(found.scope);
+        // Half two: the tier it declares is the tier the server demands. The
+        // CLI quotes `scope` back in every auth refusal, so a mismatch here is
+        // an agent told to ask for the wrong thing.
+        expect(
+          found.scope,
+          `verb \`${name}\` declares scope='${verb.scope}', but ${verb.method} ${found.pathname} demands `
+            + `tokenScope='${found.scope ?? 'none'}'. The CLI reports its declared scope in every 401/403, so the `
+            + 'two must be the same word or the error message sends the agent after the wrong grant.',
+        ).toBe(verb.scope);
+        return;
+      }
       const expected = verb.effect === 'request' ? PROPOSE_SCOPE : READ_SCOPE;
       expect(
         found.scope,
         `verb \`${name}\` declares effect='${verb.effect}', so ${verb.method} ${found.pathname} must carry `
           + `tokenScope='${expected}' (it carries ${found.scope ?? 'none'}).`,
       ).toBe(expected);
+    });
+
+    it('declares the scope its route demands, for every scope-gated verb', () => {
+      if (verb.effect === 'own-credential') return;
+      expect(
+        verb.scope,
+        `verb \`${name}\` declares scope='${verb.scope}' while ${verb.method} ${found.pathname} carries `
+          + `tokenScope='${found.scope ?? 'none'}'.`,
+      ).toBe(found.scope);
+    });
+
+    it('never reaches the destroy, reboot or exec tiers — those stay approvals', () => {
+      expect(
+        ['destroy', 'reboot', 'exec'],
+        `verb \`${name}\` speaks ${verb.method} ${found.pathname}, which carries tokenScope='${found.scope}'. `
+          + 'A token that may change a service is not thereby a token that may end one: removal, reset and exec '
+          + 'have no CLI verb and are requested, not performed (#2994).',
+      ).not.toContain(found.scope);
     });
 
     it('goes through the approval path when, and only when, it is a request', () => {
@@ -357,14 +422,15 @@ describe('the check itself goes red on an offending verb (negative control)', ()
   });
 
   it('an invented effect nobody vetted', () => {
-    const bogus = { ...read, effect: 'mutate' } as Verb;
+    const bogus = { ...read, effect: 'destroy' } as Verb;
     expect(EFFECTS as readonly string[]).not.toContain(bogus.effect);
   });
 
-  it('a verb pointed at the real install route — the shape #2965 rejected', () => {
-    // `POST /api/install/start` is the route a direct `install` verb would
-    // speak, and it carries `tokenScope: 'lifecycle'`. The gate reads that off
-    // the checkout and refuses, whatever the verb claims about itself.
+  it('a read verb pointed at the real install route — the shape #2965 rejected', () => {
+    // `POST /api/install/start` carries `tokenScope: 'lifecycle'`. The gate
+    // reads that off the checkout and refuses, whatever the verb claims about
+    // itself. #2990 widened WHO may reach such a route, not whether a verb may
+    // misdescribe one.
     const offending = {
       ...read,
       effect: 'read',
@@ -375,22 +441,62 @@ describe('the check itself goes red on an offending verb (negative control)', ()
     const found = inspect(offending);
     expect(found.file).not.toBeNull();
     expect(MUTATING_SCOPES).toContain(found.scope);
+    expect(found.scope).not.toBe(READ_SCOPE);
+  });
+
+  it('a mutate verb pointed at a READ route — the other direction (#2990)', () => {
+    // The half that did not exist before the fourth effect: `GET /api/services`
+    // carries `tokenScope: 'read'`. A verb declaring effect='mutate' there is
+    // exempt from the "never touch a mutating tier" clause, so without this
+    // check it would pass while telling its caller to go get `mutate`.
+    const offending = { ...read, effect: 'mutate', scope: 'mutate' } as Verb;
+    const found = inspect(offending);
+    expect(found.file).not.toBeNull();
+    expect(MUTATING_SCOPES).not.toContain(found.scope);
+  });
+
+  it('a mutate verb whose declared scope is not the tier the route demands', () => {
+    // `POST /api/install/template` carries 'mutate'. A verb declaring
+    // scope: 'lifecycle' against it would print "this verb needs `lifecycle`"
+    // on every refusal and send the agent after a grant that still would not
+    // work.
+    const offending = {
+      ...read,
+      effect: 'mutate',
+      scope: 'lifecycle',
+      method: 'POST',
+      positionals: [],
+      path: () => '/api/install/template',
+    } as Verb;
+    const found = inspect(offending);
+    expect(found.scope).toBe('mutate');
+    expect(found.scope).not.toBe(offending.scope);
   });
 
   it('a mutating route that carries no tokenScope at all is refused too', () => {
-    // `POST /api/services/[name]/action` (start/stop/restart/update) is
-    // cookie-only: no tokenScope to read. `effect: 'read'` demands 'read', so
-    // an absent tier is a red rather than a hole.
-    const offending = {
-      ...read,
-      effect: 'read',
-      method: 'POST',
-      positionals: ['name'],
-      path: (args: Record<string, string>) => `/api/services/${args.name}/action`,
-    } as Verb;
-    const found = inspect(offending);
-    expect(found.file).not.toBeNull();
+    // The shape `POST /api/services/[name]/action` had until #2990: cookie-only,
+    // no tokenScope to read. Simulated here rather than pointed at the real
+    // route — which now carries 'lifecycle' — because an absent tier must stay
+    // a red for every effect, not a hole. `effect: 'mutate'` demands membership
+    // in MUTATING_SCOPES, and `null` is not a member.
+    const found = { pathname: '/api/anything', file: 'route.ts', scope: null, skipAuth: false, reachesApproval: false };
+    expect(MUTATING_SCOPES).not.toContain(found.scope);
     expect(found.scope).not.toBe(READ_SCOPE);
+    expect(found.scope).not.toBe(PROPOSE_SCOPE);
+  });
+
+  it('the real mutating verbs resolve, and to the tiers they declare', () => {
+    const update = inspect(VERBS.update);
+    expect(update.file).not.toBeNull();
+    expect(update.scope).toBe('lifecycle');
+    expect(VERBS.update.scope).toBe('lifecycle');
+    expect(MUTATING_SCOPES).toContain(update.scope);
+
+    const install = inspect(VERBS.install);
+    expect(install.file).not.toBeNull();
+    expect(install.scope).toBe('mutate');
+    expect(VERBS.install.scope).toBe('mutate');
+    expect(MUTATING_SCOPES).toContain(install.scope);
   });
 
   it('a request verb whose route never files an approval', () => {

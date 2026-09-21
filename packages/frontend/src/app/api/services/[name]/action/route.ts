@@ -17,8 +17,25 @@ const Body = z.object({
 });
 const Query = z.object({ node: z.string().optional() });
 
+/**
+ * POST /api/services/[name]/action — start | stop | restart | update | force-update.
+ *
+ * `tokenScope: 'lifecycle'` (#2990) — the same tier this route's MCP twin
+ * `manage_service` has carried since #2397, and the tier `/api/install/start`
+ * already carries. It was cookie-only until now, which did not make the box
+ * safer: the agent CLI had no verb for it, so a scoped session that needed to
+ * move a service onto a new image was sent to the raw `/mcp` endpoint with its
+ * token on the command line. The token already decided; only the door was
+ * wrong (ADR 0017).
+ *
+ * `force-update` is the action the CLI's `update` verb speaks. Note the
+ * asymmetry with the plain `update` action below it: `update` restarts without
+ * proving the image moved, `force-update` returns per-image before/after
+ * digests and a `stale` flag, which is what lets a caller tell a real update
+ * from a no-op (#2983).
+ */
 export const POST = withApiHandlerParams<z.infer<typeof Body>, z.infer<typeof Query>, { name: string }>(
-  { body: Body, query: Query },
+  { body: Body, query: Query, tokenScope: 'lifecycle' },
   async ({ body, query, params }) => {
     const check = ServiceName.safeParse(decodeURIComponent(params.name));
     if (!check.success) {

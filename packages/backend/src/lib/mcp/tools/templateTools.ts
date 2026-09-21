@@ -4,17 +4,14 @@
  */
 import { z } from 'zod';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
-import { assembleManifest, applyVariableDefaults } from '@/lib/install/manifestAssembler';
 import {
-  createJob,
   getJob,
   readLog,
   getCurrentJob,
   InstallInProgressError,
-  type JobInput,
   type WipeMode,
 } from '@/lib/install/jobStore';
-import { startJob } from '@/lib/install/runner';
+import { startTemplateInstall } from '@/lib/install/startTemplateInstall';
 import { redactLogText } from '../redact';
 import { nodeParam, textResult, errorResult, type ToolRegistration } from './context';
 
@@ -82,26 +79,17 @@ export function registerTemplateTools({ server }: ToolRegistration) {
         if (active) {
           return errorResult(`An install job is already in progress (jobId=${active.id}, phase=${active.phase}). Wait for it to finish (poll get_install_progress) or abort it before starting another.`);
         }
-        const assembled = await assembleManifest({
-          items: names.map((name: string) => ({ name, checked: true })),
-          prefilled: variables,
-          templateSource,
-        });
-        const input: JobInput = {
-          items: assembled.items,
-          variables: assembled.variables,
-          templateSource: templateSource ?? 'Built-in',
-          host: 'localhost',
-          wipeMode: (wipeMode as WipeMode | undefined) ?? 'install',
+        const started = await startTemplateInstall({
+          names,
+          ...(templateSource ? { templateSource } : {}),
+          variables,
+          ...(wipeMode ? { wipeMode: wipeMode as WipeMode } : {}),
           ...(node ? { node } : {}),
-        };
-        const withDefaults = await applyVariableDefaults(input, templateSource);
-        const job = await createJob({ source: 'mcp', input: withDefaults });
-        startJob(job.id);
+        });
         return textResult({
-          jobId: job.id,
-          phase: job.phase,
-          note: `Install started. Poll get_install_progress(jobId="${job.id}") for phase, logs, and deployed service names.`,
+          jobId: started.jobId,
+          phase: started.phase,
+          note: `Install started. Poll get_install_progress(jobId="${started.jobId}") for phase, logs, and deployed service names.`,
         });
       } catch (e) {
         if (e instanceof InstallInProgressError) {
