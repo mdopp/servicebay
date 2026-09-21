@@ -74,6 +74,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { execFile } from 'node:child_process';
+import { shareWithOtherContainers, type Run, type ShareResult } from '@/lib/selinux';
 import { promisify } from 'util';
 import { DATA_DIR } from '@/lib/dirs';
 import { logger } from '@/lib/logger';
@@ -319,6 +320,18 @@ export interface AssistSyncResult {
   sha?: string | null;
   entryCount?: number | null;
   error?: string;
+  /**
+   * Is the delivered tree readable by the containers that mount it? (#3016)
+   *
+   * A delivery can succeed completely — right commit, right files, right count
+   * — and still be useless, because the tree carries this container's SELinux
+   * categories and nothing else may read it. Until now the only way to find
+   * that out was pi going blind: an empty `assists/` and "the agent kit is not
+   * mounted", a true statement about an untrue cause. So the sync says it.
+   */
+  shared?: boolean;
+  /** Present only when `shared` is false: which paths, and the hand fix. */
+  labelWarning?: string;
 }
 
 /**
@@ -340,6 +353,79 @@ async function dropLegacyCheckout(): Promise<void> {
   } catch (e) {
     logger.warn(TAG, `Could not remove the legacy catalog checkout at ${legacy}: ${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+/**
+ * Make the delivered kit readable by the containers it exists for (#3016).
+ *
+ * The problem is not `checkout` — it is its PARENT. `syncAssistCatalog()`
+ * creates `checkout` fresh, and a newly created directory inherits its parent's
+ * label, which on this box comes from the `:Z` volume and carries ServiceBay's
+ * own MCS categories. So every delivery re-stamps the tree, and pi-web — which
+ * bind-mounts `agent-cli/`, `agent-docs/` and `assists/` out of it read-only —
+ * is denied again. What the locked-out session sees is:
+ *
+ *     ls /opt/servicebay/assists | wc -l   ->  0      (instead of 57)
+ *     servicebay health                    ->  "the agent kit is not mounted"
+ *
+ * A true statement about an untrue cause, with no path from there to why. On
+ * 2026-09-21 it happened four times between 07:37 and 11:30, each time repaired
+ * by a hand `chcon -R -l s0` that only someone with a root shell on the box can
+ * run. Neither pi nor a ServiceBay session can see it or fix it — and the fix
+ * landing in the catalog is itself the event that locks out the session that
+ * needs it.
+ *
+ * #2996 built exactly this relabel for `write_file` and its comment said out
+ * loud that it was "the same hand fix the agent-kit checkout needs after every
+ * restart". The connection was seen; the call was missing. Here it is.
+ *
+ * Run LOCALLY, not through the node's agent: this runs at boot, seconds after
+ * podman's `:Z` relabel, before an agent connection can be assumed. A failure
+ * is logged with what it means, never swallowed — the delivery itself still
+ * succeeded, and reporting otherwise would trade one silent wrong state for
+ * another.
+ *
+ * Deliberately NOT done by nesting a `:z` volume inside the `:Z` one: podman
+ * relabels both at start and the order is not deterministic. Three restarts on
+ * unchanged config gave stamped / shared / stamped (#3013, reverted by #3015).
+ */
+const localRun: Run = async (argv) => {
+  try {
+    const { stdout, stderr } = await execFileAsync(argv[0], argv.slice(1), { timeout: 30_000 });
+    return { code: 0, stdout, stderr };
+  } catch (e) {
+    const err = e as { code?: number; stdout?: string; stderr?: string; message?: string };
+    return {
+      code: typeof err.code === 'number' ? err.code : 1,
+      stdout: err.stdout ?? '',
+      stderr: err.stderr ?? err.message ?? '',
+    };
+  }
+};
+
+/** `run` is injected so a test can drive the relabel against a fake box; the
+ *  default is the local one, because this runs at boot. */
+export async function shareDeliveredKit(run: Run = localRun): Promise<ShareResult> {
+  const root = ROOT_DIR();
+  const result = await shareWithOtherContainers({
+    run,
+    path: root,
+    recursive: true,
+    // The root is not proof. A recursive relabel that half-worked leaves a
+    // shared root over categorised children — which is the state a reader
+    // actually trips on — so the places pi-web mounts are checked by name.
+    verify: [root, CHECKOUT_DIR(), ...AGENT_KIT_SUBDIRS.map(d => path.join(CHECKOUT_DIR(), d))],
+    handFix: `chcon -R -l s0 ${root}`,
+  });
+
+  if (result.labelWarning) {
+    logger.warn(TAG, `Delivered kit is NOT readable by other containers. ${result.labelWarning}`);
+  } else if (result.labelNote) {
+    logger.debug(TAG, result.labelNote);
+  } else {
+    logger.debug(TAG, `Delivered kit labelled ${result.label} — no MCS categories, so a mounting container can read it.`);
+  }
+  return result;
 }
 
 export async function syncAssistCatalog(): Promise<AssistSyncResult> {
@@ -368,6 +454,9 @@ export async function syncAssistCatalog(): Promise<AssistSyncResult> {
     }
 
     const entryCount = await verifyDeliveredKit(dest);
+    // After the write, before the state file: a delivered kit nobody can read
+    // is not a delivered kit (#3016).
+    const share = await shareDeliveredKit();
 
     const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: dest, env: GIT_ENV });
     const sha = stdout.trim();
@@ -378,7 +467,11 @@ export async function syncAssistCatalog(): Promise<AssistSyncResult> {
       `Agent kit delivered to ${dest}: ${entryCount} assist entries + ${AGENT_KIT_SUBDIRS.join(', ')} ` +
       `at ${sha.slice(0, 8)} (${catalogRepoUrl()}#${catalogRepoRef()}).`,
     );
-    return { status: 'synced', dir, sha, entryCount };
+    return {
+      status: 'synced', dir, sha, entryCount,
+      shared: share.shared,
+      ...(share.labelWarning ? { labelWarning: share.labelWarning } : {}),
+    };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     await writeDeliveryState({ ...previous, lastAttemptAt: now, lastError: error });

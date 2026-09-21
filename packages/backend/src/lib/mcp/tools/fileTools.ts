@@ -12,6 +12,11 @@ import { z } from 'zod';
 import { AgentExecutor } from '@/lib/agent/executor';
 import { largestDirsUnderDataDir } from '@/lib/diagnose/probes/disk';
 import { jailPath, realPathInJail, JAIL_ROOT } from '../pathJail';
+import { shareWithOtherContainers, mcsCategories } from '@/lib/selinux';
+
+/** Re-exported: the parsing lives in `lib/selinux.ts` now (#3016), where the
+ *  catalog delivery uses it too. */
+export { mcsCategories };
 import { redactKubeYaml, redactLogText, redactQuadletUnit } from '../redact';
 import { nodeParam, resolveNode, textResult, errorResult, type ToolRegistration } from './context';
 
@@ -37,63 +42,6 @@ async function assertRealpathInJail(
   ]);
   if (realPathInJail(real.stdout ?? '', rootReal.stdout ?? '')) return null;
   return `Path escapes the allowed root ${JAIL_ROOT}: "${reqPath}" resolves (via symlink) to "${(real.stdout ?? '').trim()}".`;
-}
-
-/**
- * The categories in an SELinux label, if it has any: `…:s0:c1022,c1023` → the
- * `c…` part. Exported for the tests, because this substring is the whole
- * difference between a file another container can read and one it cannot.
- */
-export function mcsCategories(label: string): string | null {
-  const m = /:(c\d+(?:[,.]c?\d+)*)\s*$/.exec(label.trim());
-  return m ? m[1] : null;
-}
-
-/**
- * Make a just-written file readable by OTHER containers, and report the label
- * that is actually on it (#2996).
- *
- * A file written from this container inherits ServiceBay's MCS categories, and
- * a container mounting it via `hostPath` is denied because its own category set
- * differs. `chcon -l s0` drops the categories — the same hand fix the agent-kit
- * checkout needs after every restart — which is the point of the shared data
- * root: files under it exist to be mounted by the service that owns them.
- *
- * Then it reads the label BACK. Reporting the label we asked for rather than
- * the one on disk would be the same false success (`ownershipSet: true`) in a
- * new field, and this whole issue is about a tool that reported success while
- * the consumer could not read the file.
- *
- * A box without SELinux is not a failure: `chcon` is simply unavailable, and
- * there are no categories to strip. It reports `label: null` and says so.
- */
-async function shareWithOtherContainers(
-  exec: AgentExecutor,
-  jailedPath: string,
-): Promise<{ label: string | null; labelNote?: string; labelWarning?: string }> {
-  const relabel = await exec.execSafe(['chcon', '-l', 's0', '--', jailedPath], { sudo: true, check: false });
-  const read = await exec.execSafe(['stat', '-c', '%C', '--', jailedPath], { check: false });
-  const label = read.code === 0 ? (read.stdout ?? '').trim() : '';
-
-  if (!label || label === '?') {
-    return {
-      label: null,
-      labelNote: 'This node reports no SELinux label, so there are no MCS categories to strip and any container '
-        + 'mounting this path can read it.',
-    };
-  }
-  const categories = mcsCategories(label);
-  if (!categories) return { label };
-
-  // The categories survived. Say exactly what that means for the consumer,
-  // because "it was written" is the part that already looked fine.
-  return {
-    label,
-    labelWarning: `The file still carries SELinux MCS categories (${categories}), so a DIFFERENT container mounting `
-      + `this path via hostPath will be denied — read_file can still read it, which is what makes this easy to miss. `
-      + `chcon -l s0 ${relabel.code === 0 ? 'reported success but the label did not change' : `failed: ${(relabel.stderr ?? '').trim() || `exit ${relabel.code}`}`}. `
-      + 'An operator can fix it on the box with `chcon -l s0 <path>` (or `-R` for a tree).',
-  };
 }
 
 /**
@@ -228,7 +176,15 @@ export function registerFileTools({ server }: ToolRegistration) {
         await exec.writeFile(jailed.path, content);
         const chown = await exec.execSafe(['chown', 'core:core', '--', jailed.path], { sudo: true, check: false });
         const ownershipSet = chown.code === 0;
-        const label = await shareWithOtherContainers(exec, jailed.path);
+        // #2996 / #3016 — ownership was never the whole story. The shared
+        // helper relabels and reads the label BACK; this tool reports what it
+        // found rather than what it asked for.
+        const { shared: _shared, ...label } = await shareWithOtherContainers({
+          run: argv => exec.execSafe(argv, { sudo: true, check: false })
+            .then(r => ({ code: r.code ?? 0, stdout: r.stdout ?? '', stderr: r.stderr ?? '' })),
+          path: jailed.path,
+          handFix: `chcon -l s0 ${jailed.path}`,
+        });
         return textResult({
           path: jailed.path,
           bytes: Buffer.byteLength(content, 'utf8'),
