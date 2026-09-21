@@ -42,17 +42,35 @@ that image and wires ports, mounts, subdomain, SSO, and health.
             cache-from: type=gha
             cache-to: type=gha,mode=max
   ```
-- **The package's visibility is a decision, and it is the operator's.** A GHCR
-  package inherits the repo's visibility: a private repo publishes a *private*
-  package, and the box cannot pull it — the install fails with an auth error
-  that looks like a broken image name. The two ways out are not equivalent, so
-  put them to the operator rather than picking one
+- **A GHCR package has its OWN visibility, and it starts private.** It does not
+  follow the repo, and making the repo public does not change it. A public repo
+  with a private package is the normal state after a workflow's first push, and
+  it fails at the box like this:
+
+  ```
+  $ gh api repos/<you>/<name> --jq .visibility
+  public
+  $ gh api user/packages/container/<name> --jq .visibility
+  private                                  # ← the one that matters
+  $ podman pull ghcr.io/<you>/<name>:latest
+  unauthorized
+  ```
+
+  The error says `unauthorized` while the repo is browsable by anyone, so it
+  reads like a broken image name or a missing token and is neither. Check the
+  package, not the repo — that one line is the whole diagnosis.
+
+  Changing it is the operator's decision, and for a user-owned package it is
+  done in the web UI, not by any CLI or API: the package page
+  (`https://github.com/users/<you>/packages/container/package/<name>`) →
+  *Package settings* → *Change visibility*. Put the two options to them rather
+  than picking one
   (`servicebay assist guide-when-to-ask-and-how-to-put-a-decision-to-the-operator`):
 
-  - **Make the package public** while the repo stays private. Anyone can then
-    pull the image; the source is still closed. Simplest, and right for most
-    things that are served publicly anyway. In GitHub: the package's page →
-    *Package settings* → *Change visibility*.
+  - **Make the package public.** Anyone can then pull the image. The repo's
+    own visibility is untouched either way — a private repo keeps its source
+    closed, a public one stays public. Simplest, nothing to rotate, and right
+    for anything that is served publicly anyway.
   - **Keep it private and give the box a pull credential.** A classic PAT with
     `read:packages`, stored on the box as a registry credential. More moving
     parts, and one more secret that has to be rotated.
