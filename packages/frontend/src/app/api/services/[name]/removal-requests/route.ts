@@ -54,8 +54,15 @@ export const POST = withApiHandlerParams<z.infer<typeof Body>, undefined, { name
     // work out, and the agent learns nothing from it either. Through the
     // ServiceManager facade, not `serviceListing` directly — every route does
     // (`service-manager-single-mutation-path`).
-    const services = await ServiceManager.listServices(node).catch(() => []);
-    if (!services.some(s => s.name === name)) {
+    // A listing that FAILED is not an empty listing: treating them alike would
+    // answer "nothing to remove" for every name the moment a node is
+    // unreachable, and an agent would file nothing while believing it had
+    // asked. We only claim absence when we actually enumerated.
+    const listed = await ServiceManager.listServices(node).then(
+      s => ({ ok: true as const, services: s }),
+      () => ({ ok: false as const, services: [] }),
+    );
+    if (listed.ok && !listed.services.some(s => s.name === name)) {
       return NextResponse.json(
         { error: `No service named "${name}" on node "${node}" — nothing to remove. Check \`servicebay services\`.` },
         { status: 404 },
