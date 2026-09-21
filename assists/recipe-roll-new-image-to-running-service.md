@@ -19,14 +19,30 @@ new build on their own:
 So a CI push to `:latest` sits unused until you explicitly pull *and* restart.
 
 ## The flow — one action does all of it
-`manage_service(action="force-update", name="<service>")` re-checks the
-registry, re-pulls every image the service declares, and force-removes its
-containers so the unit *cannot* come back up on the cached image. It returns a
-per-image report with `before` / `registry` / `after` digests, so you can see
-whether anything actually moved instead of assuming it did. The operator
-equivalent is **Force update** on the service's Actions tab. Neither depends on
-`podman-auto-update.timer`, which stays masked until an update window is
-configured.
+
+From a shell:
+
+```sh
+servicebay images <service>    # is there anything new to move? (read-only)
+servicebay update <service>    # move it — CHANGES the box, needs `lifecycle`
+```
+
+`update` re-checks the registry, re-pulls every image the service declares, and
+force-removes its containers so the unit *cannot* come back up on the cached
+image. It prints a per-image report with `before` / `registry` / `after`
+digests, so you can see whether anything actually moved instead of assuming it
+did, and it **exits non-zero when the pull did not take** — do not read a 0 into
+a run you did not look at. For a stuck image, `--mode fresh` deletes the local
+copy first.
+
+The same route from MCP is `manage_service(action="force-update",
+name="<service>")`, for clients that speak MCP rather than a shell — the
+companion app, automation. If you have `servicebay` on `$PATH`, you do not need
+it, and reaching for it costs you the exit code and the rendered digest table.
+
+The operator equivalent is **Force update** on the service's Actions tab. None
+of them depends on `podman-auto-update.timer`, which stays masked until an
+update window is configured.
 
 The action stays at the `lifecycle` token tier (so routine automation and the
 companion app keep it), but every force-update is treated as a **destructive

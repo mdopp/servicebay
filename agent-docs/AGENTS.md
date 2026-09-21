@@ -265,12 +265,16 @@ until you ask both. Ask both, then report what they said.
    installed**, `install_template` re-pulls the image and leaves the running
    container on the old layers, and a plain restart reuses the cached image.
    Installing again therefore reports success and changes nothing, however many
-   times you do it. The one call that moves it is
-   `manage_service(action="force-update", name="<service>")`, which re-pulls and
-   force-recreates the containers, and answers with `before` / `registry` /
-   `after` digests so you can see whether anything moved instead of assuming it.
-   `changed: false` with `stale: true` means retry with `fresh: true`. The full
-   recipe, including rollback anchors, is
+   times you do it. From a shell the call that moves it is **`servicebay update
+   <service>`**: it re-pulls and force-recreates the containers, and prints
+   `before` / `registry` / `after` digests per image, so you can see whether
+   anything moved instead of assuming it. It exits non-zero when the pull did
+   not take — retry that one with `--mode fresh`, which drops the local image
+   first. Ask `servicebay images <service>` beforehand if you want to know
+   whether there is anything new to move at all. (`manage_service` with
+   `action: "force-update"` is the same route seen from MCP, for clients that
+   speak it — the companion app, automation. From a shell you do not need it.)
+   The full recipe, including rollback anchors, is
    `servicebay assist recipe-roll-new-image-to-running-service`.
 5. **Assists, the CLI and this file are the exception**: they are delivered from
    the repo checkout, not from an image, so a `docs(assists):` commit on `main`
