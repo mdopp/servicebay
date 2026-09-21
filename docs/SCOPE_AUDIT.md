@@ -128,6 +128,7 @@ not listed here reject Bearer tokens (cookie/internal-token only).
 | `/api/system/channel` | GET | `read` | read release channel |
 | `/api/system/boot/usb-next` | GET | `read` | poll USB-boot readiness |
 | `/api/install/current` | GET | `read` | poll install progress |
+| `/api/services/[name]/images` | GET | `read` | is the image this service pulls published, pulled and current — inspects a manifest and the local image store, pulls nothing. The read-tier answer to "did CI ever publish anything" (#2995) |
 | `/api/install/plan` | POST | `read` | compute install plan (inspect-only) |
 | `/api/settings` | GET | `read` | read settings |
 | `/api/services` | GET | `read` | list services + external links (read-only; opted in on #2899 — it had no `tokenScope`, so a valid `read` token 401'd while its lean twin `/napi/services` accepted one) |

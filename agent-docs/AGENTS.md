@@ -84,6 +84,7 @@ one unfiltered dump costs more of your context than the rest of this file.
 | `servicebay revoke <id>` | Revoke one child token you delegated. |
 | `servicebay whoami` | Say what the token you hold is — name, scopes, parent, expiry. The answer to "what may I do", from the server, not from this file. |
 | `servicebay progress` | Show the install job running right now: phase, current item, what it has deployed so far. |
+| `servicebay images <service> [--node <name>]` | Is what this service pulls actually published, pulled and current? Names WHICH kind of "no": `not-published` means nothing was ever pushed under that tag. Exit 7 when something is wrong. |
 | `servicebay update <service> [--mode fresh] [--node <name>]` | Move a service onto the image its registry publishes and force-recreate its containers, so it cannot come back up on the cached one. Prints before/after digests per image. **CHANGES the box**; needs `lifecycle`. `--mode fresh` deletes the local image first — the fallback for a stuck one. Exit 6 means the pull did not take. |
 | `servicebay install <template> [--var <NAME=value>] [--source <name>] [--node <name>]` | Install a template the full wizard way (variables, secrets, subdomain, proxy, SSO wiring). The service is named after the template. **CHANGES the box**; needs `mutate`. Additive always — there is no wipe. |
 | `servicebay request-install <template> --as <service> --reason <text> [--subdomain <label>] [--mount <host:container[:ro]>] [--port <host:container[/udp]>] [--var <NAME=value>] [--source <name>] [--node <name>]` | ASK the operator to install a template. It files a request and installs nothing; ServiceBay runs the approved plan. Prints a request id. |
@@ -199,6 +200,38 @@ Your change is proved by the project's own gate, not by the box:
   read verbs answer about the running box, not about your checkout, and a
   container carrying a browser can load the deployed page and read its console.
   What you may not do is call a green gate a rollout.
+
+## You cannot build an image here — and what to do instead
+
+There is no `podman`, no `docker`, no `buildah` and no socket in this container,
+and that is deliberate (ADR 0007). **The only path from code to a running
+service is: push → CI builds and publishes an image → the box pulls it.** There
+is no second path, and every attempt to invent one has ended badly: a tarball in
+an environment variable, base64 through a 15 000-character command line, files
+written flat onto a host mount the target container cannot read. If you catch
+yourself designing one of those, the release path is broken and *that* is the
+thing to fix.
+
+Two commands tell you which half is broken, and they are the whole diagnosis:
+
+```sh
+node "$SERVICEBAY_AGENT_KIT/agent-cli/release-check.mjs"   # the repo half
+servicebay images <service>                                 # the box half
+```
+
+- **`release-check`** asks GitHub: is there a workflow that builds an image,
+  does it declare `contents: read` **and** `packages: write`, did its last run
+  pass? The first of those is the one that bites silently — on a **private**
+  repo a workflow without `contents: read` fails checkout with *"Repository not
+  found"*, which reads like a typo in the repo name and is not.
+- **`servicebay images <service>`** asks the box: does the registry actually
+  serve the tag this service pulls? `not-published` means nothing was ever
+  pushed under it — no amount of restarting, reinstalling or redeploying will
+  change that. `unreachable` means retry; `unauthorized` means the package is
+  private to this node.
+
+A green build and an unpublished tag look identical from inside this container
+until you ask both. Ask both, then report what they said.
 
 ## How a change rolls out
 
