@@ -40,6 +40,63 @@ async function assertRealpathInJail(
 }
 
 /**
+ * The categories in an SELinux label, if it has any: `…:s0:c1022,c1023` → the
+ * `c…` part. Exported for the tests, because this substring is the whole
+ * difference between a file another container can read and one it cannot.
+ */
+export function mcsCategories(label: string): string | null {
+  const m = /:(c\d+(?:[,.]c?\d+)*)\s*$/.exec(label.trim());
+  return m ? m[1] : null;
+}
+
+/**
+ * Make a just-written file readable by OTHER containers, and report the label
+ * that is actually on it (#2996).
+ *
+ * A file written from this container inherits ServiceBay's MCS categories, and
+ * a container mounting it via `hostPath` is denied because its own category set
+ * differs. `chcon -l s0` drops the categories — the same hand fix the agent-kit
+ * checkout needs after every restart — which is the point of the shared data
+ * root: files under it exist to be mounted by the service that owns them.
+ *
+ * Then it reads the label BACK. Reporting the label we asked for rather than
+ * the one on disk would be the same false success (`ownershipSet: true`) in a
+ * new field, and this whole issue is about a tool that reported success while
+ * the consumer could not read the file.
+ *
+ * A box without SELinux is not a failure: `chcon` is simply unavailable, and
+ * there are no categories to strip. It reports `label: null` and says so.
+ */
+async function shareWithOtherContainers(
+  exec: AgentExecutor,
+  jailedPath: string,
+): Promise<{ label: string | null; labelNote?: string; labelWarning?: string }> {
+  const relabel = await exec.execSafe(['chcon', '-l', 's0', '--', jailedPath], { sudo: true, check: false });
+  const read = await exec.execSafe(['stat', '-c', '%C', '--', jailedPath], { check: false });
+  const label = read.code === 0 ? (read.stdout ?? '').trim() : '';
+
+  if (!label || label === '?') {
+    return {
+      label: null,
+      labelNote: 'This node reports no SELinux label, so there are no MCS categories to strip and any container '
+        + 'mounting this path can read it.',
+    };
+  }
+  const categories = mcsCategories(label);
+  if (!categories) return { label };
+
+  // The categories survived. Say exactly what that means for the consumer,
+  // because "it was written" is the part that already looked fine.
+  return {
+    label,
+    labelWarning: `The file still carries SELinux MCS categories (${categories}), so a DIFFERENT container mounting `
+      + `this path via hostPath will be denied — read_file can still read it, which is what makes this easy to miss. `
+      + `chcon -l s0 ${relabel.code === 0 ? 'reported success but the label did not change' : `failed: ${(relabel.stderr ?? '').trim() || `exit ${relabel.code}`}`}. `
+      + 'An operator can fix it on the box with `chcon -l s0 <path>` (or `-R` for a tree).',
+  };
+}
+
+/**
  * Stat a jailed file and confirm it is a regular file within `limit`
  * bytes (rejects device nodes, dirs, and oversized blobs before we slurp
  * them through the agent). Returns an error message string, else null.
@@ -121,9 +178,28 @@ export function registerFileTools({ server }: ToolRegistration) {
   // data-losing wipe — no pre-mutation snapshot). The escape guard runs on the
   // PARENT dir (`realpath -m` on the file's own path resolves fine even when
   // the file doesn't exist yet, and rejects a parent symlink pointing out).
+  //
+  // #2996 — ownership was never the whole story. A file written from THIS
+  // container inherits ServiceBay's own SELinux MCS categories:
+  //
+  //     unconfined_u:object_r:container_file_t:s0:c1022,c1023
+  //
+  // Another container that mounts the path via `hostPath` is denied, because
+  // its category set is different — while `read_file` reads it back happily,
+  // because we are the one process that CAN. The old answer
+  // (`ownershipSet: true`) read as success and actively suggested permissions
+  // were handled. On 2026-09-20 a session built a deployment on write_file +
+  // hostPath, watched it 404 for half an hour, and concluded "the hostPath
+  // volume mount is not picking up the files" — right, with no way from there
+  // to why.
+  //
+  // So the write also clears the categories (`chcon -l s0`), which is exactly
+  // the hand fix the agent-kit checkout needs after every restart, and then
+  // READS THE LABEL BACK and reports it. Reporting the label we asked for
+  // rather than the one on disk would be the same lie in a new field.
   server.tool(
     'write_file',
-    `Write a UTF-8 text file on a node, jailed to ${JAIL_ROOT} (service data dirs live here). Use this instead of base64-piping content through \`exec_command\`. Creates the parent directory if missing and sets core:core ownership. The path is resolved and rejected if it escapes the jail (\`..\`, an absolute path outside it, or a symlink pointing out).`,
+    `Write a UTF-8 text file on a node, jailed to ${JAIL_ROOT} (service data dirs live here). Use this instead of base64-piping content through \`exec_command\`. Creates the parent directory if missing, sets core:core ownership, and clears the SELinux MCS categories so a DIFFERENT container can read the file through a hostPath mount (#2996) — without that the file is visible to read_file and invisible to the service that needs it. The answer reports the label actually on disk (\`label\`); if it still carries \`:c\` categories, no other container will read it. The path is resolved and rejected if it escapes the jail (\`..\`, an absolute path outside it, or a symlink pointing out).`,
     {
       path: z.string().min(1).describe(`File path; relative paths are anchored at ${JAIL_ROOT}. Must resolve inside ${JAIL_ROOT}.`),
       content: z.string().describe('Full UTF-8 file content to write (overwrites any existing file).'),
@@ -152,11 +228,13 @@ export function registerFileTools({ server }: ToolRegistration) {
         await exec.writeFile(jailed.path, content);
         const chown = await exec.execSafe(['chown', 'core:core', '--', jailed.path], { sudo: true, check: false });
         const ownershipSet = chown.code === 0;
+        const label = await shareWithOtherContainers(exec, jailed.path);
         return textResult({
           path: jailed.path,
           bytes: Buffer.byteLength(content, 'utf8'),
           ownershipSet,
           ...(ownershipSet ? {} : { ownershipWarning: `File written but chown core:core failed: ${(chown.stderr ?? '').trim() || `exit ${chown.code}`}` }),
+          ...label,
         });
       } catch (err) {
         return errorResult(`Error writing file: ${err instanceof Error ? err.message : String(err)}`);
