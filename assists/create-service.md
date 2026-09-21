@@ -42,8 +42,26 @@ that image and wires ports, mounts, subdomain, SSO, and health.
             cache-from: type=gha
             cache-to: type=gha,mode=max
   ```
-  The box must be able to **pull** it
-  (public package, or registry credentials configured on the box).
+- **The package's visibility is a decision, and it is the operator's.** A GHCR
+  package inherits the repo's visibility: a private repo publishes a *private*
+  package, and the box cannot pull it — the install fails with an auth error
+  that looks like a broken image name. The two ways out are not equivalent, so
+  put them to the operator rather than picking one
+  (`servicebay assist guide-when-to-ask-and-how-to-put-a-decision-to-the-operator`):
+
+  - **Make the package public** while the repo stays private. Anyone can then
+    pull the image; the source is still closed. Simplest, and right for most
+    things that are served publicly anyway. In GitHub: the package's page →
+    *Package settings* → *Change visibility*.
+  - **Keep it private and give the box a pull credential.** A classic PAT with
+    `read:packages`, stored on the box as a registry credential. More moving
+    parts, and one more secret that has to be rotated.
+
+  What is **not** a way out: inlining the application into the pod spec —
+  base64 in `args`, a tarball in an env var — so nothing has to be pulled. That
+  hides an unanswered access question inside a 100 KB service definition and
+  leaves the image CI builds unused. If you find yourself doing it, the registry
+  question is the task; go and ask it.
 - The **template** references that image; it does not build code.
 
 ## Template contract (`template.yml`, kube `Pod`)
@@ -123,9 +141,16 @@ proxy host at `<sub>.<PUBLIC_DOMAIN>`:
    Authelia wiring, dependency ordering, migrations — not the raw-YAML
    `deploy_service` shortcut. Confirm the pod with `list_containers`, and read
    `get_logs` on the new container if it isn't up.
-5. **Verify** — healthcheck 200; `https://<sub>.<PUBLIC_DOMAIN>/` unauthenticated
-   returns **302 → auth.<domain>** (Authelia); the app's function works; and a
-   request missing `Remote-User` is rejected (no SSO bypass).
+5. **Verify — and "healthcheck" means two different things here.** Walk
+   `servicebay assist checklist-a-deployment-is-not-done-until-you-looked`
+   before you report anything: the **container's own** healthcheck green (not
+   just an HTTP 200 — a crash-looping container serves those happily), a
+   `RestartCount` that does not move, the page loaded in a real browser with
+   zero console errors, and `servicebay images <service>` saying "published,
+   pulled, current". On top of that, the SSO shape for a public subdomain:
+   `https://<sub>.<PUBLIC_DOMAIN>/` unauthenticated returns **302 →
+   auth.<domain>** (Authelia), and a request missing `Remote-User` is rejected
+   (no SSO bypass).
 
 ## Verify the proxy actually loaded
 The install log can say "proxy hosts ensured" while nginx reverted the conf.
