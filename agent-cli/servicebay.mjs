@@ -338,6 +338,8 @@ export const VERBS = {
     summary: 'say what the token you hold is: name, scopes, parent, expiry',
     usage: 'whoami',
     effect: 'own-credential',
+    // Report WHICH credential answered, not just what it may do (#3000).
+    showsCredentialSource: true,
     auth: 'parent-token',
     // Same credential model as delegate/revoke, but the phrase must not say
     // "delegation parent": nothing is delegated here, the token is only asked
@@ -699,16 +701,41 @@ export function parseVariables(value) {
  * collapsed onto this file is the ROUTE knowledge — the thing that was ageing
  * apart — not four lines of env reading.
  */
-export function readToken(env, readFile) {
+/**
+ * The credential, AND where it came from (#3000).
+ *
+ * The precedence itself is the safe one and always was: if
+ * `SERVICEBAY_MCP_TOKEN_FILE` is set it wins, and a file that is missing, empty
+ * or unreadable yields NOTHING — it never falls back to `SERVICEBAY_MCP_TOKEN`.
+ * A fallback there would hand a caller who asked for a narrow credential the
+ * widest one the container has, in the one case where it is least expected.
+ *
+ * What was missing is the ability to SEE which one you got. A wrapper between
+ * the shell and this file can rewrite the environment before we ever run, and
+ * on 2026-09-20 one did: a check script pointed the variable at a `read`-only
+ * token to prove a refusal, the wrapper overwrote it with the pod's full token,
+ * and the call went through — a real force-update on a service nobody meant to
+ * touch. Nothing in any output said which credential had been used.
+ *
+ * So `whoami` reports the source next to the identity. The path is not a
+ * secret; the token it holds never appears.
+ */
+export function resolveToken(env, readFile) {
   const file = env.SERVICEBAY_MCP_TOKEN_FILE;
   if (file) {
     try {
-      return String(readFile(file)).trim();
+      return { token: String(readFile(file)).trim(), source: `file: ${file}` };
     } catch {
-      return '';
+      return { token: '', source: `file: ${file} (unreadable)` };
     }
   }
-  return String(env.SERVICEBAY_MCP_TOKEN || '').trim();
+  const token = String(env.SERVICEBAY_MCP_TOKEN || '').trim();
+  return { token, source: token ? 'env: SERVICEBAY_MCP_TOKEN' : 'none' };
+}
+
+/** The token alone. Kept because callers and tests use it by name. */
+export function readToken(env, readFile) {
+  return resolveToken(env, readFile).token;
 }
 
 export function baseUrl(env) {
@@ -862,7 +889,7 @@ export async function run(argv, deps = {}) {
 
   const { verbName, verb, args, options, json } = parsed;
 
-  const token = readToken(env, readFile);
+  const { token, source: credentialSource } = resolveToken(env, readFile);
   if (!token) {
     return fail(verbName, {
       code: 'NO_TOKEN',
@@ -925,10 +952,17 @@ export async function run(argv, deps = {}) {
   // "still waiting for the operator" with one. `ok` follows the exit code so
   // `--json` cannot read as success while nothing has been installed (#2965).
   const exitCode = verb.exit ? verb.exit(body) : 0;
-  const payload = { ok: exitCode === 0, verb: verbName, data: body };
+  // `whoami` answers "what may I do"; without the source it cannot answer the
+  // question behind it — "and is this the credential I meant to use?" (#3000).
+  const payload = verb.showsCredentialSource
+    ? { ok: exitCode === 0, verb: verbName, data: body, credentialSource }
+    : { ok: exitCode === 0, verb: verbName, data: body };
+  const rendered = verb.showsCredentialSource
+    ? `${verb.text(body)}\n${line('source  ', credentialSource)}`
+    : verb.text(body);
   return {
     exitCode,
-    stdout: json ? `${JSON.stringify(payload, null, 2)}\n` : `${verb.text(body)}\n`,
+    stdout: json ? `${JSON.stringify(payload, null, 2)}\n` : `${rendered}\n`,
     stderr: '',
   };
 }

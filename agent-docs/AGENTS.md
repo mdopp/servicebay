@@ -82,7 +82,7 @@ one unfiltered dump costs more of your context than the rest of this file.
 | `servicebay assist <id>` | Print one assist in full, frontmatter and body. |
 | `servicebay delegate <name> [--scopes read,lifecycle] [--expires <iso8601>]` | Mint a child of YOUR token, never wider than it. Prints the child secret once. |
 | `servicebay revoke <id>` | Revoke one child token you delegated. |
-| `servicebay whoami` | Say what the token you hold is — name, scopes, parent, expiry. The answer to "what may I do", from the server, not from this file. |
+| `servicebay whoami` | Say what the token you hold is — name, scopes, parent, expiry — **and which credential answered** (the file or the env var). The answer to "what may I do", from the server, not from this file. |
 | `servicebay progress` | Show the install job running right now: phase, current item, what it has deployed so far. |
 | `servicebay images <service> [--node <name>]` | Is what this service pulls actually published, pulled and current? Names WHICH kind of "no": `not-published` means nothing was ever pushed under that tag. Exit 7 when something is wrong. |
 | `servicebay update <service> [--mode fresh] [--node <name>]` | Move a service onto the image its registry publishes and force-recreate its containers, so it cannot come back up on the cached one. Prints before/after digests per image. **CHANGES the box**; needs `lifecycle`. `--mode fresh` deletes the local image first — the fallback for a stuck one. Exit 6 means the pull did not take. |
@@ -139,6 +139,13 @@ token is the problem, not your scope.
   your token, and its only honest source is a refusal you actually received.
   Saying it without one has stalled work here for hours while the scope was
   there the whole time.
+- **Check which credential answered before you trust a narrow one.** Pointing
+  `SERVICEBAY_MCP_TOKEN_FILE` at a smaller token is how you deliberately put a
+  change out of your own reach — but something between your shell and the CLI
+  can rewrite that variable. `whoami` prints a `source` line saying which file
+  or variable the token actually came from. If it is not the one you set, you
+  are running wider than you think, and a call you expected to be refused will
+  go through.
 
 Observe and act through the CLI, within the scopes `whoami` shows you. **The
 verb table is the whole of what you may do from a shell.** A job it has no verb
