@@ -28,13 +28,20 @@
  *
  * ## Errors name the scope, not the status
  *
- * ServiceBay's REST gate answers a refused Bearer with a flat
- * `401 {"error":"Authentication required"}` — deliberately opaque, and useless
- * to an agent trying to work out what to ask for. So each verb *declares* the
- * scope it needs (the ladder in `packages/backend/src/lib/auth/apiScope.ts`)
- * and the CLI reports that instead of the raw status. A 403 carries the
- * server's own `Forbidden: '<scope>' scope required`, which is parsed and
- * relayed verbatim.
+ * A refusal has to be actionable or the agent guesses, so the two cases are
+ * kept apart and neither is reported as a bare status:
+ *
+ *   - **403** — the token verified and merely lacks the tier. ServiceBay says
+ *     `Forbidden: '<scope>' scope required` (#3001) and the CLI relays that
+ *     word verbatim: "authenticated but under-scoped, it needs `lifecycle`".
+ *   - **401** — the token is unknown, revoked or expired, and the server
+ *     deliberately says nothing about the route. The CLI falls back to the
+ *     scope this verb *declares* (the ladder in
+ *     `packages/backend/src/lib/auth/apiScope.ts`) so the message still names
+ *     one, while being honest that the credential itself may be the problem.
+ *
+ * Until #3001 the server answered both with the flat 401, and that single
+ * ambiguity is what an agent could not act on.
  */
 
 import fs from 'node:fs';

@@ -48,10 +48,16 @@ describe('GET /napi/home — token-gated aggregated summary', () => {
     expect(mocks.getInstalledImageUpdates).not.toHaveBeenCalled();
   });
 
-  it('wrong-scope token (mutate, no read) → 401 (acceptance #1)', async () => {
+  it('wrong-scope token (mutate, no read) → 403 naming the tier (acceptance #1, #3001)', async () => {
+    // Acceptance #1 is "a token without `read` does not get this data, and the
+    // data sources are never touched" — both still hold. The status moved from
+    // 401 to 403 with #3001: a token that verified is authenticated, and a
+    // refusal that does not say which tier it wanted is what sent an agent
+    // improvising for an evening.
     mocks.verifyToken.mockResolvedValue({ name: 'dev', scopes: ['mutate'] });
     const res = await GET(req({ authorization: 'Bearer sb_mutate_only' }));
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Forbidden: 'read' scope required" });
     expect(mocks.listServices).not.toHaveBeenCalled();
   });
 

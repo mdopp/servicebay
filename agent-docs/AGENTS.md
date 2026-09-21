@@ -97,10 +97,12 @@ contract; a verb or an option that is not in it does not exist.
 Your token carries the scopes it was minted with, and this file cannot tell you
 which — boxes differ, and an operator may widen a token at any time. Do not
 assume; ask: `servicebay whoami` answers with name, scopes, parent and expiry,
-from the server, the only thing that knows. A refused call names the scope it
-needed (ServiceBay's flat `401 Authentication required` is translated; a `403`
-relays the server's own `'<scope>' scope required` verbatim), so **a refusal is
-an answer, never a dead end** — and the scope it needed is the one to ask for.
+from the server, the only thing that knows. A refused call names the scope it needed,
+and the two refusals mean different things: **403** is "your token is fine, it
+just lacks this tier" and carries the tier's name; **401** is "this credential
+did not verify at all" — revoked, expired, or not a token. So **a refusal is an
+answer, never a dead end**: on a 403, ask for the scope it named; on a 401, your
+token is the problem, not your scope.
 
 - **`read`** — list and inspect services, unit files, pod manifests, logs,
   health checks, the diagnosis (a POST that only inspects), the assist catalog.
