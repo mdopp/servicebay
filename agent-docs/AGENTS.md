@@ -87,6 +87,8 @@ one unfiltered dump costs more of your context than the rest of this file.
 | `servicebay images <service> [--node <name>]` | Is what this service pulls actually published, pulled and current? Names WHICH kind of "no": `not-published` means nothing was ever pushed under that tag. Exit 7 when something is wrong. |
 | `servicebay update <service> [--mode fresh] [--node <name>]` | Move a service onto the image its registry publishes and force-recreate its containers, so it cannot come back up on the cached one. Prints before/after digests per image. **CHANGES the box**; needs `lifecycle`. `--mode fresh` deletes the local image first — the fallback for a stuck one. Exit 6 means the pull did not take. |
 | `servicebay install <template> [--var <NAME=value>] [--source <name>] [--node <name>]` | Install a template the full wizard way (variables, secrets, subdomain, proxy, SSO wiring). The service is named after the template. **CHANGES the box**; needs `mutate`. Additive always — there is no wipe. |
+| `servicebay request-remove <service> --reason <text> [--node <name>]` | ASK the operator to remove a service. It removes nothing; approving moves it to the trash (restorable for seven days), never a purge. Prints an approval id. |
+| `servicebay approval <id>` | Read what the operator decided about a request you filed. Exit 4 still waiting, 5 rejected **or approved-but-the-action-failed**. |
 | `servicebay request-install <template> --as <service> --reason <text> [--subdomain <label>] [--mount <host:container[:ro]>] [--port <host:container[/udp]>] [--var <NAME=value>] [--source <name>] [--node <name>]` | ASK the operator to install a template. It files a request and installs nothing; ServiceBay runs the approved plan. Prints a request id. |
 | `servicebay request-status <id>` | Read what really happened to your request: waiting, approved, installed, rejected or failed. Exit 4 means still waiting. |
 
@@ -122,12 +124,13 @@ token is the problem, not your scope.
   already on the box is not, and goes through `request-install` even when the
   scope would let you skip that (ADR 0017,
   `servicebay assist adr-0017-the-agent-cli-may-change-the-box-when-the-token-may`).
-- **Nothing here removes anything.** There is no verb that deletes, wipes,
-  resets or opens a shell, and no scope makes one appear: `destroy`, `reboot`
-  and `exec` are reachable only through an operator's approval. If you were
-  told an existing service "can go", you still may not remove it — say so and
-  leave it running. Redeploying it with a placeholder to free its port is not a
-  workaround, it is a second outage.
+- **Nothing here removes anything by itself.** There is no verb that deletes,
+  wipes, resets or opens a shell, and no scope makes one appear: `destroy`,
+  `reboot` and `exec` run only after an operator approves. If you were told an
+  existing service "can go", **file it** — `request-remove <service> --reason
+  "…"` — and carry on with what does not depend on it. Redeploying the service
+  with a placeholder to free its port is not a workaround, it is a second
+  outage: whatever it serves goes dark, and the port stays owned either way.
 - **Lineage, not scope** — `delegate` mints a CHILD of the token you hold
   (never wider than its parent) and `revoke` takes one back; the secret comes
   back once, on stdout, never as an argument. A refusal there means your token
