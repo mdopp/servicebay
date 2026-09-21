@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.41.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.41.0...servicebay-v5.41.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **api:** a service name nobody has is a 404 that names the fix, not "Internal error" ([417b73b](https://github.com/mdopp/servicebay/commit/417b73b21198a6df670496d4f4bf6194717a5c13))
+* **api:** a service name nobody has is a 404 that names the fix, not "Internal error" ([96965e8](https://github.com/mdopp/servicebay/commit/96965e8a4383899a009d955e35213c62e51627b2))
+
 ## [5.41.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.40.0...servicebay-v5.41.0) (2026-09-21)
 
 
