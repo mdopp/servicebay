@@ -21,6 +21,10 @@ import path from 'node:path';
 import { mcsCategories } from './fileTools';
 
 const SRC = fs.readFileSync(path.join(__dirname, 'fileTools.ts'), 'utf8');
+/** #3016 moved the relabel itself into `lib/selinux.ts` so the catalog delivery
+ *  could use the same one. These assertions follow the logic rather than the
+ *  file they were first written against. */
+const SELINUX_SRC = fs.readFileSync(path.join(__dirname, '..', '..', 'selinux.ts'), 'utf8');
 
 describe('mcsCategories — the substring that decides whether another container can read it', () => {
   it('finds the categories on the label the box actually produced', () => {
@@ -51,22 +55,24 @@ describe('the write path reports what is on disk, not what it asked for', () => 
   it('reads the label back with stat rather than assuming chcon worked', () => {
     // The specific failure being guarded: a `chcon` that exits 0 while the
     // label does not change would otherwise be reported as shared.
-    expect(SRC).toMatch(/stat', '-c', '%C'/);
-    expect(SRC).toContain("reported success but the label did not change");
+    expect(SELINUX_SRC).toMatch(/stat', '-c', '%C'/);
+    expect(SELINUX_SRC).toContain('chcon reported success but the label did not change');
   });
 
   it('clears the categories with the same fix the agent-kit checkout needs by hand', () => {
-    expect(SRC).toMatch(/chcon', '-l', 's0'/);
+    expect(SELINUX_SRC).toMatch(/'chcon'/);
+    expect(SELINUX_SRC).toMatch(/'-l', 's0'/);
   });
 
   it('warns in terms of the CONSUMER, and names why it is easy to miss', () => {
-    expect(SRC).toContain('will be denied');
-    expect(SRC).toContain('read_file can still read it');
+    expect(SELINUX_SRC).toContain('mounting this path will be');
+    expect(SELINUX_SRC).toContain('denied');
+    expect(SELINUX_SRC).toContain('easy to miss');
   });
 
   it('treats a box without SELinux as fine, not as a failure', () => {
-    expect(SRC).toContain('no SELinux label');
-    expect(SRC).not.toMatch(/labelWarning:.*no SELinux/);
+    expect(SELINUX_SRC).toContain('no SELinux label');
+    expect(SELINUX_SRC).not.toMatch(/labelWarning:.*no SELinux/);
   });
 
   it('says in the tool description that a labelled file is invisible to the consumer', () => {

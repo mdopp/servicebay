@@ -293,6 +293,96 @@ describe('git delivery of the agent kit (#2908)', () => {
     expect(status.lastError).toBeNull();
   });
 
+  it('a SYNC relabels the kit and reports whether it is readable — not just the helper (#3016)', async () => {
+    // The assertion that matters. Removing the `shareDeliveredKit()` call from
+    // `syncAssistCatalog` must turn something red; a test that only drives the
+    // helper directly would stay green while the delivery went on stamping the
+    // tree — which is exactly how #3016 survived #2996 (the helper existed, the
+    // call did not).
+    await makeOriginRepo(KIT);
+    const result = await delivery.syncAssistCatalog();
+
+    expect(result.status).toBe('synced');
+    expect(result.shared, 'a sync must SAY whether the kit it delivered is readable').toBeTypeOf('boolean');
+    if (result.shared === false) {
+      expect(result.labelWarning).toMatch(/chcon -R -l s0 /);
+    } else {
+      expect(result.labelWarning).toBeUndefined();
+    }
+  });
+
+  it('never claims the delivered kit is readable without having read the label back (#3016)', async () => {
+    await makeOriginRepo(KIT);
+    await delivery.syncAssistCatalog();
+
+    // End-to-end against the real filesystem, and deliberately NOT asserting
+    // `shared: true`: this suite runs on tmpfs, where `chcon` answers
+    // "Operation not supported" and the categories genuinely survive. The box's
+    // /mnt/data is xfs and relabels fine — but a test that only passes on one
+    // of the two would be pinning the environment, not the behaviour.
+    //
+    // The invariant that holds on both, and the one #3016 is really about: the
+    // delivery never reports success it did not verify. Either the label came
+    // back without categories, or it says which paths still carry them and what
+    // an operator must run.
+    const result = await delivery.shareDeliveredKit();
+    if (result.shared) {
+      expect(result.labelWarning).toBeUndefined();
+      if (result.label) expect(result.label).not.toMatch(/:c\d+/);
+    } else {
+      expect(result.labelWarning).toBeDefined();
+      expect(result.labelWarning).toMatch(/chcon -R -l s0 /);
+      expect(result.label).toMatch(/:c\d+/);
+    }
+  });
+
+  it('relabels the whole kit tree and checks the paths pi-web actually mounts (#3016)', async () => {
+    await makeOriginRepo(KIT);
+    await delivery.syncAssistCatalog();
+
+    const calls: string[][] = [];
+    const root = agentKitDir().replace(/\/checkout$/, '');
+    await delivery.shareDeliveredKit(async (argv) => {
+      calls.push(argv);
+      return argv[0] === 'chcon'
+        ? { code: 0, stdout: '', stderr: '' }
+        : { code: 0, stdout: 'unconfined_u:object_r:container_file_t:s0\n', stderr: '' };
+    });
+
+    // Recursive, on the PARENT — `checkout` is recreated on every delivery and
+    // inherits from it, which is the mechanism behind #3016.
+    expect(calls[0]).toEqual(['chcon', '-R', '-l', 's0', '--', root]);
+
+    // The root is not proof: a half-done relabel leaves a shared root over
+    // categorised children, which is the state a reader trips on. So every
+    // directory pi-web bind-mounts is read back by name.
+    const verified = calls.filter(c => c[0] === 'stat').map(c => c[c.length - 1]);
+    for (const sub of ['assists', 'agent-cli', 'agent-docs']) {
+      expect(verified.some(v => v.endsWith(`/checkout/${sub}`)), `${sub} must be verified`).toBe(true);
+    }
+  });
+
+  it('a shared root over a stamped child is reported, not counted as success (#3016)', async () => {
+    await makeOriginRepo(KIT);
+    await delivery.syncAssistCatalog();
+
+    const result = await delivery.shareDeliveredKit(async (argv) => {
+      if (argv[0] === 'chcon') return { code: 0, stdout: '', stderr: '' };
+      const target = argv[argv.length - 1];
+      const label = target.endsWith('/assists')
+        ? 'unconfined_u:object_r:container_file_t:s0:c1022,c1023'
+        : 'unconfined_u:object_r:container_file_t:s0';
+      return { code: 0, stdout: `${label}\n`, stderr: '' };
+    });
+
+    expect(result.shared).toBe(false);
+    expect(result.labelWarning).toContain('/assists');
+    expect(result.labelWarning).toContain('c1022,c1023');
+    // And it names the hand fix, because only someone with a root shell on the
+    // box can apply it.
+    expect(result.labelWarning).toMatch(/chcon -R -l s0 /);
+  });
+
   it('removes the pre-#2908 checkout root once the kit has landed, so no second tree ages beside it', async () => {
     const legacy = path.join(BASE, 'assist-catalog');
     await fs.mkdir(path.join(legacy, 'assists'), { recursive: true });
