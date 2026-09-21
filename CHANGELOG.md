@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.38.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.37.0...servicebay-v5.38.0) (2026-09-21)
+
+
+### Features
+
+* **agent-cli:** named mutating verbs, so a scoped session stops hand-rolling MCP ([f060612](https://github.com/mdopp/servicebay/commit/f0606124e35f494a933b8b4368af1242ed80f3a7))
+* **agent-cli:** named mutating verbs, so a scoped session stops hand-rolling MCP ([a3266c8](https://github.com/mdopp/servicebay/commit/a3266c89fef4486cb372c7b574c7c603a1602718)), closes [#2990](https://github.com/mdopp/servicebay/issues/2990)
+
 ## [5.37.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.36.1...servicebay-v5.37.0) (2026-09-20)
 
 
