@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.41.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.40.0...servicebay-v5.41.0) (2026-09-21)
+
+
+### Features
+
+* **agent-cli:** whoami says WHICH credential answered, not just what it may do ([90ecf66](https://github.com/mdopp/servicebay/commit/90ecf66481f6bcfde8508de77293475c05ec26d4))
+* **agent-cli:** whoami says WHICH credential answered, not just what it may do ([7be28a0](https://github.com/mdopp/servicebay/commit/7be28a0428b21b30122179e76b5bc36c001160b9))
+
 ## [5.40.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.39.0...servicebay-v5.40.0) (2026-09-21)
 
 
