@@ -85,6 +85,7 @@ one unfiltered dump costs more of your context than the rest of this file.
 | `servicebay whoami` | Say what the token you hold is — name, scopes, parent, expiry — **and which credential answered** (the file or the env var). The answer to "what may I do", from the server, not from this file. |
 | `servicebay progress` | Show the install job running right now: phase, current item, what it has deployed so far. |
 | `servicebay images <service> [--node <name>]` | Is what this service pulls actually published, pulled and current? Names WHICH kind of "no": `not-published` means nothing was ever pushed under that tag. Exit 7 when something is wrong. |
+| `servicebay verify <service> [--node <name>]` | **Is this deployment actually done?** Six measurements: health check (with the last health-log line), restarts, published image, no application embedded in the pod spec, proxy route names a real service, public URL answers. Exit 8 a check failed, **9 nothing failed but something could not be measured**. |
 | `servicebay update <service> [--mode fresh] [--node <name>]` | Move a service onto the image its registry publishes and force-recreate its containers, so it cannot come back up on the cached one. Prints before/after digests per image. **CHANGES the box**; needs `lifecycle`. `--mode fresh` deletes the local image first — the fallback for a stuck one. Exit 6 means the pull did not take. |
 | `servicebay install <template> [--var <NAME=value>] [--source <name>] [--node <name>]` | Install a template the full wizard way (variables, secrets, subdomain, proxy, SSO wiring). The service is named after the template. **CHANGES the box**; needs `mutate`. Additive always — there is no wipe. |
 | `servicebay request-remove <service> --reason <text> [--node <name>]` | ASK the operator to remove a service. It removes nothing; approving moves it to the trash (restorable for seven days), never a purge. Prints an approval id. |
@@ -242,6 +243,18 @@ servicebay images <service>                                 # the box half
 
 A green build and an unpublished tag look identical from inside this container
 until you ask both. Ask both, then report what they said.
+
+And when it is deployed, **`servicebay verify <service>` is what "done" means**.
+It measures the six things that have actually gone wrong here, and it
+distinguishes three outcomes your report must not blur: a check failed (exit
+8), everything measurable passed (exit 0), and — the one that matters — nothing
+failed but something could not be measured (exit 9). Exit 9 is **not** done.
+Say which check was unmeasured rather than reporting a deployment as finished.
+
+The one thing it cannot see is whether the page renders without console errors.
+That needs a browser, which the box does not have and your session might. The
+checklist `servicebay assist checklist-a-deployment-is-not-done-until-you-looked`
+says how.
 
 ## How a change rolls out
 

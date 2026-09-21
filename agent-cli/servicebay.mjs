@@ -435,6 +435,44 @@ export const VERBS = {
     exit: body => (body?.ok === true ? 0 : 7),
   },
 
+  verify: {
+    summary: 'is this deployment actually done — six measurements, not a claim',
+    usage: 'verify <service> [--node <name>]',
+    effect: 'read',
+    scope: 'read',
+    method: 'GET',
+    positionals: ['service'],
+    options: ['node'],
+    path: (args, opts) => `/api/services/${enc(args.service)}/verify${opts.node ? `?node=${enc(opts.node)}` : ''}`,
+    // The six points used to be a catalog checklist, and prose only works when
+    // somebody opens it — which a session does least when it believes it is
+    // finished. This turns "did you verify?" into "what does verify say?", and
+    // that fits in an acceptance criterion (#3021).
+    reads: ['checks', 'ok', 'summary'],
+    text: body => {
+      const checks = Array.isArray(body?.checks) ? body.checks : [];
+      const mark = s => (s === 'ok' ? 'ok  ' : s === 'problem' ? 'FAIL' : s === 'unknown' ? '??  ' : '--  ');
+      const rows = checks.flatMap(c => {
+        const head = line(mark(String(c?.status)), String(c?.title ?? '?').padEnd(46), String(c?.measured ?? ''));
+        return c?.detail ? [head, line('        ', String(c.detail))] : [head];
+      });
+      const verdict = body?.ok === true
+        ? (body?.complete === true ? 'DONE' : 'no problem found, but not fully measured')
+        : 'NOT DONE';
+      return [
+        line(String(body?.service ?? '?'), verdict),
+        ...(rows.length > 0 ? rows : ['nothing measured']),
+        '',
+        String(body?.summary ?? ''),
+      ].join('\n');
+    },
+    // 0 only when every measurable check passed AND nothing was left unmeasured.
+    // "no problem found" is not the same as "verified", and an exit code is the
+    // only part of this a script reads.
+    //   0 done · 8 a check failed · 9 nothing failed but something is unmeasured
+    exit: body => (body?.ok === true ? (body?.complete === true ? 0 : 9) : 8),
+  },
+
   /* ── the mutating pair (#2990, ADR 0017) ──────────────────────────────
    *
    * These change the box. They are here because the pi-web token already
