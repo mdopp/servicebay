@@ -136,6 +136,19 @@ const SUCCESS_BODY: Record<string, unknown> = {
     logs: [],
   },
   install: { jobId: 'job-2f11', phase: 'running' },
+  // #3021. The SUCCESS case is a fully-measured, fully-green deployment; the
+  // other verdicts have their own block.
+  verify: {
+    service: 'asteroids',
+    node: 'Local',
+    ok: true,
+    complete: true,
+    checks: [
+      { id: 'health', title: 'container health check is green', status: 'ok', measured: 'asteroids-web=healthy' },
+      { id: 'restarts', title: 'container is not restarting', status: 'ok', measured: 'asteroids-web: 0 restart(s), Up 2 hours' },
+    ],
+    summary: 'asteroids: every measurable check passed.',
+  },
   // #2995. The SUCCESS case is a published, pulled, current image; the
   // not-published case is the one the verb exists for and has its own block.
   images: {
@@ -175,6 +188,7 @@ const ARGV: Record<string, string[]> = {
   update: ['update', 'asteroids-bubblegum'],
   install: ['install', 'asteroids'],
   images: ['images', 'asteroids'],
+  verify: ['verify', 'asteroids'],
   progress: ['progress'],
 };
 
@@ -710,6 +724,75 @@ describe('update never reports a no-op as an update (#2990, and #2983 behind it)
   it('has no flag that would delete, wipe or reset anything', async () => {
     for (const flag of ['--force', '--wipe', '--remove', '--yes']) {
       const result = await cli.run(['update', 'asteroids-bubblegum', flag], { env: envWith() });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('has no option');
+    }
+  });
+});
+
+describe('verify refuses to call an unmeasured deployment done (#3021)', () => {
+  type VerifyCheckFixture = { id: string; title: string; status: string; measured: string; detail?: string };
+  const report = (over: Record<string, unknown> = {}, checks: VerifyCheckFixture[] = []) => ({
+    service: 'asteroids', node: 'Local', ok: true, complete: true,
+    checks: checks.length > 0 ? checks : [{ id: 'health', title: 'health', status: 'ok', measured: 'healthy' }],
+    summary: 'fine',
+    ...over,
+  });
+
+  it('reads only — a GET with no body', async () => {
+    reply = { status: 200, body: JSON.stringify(report()) };
+    await cli.run(['verify', 'asteroids'], { env: envWith() });
+    expect(seen.method).toBe('GET');
+    expect(seen.url).toBe('/api/services/asteroids/verify');
+    expect(seen.body).toBe('');
+  });
+
+  it('a fully-measured, fully-green deployment exits 0 and says DONE', async () => {
+    reply = { status: 200, body: JSON.stringify(report()) };
+    const result = await cli.run(['verify', 'asteroids'], { env: envWith() });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('DONE');
+  });
+
+  it('a failed check exits 8 and shows the detail that names the next step', async () => {
+    reply = {
+      status: 200,
+      body: JSON.stringify(report({ ok: false, complete: true, summary: 'NOT done' }, [
+        { id: 'restarts', title: 'container is not restarting', status: 'problem', measured: '1006 restart(s)', detail: 'servicebay logs carries the exit reason' },
+      ])),
+    };
+    const result = await cli.run(['verify', 'asteroids'], { env: envWith() });
+    expect(result.exitCode).toBe(8);
+    expect(result.stdout).toContain('NOT DONE');
+    expect(result.stdout).toContain('1006 restart');
+    expect(result.stdout).toContain('servicebay logs');
+  });
+
+  it('nothing failed but something is UNMEASURED exits 9 — that is not "done"', async () => {
+    // The distinction the whole verb exists for. "No problem found" with a
+    // check that could not run is exactly the shape #2996 shipped as
+    // `ownershipSet: true`.
+    reply = {
+      status: 200,
+      body: JSON.stringify(report({ ok: true, complete: false }, [
+        { id: 'image', title: 'running the published image', status: 'unknown', measured: '?', detail: 'could not read the digest' },
+      ])),
+    };
+    const result = await cli.run(['verify', 'asteroids'], { env: envWith() });
+    expect(result.exitCode).toBe(9);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toContain('not fully measured');
+  });
+
+  it('--json cannot read as ok while a check failed', async () => {
+    reply = { status: 200, body: JSON.stringify(report({ ok: false, complete: true })) };
+    const result = await cli.run(['verify', 'asteroids', '--json'], { env: envWith() });
+    expect(JSON.parse(result.stdout).ok).toBe(false);
+  });
+
+  it('has no flag that would make it fix, restart or deploy anything', async () => {
+    for (const flag of ['--fix', '--restart', '--repair', '--force']) {
+      const result = await cli.run(['verify', 'asteroids', flag], { env: envWith() });
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('has no option');
     }
