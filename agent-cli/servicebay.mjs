@@ -516,6 +516,67 @@ export const VERBS = {
     ].join('\n'),
   },
 
+  'request-remove': {
+    summary: 'ASK the operator to remove a service — files a request, removes nothing',
+    usage: 'request-remove <service> --reason <text> [--node <name>]',
+    effect: 'request',
+    scope: 'propose',
+    method: 'POST',
+    positionals: ['service'],
+    options: ['reason', 'node'],
+    path: (args) => `/api/services/${enc(args.service)}/removal-requests`,
+    // Removal is destroy-tier and stays the operator's (ADR 0017). What was
+    // missing was not the permission but the DOOR: a session told "the old one
+    // can go" had nowhere to put that, and on 2026-09-20 one improvised by
+    // redeploying the service it was replacing with a placeholder image to free
+    // its port, taking the domain down (#2994).
+    body: (_args, opts) => ({
+      reason: opts.reason ?? '',
+      ...(opts.node ? { node: opts.node } : {}),
+    }),
+    reads: ['id', 'status', 'detail'],
+    text: body => [
+      line('request', String(body?.id ?? '?')),
+      line('status ', String(body?.status ?? '?')),
+      String(body?.detail ?? ''),
+      `Read the outcome with: servicebay approval ${String(body?.id ?? '<id>')}`,
+    ].join('\n'),
+  },
+
+  approval: {
+    summary: 'read what the operator decided about a request you filed',
+    usage: 'approval <id>',
+    effect: 'read',
+    scope: 'read',
+    method: 'GET',
+    positionals: ['id'],
+    options: [],
+    path: args => `/api/approvals/${enc(args.id)}`,
+    reads: ['approval'],
+    text: body => {
+      const a = body?.approval ?? {};
+      const exec = a?.execution;
+      return [
+        line('id      ', String(a?.id ?? '?')),
+        line('title   ', String(a?.title ?? '?')),
+        line('status  ', String(a?.status ?? '?')),
+        line('service ', String(a?.service ?? '-')),
+        a?.resolved_at ? line('resolved', String(a.resolved_at)) : '',
+        exec ? line('ran     ', exec?.ok === true ? 'yes' : `no${exec?.error ? ` — ${String(exec.error)}` : ''}`) : '',
+      ].filter(Boolean).join('\n');
+    },
+    // Pending is not success, and neither is "approved but the action failed".
+    // Same rule as `request-status`: an agent scripting on `$?` must be able to
+    // tell the three apart without parsing English.
+    //   0 done · 4 still waiting on the operator · 5 rejected or the action failed
+    exit: body => {
+      const a = body?.approval ?? {};
+      if (a?.status === 'approved') return a?.execution && a.execution.ok === false ? 5 : 0;
+      if (a?.status === 'rejected') return 5;
+      return 4;
+    },
+  },
+
   'request-install': {
     summary: 'ASK the operator to install a template — files a request, installs nothing',
     usage: 'request-install <template> --as <service> --reason <text> [--subdomain <label>] [--mount <host:container[:ro]>] [--port <host:container[/udp]>] [--var <NAME=value>] [--source <name>] [--node <name>]',

@@ -19,6 +19,7 @@ import { readManifestAnnotations } from '../../template/contract';
 import { injectServiceDirectives } from '../quadletDirectives';
 import { applyAutoUpdatePolicy } from '../quadletAutoUpdate';
 import { ServiceListing } from '../serviceListing';
+import { describePortCollisions } from '../portCollisionMessage';
 import { writeExtraConfigFiles } from '../extraConfigFiles';
 import { migratePredecessors, runMigrationScript } from './migrations';
 import { runPostDeployScript } from './postDeploy';
@@ -148,10 +149,7 @@ export async function deployKubeService(
     // permanently inactive in the dashboard.
     const collisions = await ServiceListing.findHostPortCollisions(nodeName, name, yamlContent);
     if (collisions.length > 0) {
-        const detail = collisions
-            .map(c => `port ${c.hostPort} already in use by ${c.serviceName}`)
-            .join('; ');
-        throw new Error(`Port collision on node "${nodeName}": ${detail}. Change the host port and retry.`);
+        throw new Error(describePortCollisions(nodeName, collisions));
     }
 
     // Inject the default systemd directives (TimeoutStartSec for slow

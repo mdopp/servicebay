@@ -83,6 +83,25 @@ const SUCCESS_BODY: Record<string, unknown> = {
     installed: false,
     detail: 'filed for approval — NOTHING has been installed. ServiceBay installs it only if the operator approves.',
   },
+  // The removal pair (#2994). Filing answers an approval id and says, in words,
+  // that nothing is removed; `approval` reads what the operator decided.
+  'request-remove': {
+    id: 'ap-91',
+    status: 'pending',
+    service: 'asteroids-bubblegum',
+    removed: false,
+    detail: 'filed for approval — NOTHING has been removed. ServiceBay removes it only if the operator approves, and then only to the trash.',
+  },
+  approval: {
+    approval: {
+      id: 'ap-91',
+      title: 'delete_service: asteroids-bubblegum',
+      status: 'approved',
+      service: 'asteroids-bubblegum',
+      resolved_at: '2026-09-21T07:00:00.000Z',
+      execution: { ok: true },
+    },
+  },
   'request-status': {
     id: 'req-7f3a',
     status: 'installed',
@@ -147,6 +166,8 @@ const ARGV: Record<string, string[]> = {
   revoke: ['revoke', 'c0ffee12'],
   whoami: ['whoami'],
   'request-install': ['request-install', 'linkwarden', '--as', 'linkwarden', '--reason', 'the template is finished'],
+  'request-remove': ['request-remove', 'asteroids-bubblegum', '--reason', 'replaced by asteroids-v3'],
+  approval: ['approval', 'ap-91'],
   'request-status': ['request-status', 'req-7f3a'],
   update: ['update', 'asteroids-bubblegum'],
   install: ['install', 'asteroids'],
@@ -393,6 +414,74 @@ describe('request-install asks, and installs nothing (#2965)', () => {
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('has no option');
     }
+  });
+});
+
+describe('request-remove asks, and removes nothing (#2994)', () => {
+  it('speaks the propose-tier route on the named service', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY['request-remove']) };
+    await cli.run(ARGV['request-remove'], { env: envWith() });
+    expect(seen.method).toBe('POST');
+    expect(seen.url).toBe('/api/services/asteroids-bubblegum/removal-requests');
+    expect(JSON.parse(seen.body)).toEqual({ reason: 'replaced by asteroids-v3' });
+  });
+
+  it('tells the agent, in words, that nothing has been removed', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY['request-remove']) };
+    const result = await cli.run(ARGV['request-remove'], { env: envWith() });
+    expect(result.stdout).toContain('NOTHING has been removed');
+    // Every line mentioning removal says it has NOT happened: no line of this
+    // output can be quoted back as "the service is gone".
+    for (const written of result.stdout.split('\n').filter(l => /remov/i.test(l))) {
+      expect(written).toMatch(/NOTHING has been removed/);
+    }
+    expect(result.stdout).toContain('servicebay approval ap-91');
+  });
+
+  it('has no flag that would make it remove, approve or purge', async () => {
+    for (const flag of ['--force', '--approve', '--now', '--purge', '--yes']) {
+      const result = await cli.run([...ARGV['request-remove'], flag], { env: envWith() });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('has no option');
+    }
+  });
+});
+
+describe('approval never reports waiting — or a failed action — as success (#2994)', () => {
+  const states: [string, unknown, number][] = [
+    ['pending', undefined, 4],
+    ['rejected', undefined, 5],
+    ['approved', { ok: true }, 0],
+    // Approved, but the re-dispatched tool failed. A 200 and the word
+    // "approved" would read as done; the service is still there.
+    ['approved', { ok: false, error: 'unit busy' }, 5],
+  ];
+
+  it.each(states)('status %s (execution %j) → exit %s', async (status, execution, exitCode) => {
+    reply = {
+      status: 200,
+      body: JSON.stringify({ approval: { id: 'ap-91', title: 'delete_service: x', service: 'x', status, execution } }),
+    };
+    const result = await cli.run(['approval', 'ap-91'], { env: envWith() });
+    expect(result.exitCode, `${status}/${JSON.stringify(execution)} must exit ${exitCode}`).toBe(exitCode);
+  });
+
+  it('shows that an approved-but-failed action did not run, with the reason', async () => {
+    reply = {
+      status: 200,
+      body: JSON.stringify({ approval: { id: 'ap-91', title: 't', service: 'x', status: 'approved', execution: { ok: false, error: 'unit busy' } } }),
+    };
+    const result = await cli.run(['approval', 'ap-91'], { env: envWith() });
+    expect(result.stdout).toContain('ran');
+    expect(result.stdout).toContain('unit busy');
+  });
+
+  it('reads only — a GET with no body', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.approval) };
+    await cli.run(['approval', 'ap-91'], { env: envWith() });
+    expect(seen.method).toBe('GET');
+    expect(seen.url).toBe('/api/approvals/ap-91');
+    expect(seen.body).toBe('');
   });
 });
 

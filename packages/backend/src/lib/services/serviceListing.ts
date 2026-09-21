@@ -90,6 +90,15 @@ const HIDDEN_SERVICE_BASENAMES = new Set<string>([
   'servicebay-splash',
 ]);
 
+/** One wanted host port, and the installed service that already owns it. */
+export interface HostPortCollision {
+    hostPort: number;
+    serviceName: string;
+    /** Is the holder running right now? Stopping it does NOT release the port —
+     *  an installed service owns it either way (#2994). */
+    holderActive: boolean;
+}
+
 export class ServiceListing {
     static async listServices(nodeName: string): Promise<ServiceInfo[]> {
         // V4: Use DigitalTwinStore
@@ -498,11 +507,11 @@ export class ServiceListing {
         nodeName: string,
         selfName: string,
         yamlContent: string,
-    ): Promise<{ hostPort: number; serviceName: string }[]> {
+    ): Promise<HostPortCollision[]> {
         const wanted = ServiceListing.extractHostPorts(yamlContent);
         if (wanted.length === 0) return [];
         const services = await ServiceListing.listServices(nodeName);
-        const collisions: { hostPort: number; serviceName: string }[] = [];
+        const collisions: HostPortCollision[] = [];
         for (const port of wanted) {
             for (const svc of services) {
                 if (svc.name === selfName) continue;
@@ -511,7 +520,13 @@ export class ServiceListing {
                     return parseInt(p.host, 10) === port;
                 });
                 if (hit) {
-                    collisions.push({ hostPort: port, serviceName: svc.name });
+                    // #2994 — the holder's state is half the answer. An INSTALLED
+                    // service owns its port whether or not it is running, so a
+                    // caller that just stopped it and expects the port back is
+                    // about to be told "already in use" by something it believes
+                    // it turned off. Carry the state so the message can say that
+                    // rather than leaving it to be inferred.
+                    collisions.push({ hostPort: port, serviceName: svc.name, holderActive: svc.active === true });
                     break;
                 }
             }
