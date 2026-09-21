@@ -87,6 +87,12 @@ const DECLARED: Record<string, Declaration> = {
     returnsBoxText: true,
     reason: 'GET returns the same `podman logs` stdout as a plain-text body.',
   },
+  'api/services/[name]/images/route.ts': {
+    returnsBoxText: false,
+    reason: 'Reads the service definition only to collect its image REFS (collectServiceImages), then reports refs, '
+      + 'registry/local digests and a verdict. The manifest and unit body never reach the response — same shape as '
+      + 'the action-stream declaration below, and an image ref carries no credential. (#2995)',
+  },
   'api/services/[name]/action-stream/route.ts': {
     returnsBoxText: false,
     reason: 'Destructures `yamlPath` only — a path, never the file body; the parsed YAML is walked for image refs and the images are what it streams.',

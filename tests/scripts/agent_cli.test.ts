@@ -457,6 +457,16 @@ describe('request-remove asks, and removes nothing (#2994)', () => {
   });
 });
 
+describe('request-remove only claims a service is missing when it really enumerated (#2994)', () => {
+  it('relays the route\'s 404 with its message, not a bare status', async () => {
+    reply = { status: 404, body: JSON.stringify({ error: 'No service named "nope" on node "Local" — nothing to remove. Check `servicebay services`.' }) };
+    const result = await cli.run(['request-remove', 'nope', '--reason', 'x'], { env: envWith() });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('No service named');
+    expect(result.stderr).toContain('servicebay services');
+  });
+});
+
 describe('approval never reports waiting — or a failed action — as success (#2994)', () => {
   const states: [string, unknown, number][] = [
     ['pending', undefined, 4],
