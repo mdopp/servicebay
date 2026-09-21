@@ -20,6 +20,8 @@ import { injectServiceDirectives } from '../quadletDirectives';
 import { applyAutoUpdatePolicy } from '../quadletAutoUpdate';
 import { ServiceListing } from '../serviceListing';
 import { describePortCollisions } from '../portCollisionMessage';
+import { preflightDeployment } from '../deployPreflightRun';
+import { refuses, describeFindings } from '../deployPreflight';
 import { writeExtraConfigFiles } from '../extraConfigFiles';
 import { migratePredecessors, runMigrationScript } from './migrations';
 import { runPostDeployScript } from './postDeploy';
@@ -136,6 +138,21 @@ export async function deployKubeService(
         throw new Error(
             `Invalid Pod manifest at ${manifestCheck.error?.path ?? '$'}: ${manifestCheck.error?.message ?? 'validation failed'}`,
         );
+    }
+
+    // #3020 — what the manifest PROMISES that it cannot keep. A liveness probe
+    // calling a binary its image does not carry has no working configuration:
+    // the container restarts forever, one such deploy reached 1006 restarts,
+    // and the same fault shipped again two days later because the rule against
+    // it lived in the catalog, which a session opens least at the moment it
+    // believes it is finished. So the check sits where the action is.
+    //
+    // Refusals only for what cannot possibly work; everything else warns with
+    // the reason and the next step. A refusal with no reason is what produces
+    // the workaround loop (#2995).
+    const preflight = await preflightDeployment(nodeName, yamlContent, onProgress);
+    if (refuses(preflight)) {
+        throw new Error(`Refusing to deploy "${name}":\n${describeFindings(preflight)}`);
     }
 
     // Migrate any pre-rename predecessor units first so their host-port
