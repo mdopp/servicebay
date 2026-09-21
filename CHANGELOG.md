@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.42.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.41.3...servicebay-v5.42.0) (2026-09-21)
+
+
+### Features
+
+* **agent-cli:** servicebay verify — "deployment done" with a checkable meaning ([7400312](https://github.com/mdopp/servicebay/commit/74003122121fc7529471dfdb4c35329ce0297496))
+* **agent-cli:** servicebay verify — "deployment done" with a checkable meaning ([eaf3c68](https://github.com/mdopp/servicebay/commit/eaf3c683ef6adaa8d860006553243f26964b518d)), closes [#3021](https://github.com/mdopp/servicebay/issues/3021)
+* **deploy:** refuse a health probe the image cannot possibly run ([e0d83a3](https://github.com/mdopp/servicebay/commit/e0d83a35ca0ac3adb2983e5f15530b272a468086))
+* **deploy:** refuse a health probe the image cannot possibly run ([3f26702](https://github.com/mdopp/servicebay/commit/3f267028eeed9e258d8a8af858798b3ef5e27308)), closes [#3020](https://github.com/mdopp/servicebay/issues/3020)
+
+
+### Bug Fixes
+
+* **assists:** a GHCR package does not inherit the repo's visibility ([#3022](https://github.com/mdopp/servicebay/issues/3022)) ([06e1098](https://github.com/mdopp/servicebay/commit/06e109896f041b68a092e683e4c8462e3ed5bcaf))
+
 ## [5.41.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.41.2...servicebay-v5.41.3) (2026-09-21)
 
 
