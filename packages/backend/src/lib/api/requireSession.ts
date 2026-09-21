@@ -86,22 +86,8 @@ export async function requireSession(
 
   // Named API token — only honored on routes that opt in with a scope.
   if (options.tokenScope) {
-    const authz = request.headers.get('authorization');
-    const bearer = authz?.startsWith('Bearer ') ? authz.slice(7).trim() : undefined;
-    if (bearer) {
-      const { verifyToken } = await import('@/lib/auth/apiTokens');
-      const token = await verifyToken(bearer);
-      if (token && token.scopes.includes(options.tokenScope)) {
-        return {
-          user: `token:${token.name}`,
-          expires: new Date(Date.now() + 60_000),
-          scopes: token.scopes,
-        };
-      }
-      // A presented-but-rejected Bearer (bad/expired/insufficient-scope)
-      // must not silently fall through to the cookie check.
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+    const settled = await bearerOutcome(request, options.tokenScope);
+    if (settled) return settled;
   }
 
   const session = await getSessionFromCookieHeader(request.headers.get('cookie') ?? undefined);
@@ -128,6 +114,53 @@ export async function requireSession(
   // that declares neither is classified in `tokenPrincipalRoutes.ts` (#2958).
   return tokenPrincipalRefusal(request, session, options.tokenScope ?? options.cookieScope)
     ?? session;
+}
+
+/**
+ * Settle a presented Bearer, or return `null` when there is none to settle.
+ *
+ * A presented-but-rejected Bearer must never fall through to the cookie check
+ * — that is what makes opting a route into token auth safe. But the reasons it
+ * was rejected are not one answer (#3001):
+ *
+ *  - The token VERIFIED and merely lacks the tier → it is **authenticated and
+ *    under-scoped**, so it gets a 403 that NAMES the tier, exactly as
+ *    `scopeRefusal` has answered on the cookie path since #2958. Before this
+ *    split, one question had two answers depending on whether the credential
+ *    arrived as a Bearer or as a cookie bridged from that same token.
+ *  - The token is unknown, revoked or expired → the flat 401, and it is told
+ *    **nothing** about the route. A credential that does not verify has no
+ *    claim to learn which tier it would have needed; answering otherwise turns
+ *    every revoked token into a scope-map oracle.
+ *
+ * The distinction is not a detail of wording. An agent refused without a reason
+ * has no next step, and on 2026-09-20 one improvised its way through an
+ * evening: raw `/mcp`, the token in argv, a `delegate` child left alive, a
+ * foreign service redeployed into a crash loop (#2990, #2994, #2995).
+ * `servicebay whoami` answers "what may I do", but only once somebody thinks to
+ * ask — the refusal is where the answer is actually needed.
+ */
+async function bearerOutcome(
+  request: Request,
+  required: ApiScope,
+): Promise<SessionPayload | NextResponse | null> {
+  const authz = request.headers.get('authorization');
+  const bearer = authz?.startsWith('Bearer ') ? authz.slice(7).trim() : undefined;
+  if (!bearer) return null;
+
+  const { verifyToken } = await import('@/lib/auth/apiTokens');
+  const token = await verifyToken(bearer);
+  if (token && token.scopes.includes(required)) {
+    return {
+      user: `token:${token.name}`,
+      expires: new Date(Date.now() + 60_000),
+      scopes: token.scopes,
+    };
+  }
+  if (token) {
+    return NextResponse.json({ error: `Forbidden: '${required}' scope required` }, { status: 403 });
+  }
+  return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
 }
 
 /**

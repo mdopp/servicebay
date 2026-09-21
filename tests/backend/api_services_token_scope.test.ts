@@ -12,9 +12,12 @@
  * are pinned:
  *
  *   - a live `read` token gets the list (the fix), and
- *   - a bad / expired / wrong-scope Bearer still 401s — the "presented-but-
- *     rejected must not fall through to the cookie check" rule in
+ *   - a bad / expired / wrong-scope Bearer is still refused without consulting
+ *     the cookie — the "presented-but-rejected must not fall through" rule in
  *     `requireSession` is what makes opting in safe, so it gets its own cases.
+ *     Since #3001 the refusal splits by reason: a token that VERIFIED and only
+ *     lacks the tier gets a 403 naming it, while an unknown or expired one
+ *     still gets the flat 401 and learns nothing about the route.
  *
  * POST is asserted unchanged: it carries no `tokenScope`, so it stays
  * cookie/internal-only and refuses every Bearer, `read` or `mutate` alike.
@@ -122,9 +125,15 @@ describe('GET /api/services token scope (#2899)', () => {
     expect(listServices).not.toHaveBeenCalled();
   });
 
-  it('401s a live token that lacks the read scope (no fall-through to the cookie)', async () => {
+  it('403s a live token that lacks the read scope, naming it (no fall-through to the cookie)', async () => {
+    // The refusal this test guards is "the route is not served and the cookie
+    // is not consulted" — that is unchanged. What changed with #3001 is the
+    // ANSWER: a token that verified is authenticated, so it is told which tier
+    // it lacks instead of being lumped in with the garbage and expired cases
+    // above. Those two still get the flat 401.
     const res = await call(GET, 'GET', bearer(minted.mutate.secret));
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Forbidden: 'read' scope required" });
     expect(listServices).not.toHaveBeenCalled();
   });
 

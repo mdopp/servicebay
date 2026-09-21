@@ -98,7 +98,30 @@ describe('requireSession', () => {
         { tokenScope: 'mutate' },
       );
       expect(result instanceof NextResponse).toBe(true);
-      expect((result as NextResponse).status).toBe(401);
+      // #3001: authenticated but under-scoped is a 403 that NAMES the tier, not
+      // the flat 401 an unknown token gets. The difference is the whole of what
+      // a refused agent can act on.
+      expect((result as NextResponse).status).toBe(403);
+      expect(await (result as NextResponse).json()).toEqual({ error: "Forbidden: 'mutate' scope required" });
+    });
+
+    it('answers a Bearer and a bridged cookie from the SAME token identically (#3001)', async () => {
+      // One question, one answer. Before #3001 the Bearer got 401 and the
+      // cookie minted from that very token got 403 with the tier named.
+      const scopes = ['read'];
+      mockVerify.mockResolvedValueOnce({ id: 'a1b2c3d4', name: 'pi-web', scopes });
+      const viaBearer = await requireSession(
+        mkRequest({ authorization: 'Bearer sb_a1b2c3d4_SECRET' }),
+        { tokenScope: 'lifecycle' },
+      ) as NextResponse;
+      mockCookie.mockResolvedValueOnce({ user: 'token:pi-web', expires: new Date(Date.now() + 60_000), scopes });
+      const viaCookie = await requireSession(
+        mkRequest({ cookie: 'session=bridged' }),
+        { tokenScope: 'lifecycle' },
+      ) as NextResponse;
+
+      expect(viaBearer.status).toBe(viaCookie.status);
+      expect(await viaBearer.json()).toEqual(await viaCookie.json());
     });
 
     it('rejects an invalid/expired Bearer token (verifyToken null)', async () => {
@@ -108,6 +131,22 @@ describe('requireSession', () => {
         { tokenScope: 'read' },
       );
       expect(result instanceof NextResponse).toBe(true);
+    });
+
+    it('tells an UNVERIFIED token nothing about the route it was refused from (#3001)', async () => {
+      // The other half of the split. A credential that does not verify has no
+      // claim to learn which tier the route wanted — that would turn a flat
+      // 401 into a scope-map oracle for anyone holding a revoked token.
+      mockVerify.mockResolvedValueOnce(null);
+      mockCookie.mockResolvedValueOnce(null);
+      const result = await requireSession(
+        mkRequest({ authorization: 'Bearer sb_deadbeef_NOPE' }),
+        { tokenScope: 'destroy' },
+      ) as NextResponse;
+      expect(result.status).toBe(401);
+      const body = await result.json();
+      expect(body).toEqual({ error: 'Authentication required' });
+      expect(JSON.stringify(body)).not.toContain('destroy');
     });
 
     it('ignores a Bearer token entirely when the route does not opt in (no tokenScope)', async () => {
