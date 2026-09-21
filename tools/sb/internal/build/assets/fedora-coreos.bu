@@ -668,20 +668,6 @@ storage:
           Volume=/run/user/1000/podman/podman.sock:/run/podman/podman.sock
           Environment=CONTAINER_HOST=unix:///run/podman/podman.sock
           Volume=${DATA_ROOT}/servicebay:/app/data:Z
-          # The agent kit is the one directory under /app/data that OTHER
-          # containers must read: pi-web bind-mounts checkout/agent-cli,
-          # checkout/agent-docs and checkout/assists read-only out of it.
-          # The :Z above gives /app/data ServiceBay's private MCS categories,
-          # and the hourly delivery re-creates `checkout`, so the new directory
-          # inherits those categories from its parent every single time. The
-          # reading container is then denied and a session reports the catalog
-          # as missing — measured on a live box: 0 of 57 assists visible, four
-          # times in one morning, each time needing a manual `chcon -R -l s0`
-          # from someone with root. :z labels exactly this subtree shared, so a
-          # re-created checkout inherits a label the reader may use. Everything
-          # else under /app/data — database, tokens, backups, config — keeps the
-          # private label from the :Z mount above.
-          Volume=${DATA_ROOT}/servicebay/agent-kit:/app/data/agent-kit:z
           # HOST-side path of the /app/data volume. Host-side commands the agent
           # runs (e.g. the disk-import worker's `podman run -v <out>:/out`) must
           # use this box path, not the in-container /app/data (read-only on host).
