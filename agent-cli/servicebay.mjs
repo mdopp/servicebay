@@ -389,6 +389,50 @@ export const VERBS = {
     },
   },
 
+  images: {
+    summary: 'is what this service pulls actually published, pulled and current',
+    usage: 'images <service> [--node <name>]',
+    effect: 'read',
+    scope: 'read',
+    method: 'GET',
+    positionals: ['service'],
+    options: ['node'],
+    path: (args, opts) => `/api/services/${enc(args.service)}/images${opts.node ? `?node=${enc(opts.node)}` : ''}`,
+    // You cannot build an image from this container, so when a build does not
+    // arrive the only useful question is WHERE it stopped. `problem` answers
+    // that: `not-published` means nothing was ever pushed under this tag — the
+    // state a workflow whose checkout failed leaves behind, and the one a
+    // session otherwise spends hours failing to infer (#2995).
+    reads: ['images', 'ok', 'summary'],
+    text: body => {
+      const images = Array.isArray(body?.images) ? body.images : [];
+      const rows = images.map(img => {
+        const verdict = img?.published !== true
+          ? `NOT PUBLISHED (${String(img?.problem ?? 'unknown')})`
+          : img?.upToDate === false
+            ? `published, local is behind ${shortDigest(img?.registry)}`
+            : img?.pulled !== true
+              ? `published ${shortDigest(img?.registry)}, not pulled here`
+              : `published, pulled, current ${shortDigest(img?.registry)}`;
+        return line(String(img?.image ?? '?').padEnd(44), verdict);
+      });
+      const details = images
+        .filter(i => i?.detail)
+        .map(i => line('  registry said:', String(i.detail)));
+      return [
+        line(String(body?.service ?? '?'), body?.ok === true ? 'ok' : 'PROBLEM'),
+        ...(rows.length > 0 ? rows : ['no image reference in the service definition']),
+        ...details,
+        '',
+        String(body?.summary ?? ''),
+      ].join('\n');
+    },
+    // A 200 means the question was answered, not that the answer is good. An
+    // unpublished image is the failure this verb exists to surface, so it must
+    // not exit 0 — the same rule `update` follows for `stale`.
+    exit: body => (body?.ok === true ? 0 : 7),
+  },
+
   /* ── the mutating pair (#2990, ADR 0017) ──────────────────────────────
    *
    * These change the box. They are here because the pi-web token already

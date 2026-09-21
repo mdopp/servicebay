@@ -114,6 +114,20 @@ const SUCCESS_BODY: Record<string, unknown> = {
     logs: [],
   },
   install: { jobId: 'job-2f11', phase: 'running' },
+  // #2995. The SUCCESS case is a published, pulled, current image; the
+  // not-published case is the one the verb exists for and has its own block.
+  images: {
+    service: 'asteroids',
+    node: 'Local',
+    ok: true,
+    images: [{
+      image: 'ghcr.io/mdopp/asteroids:latest',
+      registry: 'sha256:3333333333334444',
+      local: 'sha256:3333333333334444',
+      published: true, pulled: true, upToDate: true, problem: null,
+    }],
+    summary: 'Published, pulled, and on the digest the registry serves. Nothing to do.',
+  },
   progress: {
     job: { id: 'job-2f11', phase: 'running', progress: { currentItem: 'asteroids', deployedNames: [], totalCount: 1 } },
     jobIsActive: true,
@@ -136,6 +150,7 @@ const ARGV: Record<string, string[]> = {
   'request-status': ['request-status', 'req-7f3a'],
   update: ['update', 'asteroids-bubblegum'],
   install: ['install', 'asteroids'],
+  images: ['images', 'asteroids'],
   progress: ['progress'],
 };
 
@@ -517,6 +532,84 @@ describe('update never reports a no-op as an update (#2990, and #2983 behind it)
   it('has no flag that would delete, wipe or reset anything', async () => {
     for (const flag of ['--force', '--wipe', '--remove', '--yes']) {
       const result = await cli.run(['update', 'asteroids-bubblegum', flag], { env: envWith() });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('has no option');
+    }
+  });
+});
+
+describe('images tells a session WHICH kind of "no" it hit (#2995)', () => {
+  const report = (over: Record<string, unknown> = {}, img: Record<string, unknown> = {}) => ({
+    service: 'asteroids',
+    node: 'Local',
+    ok: true,
+    images: [{
+      image: 'ghcr.io/mdopp/asteroids:latest',
+      registry: 'sha256:3333333333334444',
+      local: 'sha256:3333333333334444',
+      published: true, pulled: true, upToDate: true, problem: null,
+      ...img,
+    }],
+    summary: 'fine',
+    ...over,
+  });
+
+  it('inspects, and only inspects — a GET, no body', async () => {
+    reply = { status: 200, body: JSON.stringify(report()) };
+    await cli.run(['images', 'asteroids'], { env: envWith() });
+    expect(seen.method).toBe('GET');
+    expect(seen.url).toBe('/api/services/asteroids/images');
+    expect(seen.body).toBe('');
+  });
+
+  it('a healthy image exits 0', async () => {
+    reply = { status: 200, body: JSON.stringify(report()) };
+    const result = await cli.run(['images', 'asteroids'], { env: envWith() });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('published, pulled, current');
+  });
+
+  it('an unpublished image exits non-zero and says so in words', async () => {
+    // The whole point: a 200 answered the question, and the answer is bad.
+    // This is the state a workflow whose checkout failed leaves behind.
+    reply = {
+      status: 200,
+      body: JSON.stringify(report(
+        { ok: false, summary: 'The registry serves no such tag …' },
+        { published: false, registry: null, local: null, pulled: false, upToDate: null,
+          problem: 'not-published', detail: 'manifest unknown' },
+      )),
+    };
+    const result = await cli.run(['images', 'asteroids'], { env: envWith() });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toContain('NOT PUBLISHED');
+    expect(result.stdout).toContain('not-published');
+    // The registry's own words survive to the shell, not just our label.
+    expect(result.stdout).toContain('manifest unknown');
+  });
+
+  it('distinguishes an unreachable registry from a missing build in its output', async () => {
+    reply = {
+      status: 200,
+      body: JSON.stringify(report(
+        { ok: false, summary: 'Could not reach the registry …' },
+        { published: false, registry: null, problem: 'unreachable', detail: 'no such host' },
+      )),
+    };
+    const result = await cli.run(['images', 'asteroids'], { env: envWith() });
+    expect(result.stdout).toContain('unreachable');
+    expect(result.stdout).not.toContain('not-published');
+  });
+
+  it('--json cannot read as ok while an image is unpublished', async () => {
+    reply = { status: 200, body: JSON.stringify(report({ ok: false }, { published: false, problem: 'not-published' })) };
+    const result = await cli.run(['images', 'asteroids', '--json'], { env: envWith() });
+    expect(JSON.parse(result.stdout).ok).toBe(false);
+  });
+
+  it('has no flag that would make it pull or change anything', async () => {
+    for (const flag of ['--pull', '--fix', '--force', '--update']) {
+      const result = await cli.run(['images', 'asteroids', flag], { env: envWith() });
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('has no option');
     }
