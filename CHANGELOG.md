@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.39.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.38.1...servicebay-v5.39.0) (2026-09-21)
+
+
+### Features
+
+* **agent:** answer "where did my image stop" instead of leaving a session to guess ([dc2cc50](https://github.com/mdopp/servicebay/commit/dc2cc50cc84cfcb58981681e876cb3ea0f05c84f))
+* **agent:** answer "where did my image stop" instead of leaving a session to guess ([feb729b](https://github.com/mdopp/servicebay/commit/feb729bea646a83832c858078d624b6e374d5d12)), closes [#2995](https://github.com/mdopp/servicebay/issues/2995)
+
 ## [5.38.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.38.0...servicebay-v5.38.1) (2026-09-21)
 
 
