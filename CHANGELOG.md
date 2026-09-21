@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.41.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.41.2...servicebay-v5.41.3) (2026-09-21)
+
+
+### Bug Fixes
+
+* **assists:** the catalog delivery stops stamping its own tree unreadable ([07d81ab](https://github.com/mdopp/servicebay/commit/07d81abe67853857c57c40da12dbd6b2a83b0f1c))
+* **assists:** the catalog delivery stops stamping its own tree unreadable ([d7838a5](https://github.com/mdopp/servicebay/commit/d7838a5497af30e532bcf6739d5941b677121c03)), closes [#3016](https://github.com/mdopp/servicebay/issues/3016)
+
 ## [5.41.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.41.1...servicebay-v5.41.2) (2026-09-21)
 
 
