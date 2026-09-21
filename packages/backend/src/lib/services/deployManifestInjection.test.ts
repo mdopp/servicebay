@@ -450,6 +450,102 @@ describe('#2928 axis C — a crafted manifest is refused at the deploy choke poi
     });
 });
 
+/**
+ * #3020 — a health probe the image cannot possibly run is refused at the SAME
+ * choke point, for the same reason: `deploy_service` and `install_template`
+ * both reach the node through `deployKubeService`, so a check anywhere else is
+ * a check something can go around.
+ *
+ * This block exists because the first version of the #3020 tests drove the
+ * preflight functions directly and stayed GREEN when the call was deleted from
+ * the deploy — the same shape that let #3016 survive #2996. The assertion has
+ * to sit where the call can be missing.
+ */
+describe('#3020 — a probe binary the image lacks is refused at the deploy choke point', () => {
+    /** Like `stubAgent`, but the image reports the probe binary as ABSENT. */
+    function stubAgentWithoutCurl(): void {
+        mockSendCommand.mockImplementation(async (action: string, params?: Record<string, unknown>) => {
+            if (action === 'write_file') return 'ok';
+            if (action === 'read_file') return { content: '' };
+            if (action === 'safe_exec') {
+                const argv = (params?.argv as string[] | undefined) ?? [];
+                // `podman run --rm --pull=never … sh -c 'command -v curl'`
+                // exits 1 when the binary is not in the image. The container
+                // RAN — this is a real answer, not a failure to look.
+                if (argv[0] === 'podman' && argv.includes('--pull=never')) {
+                    return { code: 1, stdout: '', stderr: '' };
+                }
+                return { code: 0, stdout: '', stderr: '' };
+            }
+            return { code: 0, stdout: '', stderr: '' };
+        });
+    }
+
+    /** The manifest that reached 1006 restarts, character for character. */
+    const CURL_IN_ALPINE = [
+        'apiVersion: v1',
+        'kind: Pod',
+        'metadata:',
+        '  name: asteroids',
+        'spec:',
+        '  containers:',
+        '  - name: web',
+        '    image: docker.io/library/node:20-alpine',
+        '    livenessProbe:',
+        '      exec:',
+        '        command: ["sh", "-c", "curl -f http://localhost:8080/ || exit 1"]',
+        '',
+    ].join('\n');
+
+    beforeEach(() => {
+        mockSendCommand.mockReset();
+    });
+
+    it('refuses it, and names the image and the binary', async () => {
+        stubAgentWithoutCurl();
+        const err = await deploy(CURL_IN_ALPINE).catch((e: Error) => e);
+        expect(String(err)).toContain('node:20-alpine');
+        expect(String(err)).toContain('curl');
+    });
+
+    it('says WHY, so the next step is not a guess', async () => {
+        stubAgentWithoutCurl();
+        const err = await deploy(CURL_IN_ALPINE).catch((e: Error) => e);
+        expect(String(err)).toContain('can never go green');
+        expect(String(err)).toContain('restart forever');
+    });
+
+    it('writes nothing: a refused deploy leaves no unit behind', async () => {
+        stubAgentWithoutCurl();
+        await deploy(CURL_IN_ALPINE).catch(() => undefined);
+        const writes = mockSendCommand.mock.calls.filter(([action]) => action === 'write_file');
+        expect(writes).toEqual([]);
+    });
+
+    it('deploys the same manifest when the image really carries the binary', async () => {
+        // The regression this must not cause. Default stub: `safe_exec` exits
+        // 0, i.e. `command -v curl` found it.
+        stubAgent();
+        await expect(deploy(CURL_IN_ALPINE)).resolves.toBeUndefined();
+    });
+
+    it('deploys when the image is not on the node yet — blindness is not a refusal', async () => {
+        mockSendCommand.mockImplementation(async (action: string, params?: Record<string, unknown>) => {
+            if (action === 'write_file') return 'ok';
+            if (action === 'read_file') return { content: '' };
+            if (action === 'safe_exec') {
+                const argv = (params?.argv as string[] | undefined) ?? [];
+                if (argv[0] === 'podman' && argv.includes('--pull=never')) {
+                    return { code: 125, stdout: '', stderr: 'Error: no such image: docker.io/library/node:20-alpine' };
+                }
+                return { code: 0, stdout: '', stderr: '' };
+            }
+            return { code: 0, stdout: '', stderr: '' };
+        });
+        await expect(deploy(CURL_IN_ALPINE)).resolves.toBeUndefined();
+    });
+});
+
 // ── Criterion 4: the common case must still deploy ───────────────────────────
 
 describe('#2928 — an ordinary template still deploys (the regression this fix must not cause)', () => {
