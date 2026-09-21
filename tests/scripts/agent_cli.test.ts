@@ -35,11 +35,14 @@ type Verb = {
   body?: (args: Record<string, string>, opts: Record<string, string>) => unknown;
   reads: string[];
   text: (body: unknown) => string;
+  /** Opt-in: append which credential answered (#3000). Only `whoami` does. */
+  showsCredentialSource?: boolean;
 };
 type Cli = {
   VERBS: Record<string, Verb>;
   DEFAULT_BASE_URL: string;
   readToken: (env: Record<string, string | undefined>, readFile: (p: string) => string) => string;
+  resolveToken: (env: Record<string, string | undefined>, readFile: (p: string) => string) => { token: string; source: string };
   baseUrl: (env: Record<string, string | undefined>) => string;
   parseArgs: (argv: string[]) => Record<string, unknown>;
   run: (argv: string[], deps?: Record<string, unknown>) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
@@ -276,7 +279,14 @@ describe.each(Object.keys(ARGV))('verb `%s`', verbName => {
     expect(seen.method).toBe(cli.VERBS[verbName].method);
     expect(seen.auth).toBe(`Bearer ${FAKE_TOKEN}`);
     const payload = JSON.parse(result.stdout);
-    expect(payload).toEqual({ ok: true, verb: verbName, data: SUCCESS_BODY[verbName] });
+    expect(payload).toEqual({
+      ok: true,
+      verb: verbName,
+      data: SUCCESS_BODY[verbName],
+      // A verb that declares it reports WHICH credential answered adds one
+      // field (#3000). Only `whoami` does; the rest of the shape is fixed.
+      ...(cli.VERBS[verbName].showsCredentialSource ? { credentialSource: 'env: SERVICEBAY_MCP_TOKEN' } : {}),
+    });
   });
 
   it('renders human text that actually reads the fields the table declares', async () => {
@@ -521,6 +531,75 @@ describe('request-status never reports waiting as success (#2965 criterion 5)', 
     expect(verb.method).toBe('GET');
     expect(verb.options).toEqual([]);
     expect(verb.path({ id: 'req-7f3a' }, {})).toBe('/api/install/requests/req-7f3a');
+  });
+});
+
+describe('the credential never widens, and you can see which one answered (#3000)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-cred-'));
+  const read = (p: string) => fs.readFileSync(p, 'utf8');
+  const empty = path.join(dir, 'empty');
+  const junk = path.join(dir, 'junk');
+  const gone = path.join(dir, 'gone');
+  fs.writeFileSync(empty, '');
+  fs.writeFileSync(junk, 'not-a-token\n');
+
+  const WIDE = 'sb_wide_pod_token';
+
+  it.each([
+    ['an empty file', empty],
+    ['a missing file', gone],
+  ])('%s yields NO token rather than falling back to the wider env var', (_label, file) => {
+    // The direction that matters. A fallback here hands a caller who asked for
+    // a narrow credential the widest one the container has, in the one case
+    // where it is least expected — and on 2026-09-20 exactly that shape (in a
+    // wrapper, not here) ran a force-update nobody meant to run.
+    const token = cli.readToken({ SERVICEBAY_MCP_TOKEN_FILE: file, SERVICEBAY_MCP_TOKEN: WIDE }, read);
+    expect(token).toBe('');
+    expect(token).not.toBe(WIDE);
+  });
+
+  it('a file with the wrong content is used as-is, not silently replaced', () => {
+    // Garbage in the file is the caller's problem to see — the server refuses
+    // it and says so. Swapping in a working token would hide the mistake.
+    expect(cli.readToken({ SERVICEBAY_MCP_TOKEN_FILE: junk, SERVICEBAY_MCP_TOKEN: WIDE }, read)).toBe('not-a-token');
+  });
+
+  it('uses the env var only when no file is named', () => {
+    expect(cli.readToken({ SERVICEBAY_MCP_TOKEN: WIDE }, read)).toBe(WIDE);
+  });
+
+  it('names the source, and never the secret', () => {
+    expect(cli.resolveToken({ SERVICEBAY_MCP_TOKEN_FILE: junk }, read).source).toBe(`file: ${junk}`);
+    expect(cli.resolveToken({ SERVICEBAY_MCP_TOKEN_FILE: gone }, read).source).toContain('unreadable');
+    expect(cli.resolveToken({ SERVICEBAY_MCP_TOKEN: WIDE }, read).source).toBe('env: SERVICEBAY_MCP_TOKEN');
+    expect(cli.resolveToken({}, read).source).toBe('none');
+    for (const env of [{ SERVICEBAY_MCP_TOKEN: WIDE }, { SERVICEBAY_MCP_TOKEN_FILE: junk }]) {
+      expect(cli.resolveToken(env, read).source).not.toContain(WIDE);
+      expect(cli.resolveToken(env, read).source).not.toContain('not-a-token');
+    }
+  });
+
+  it('whoami prints the source next to the identity, so a swapped credential shows', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.whoami) };
+    const result = await cli.run(['whoami'], { env: envWith() });
+    expect(result.stdout).toContain('source');
+    expect(result.stdout).toContain('env: SERVICEBAY_MCP_TOKEN');
+    // The identity is still there; the source is an addition, not a swap.
+    expect(result.stdout).toContain('scopes');
+  });
+
+  it('--json carries the source as a field, not only in prose', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.whoami) };
+    const result = await cli.run(['whoami', '--json'], { env: envWith() });
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.credentialSource).toBe('env: SERVICEBAY_MCP_TOKEN');
+    expect(JSON.stringify(parsed)).not.toContain(FAKE_TOKEN);
+  });
+
+  it('only whoami carries it — a source line on every verb would be noise', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.services) };
+    const result = await cli.run(['services', '--json'], { env: envWith() });
+    expect(JSON.parse(result.stdout).credentialSource).toBeUndefined();
   });
 });
 
