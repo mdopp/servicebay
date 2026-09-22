@@ -99,6 +99,10 @@ function line(...parts) {
  *   `scope`   the ApiScope this verb requires, or `null` for a `parent-token`
  *             verb, which is gated on lineage rather than on a scope
  *   `method`  / `path(args, options)` the exact route it speaks
+ *   `optionalPositionals`
+ *             trailing arguments a caller MAY supply. `progress` takes a job
+ *             id, or nothing and reports the last run (#3027). Absent ones are
+ *             `undefined`; one too many is still a usage error.
  *   `reads`   the top-level response fields `text()` actually consumes, so a
  *             route that stops returning one is a red rather than a blank line
  *   `text`    the human rendering; `--json` bypasses it entirely
@@ -364,30 +368,50 @@ export const VERBS = {
   },
 
   progress: {
-    summary: 'show the install job running right now — phase, item, what it has deployed',
-    usage: 'progress',
+    summary: 'how an install is going — or, when none is running, how the last one ended',
+    usage: 'progress [<job-id>] [--node <name>]',
     effect: 'read',
     scope: 'read',
     method: 'GET',
     positionals: [],
-    options: [],
-    // `/api/install/current` is the token-readable, sanitised view: id, phase
-    // and counts, never `input.variables`. The sibling `/api/install/status`
-    // carries the operator's secrets and stays cookie-only — do not point a
-    // verb at it.
-    path: () => '/api/install/current',
+    options: ['node'],
+    // `install` prints a job id; until #3027 nothing took one back. The job
+    // ended, `progress` said "no install job is running", and the recorded
+    // error — a good one, naming exactly what went wrong — reached nobody. A
+    // session then guessed three times at a fact that was on disk the whole
+    // time.
+    optionalPositionals: ['id'],
+    path: (args, opts) => {
+      const q = [args.id ? `jobId=${enc(args.id)}` : '', opts.node ? `node=${enc(opts.node)}` : '']
+        .filter(Boolean).join('&');
+      return `/api/install/current${q ? `?${q}` : ''}`;
+    },
     reads: ['job', 'jobIsActive'],
     text: body => {
-      const job = body?.job;
-      if (!job) return 'no install job is running';
+      const job = body?.job ?? body?.last ?? null;
+      if (!job) return 'no install job is running, and none has been recorded on this box';
       const p = job?.progress ?? {};
       const deployed = Array.isArray(p?.deployedNames) ? p.deployedNames : [];
+      const tail = Array.isArray(job?.logTail) ? job.logTail : [];
+      const warnings = Array.isArray(job?.warnings) ? job.warnings : [];
       return [
-        line('job     ', String(job?.id ?? '?')),
+        line('job     ', String(job?.id ?? '?'), body?.job ? '' : '(the last one — nothing is running now)'),
         line('phase   ', String(job?.phase ?? '?'), body?.jobIsActive === true ? '(active)' : '(finished)'),
         line('current ', String(p?.currentItem ?? '-'), `of ${String(p?.totalCount ?? '?')}`),
         line('deployed', deployed.length > 0 ? deployed.join(', ') : '-'),
-      ].join('\n');
+        job?.error ? line('error   ', String(job.error)) : '',
+        ...warnings.map(w => line('warning ', String(w))),
+        ...(tail.length > 0 ? ['', 'last log lines:', ...tail.map(l => `  ${l}`)] : []),
+      ].filter(Boolean).join('\n');
+    },
+    // A job that ENDED BADLY must not exit 0 — that is the whole complaint:
+    // the outcome was recorded and unreachable, so a script could not tell a
+    // finished install from a failed one.
+    //   0 running or done · 11 error/crashed/aborted
+    exit: body => {
+      const job = body?.job ?? body?.last ?? null;
+      if (!job) return 0;
+      return ['error', 'crashed', 'aborted'].includes(String(job.phase)) ? 11 : 0;
     },
   },
 
@@ -891,11 +915,22 @@ export function parseArgs(argv) {
     positionals.push(token);
   }
 
-  if (positionals.length !== verb.positionals.length) {
-    return { error: `\`${verbName}\` takes ${verb.positionals.length} argument(s) (usage: ${verb.usage})` };
+  // A verb may declare trailing OPTIONAL positionals (#3027: `progress` takes
+  // a job id, or none and reports the last run). Required ones are still
+  // required; an optional one that is absent is simply undefined, and anything
+  // beyond the declared list is a usage error rather than a silently ignored
+  // argument.
+  const optional = verb.optionalPositionals ?? [];
+  const min = verb.positionals.length;
+  const max = min + optional.length;
+  if (positionals.length < min || positionals.length > max) {
+    const expected = min === max ? `${min}` : `${min}-${max}`;
+    return { error: `\`${verbName}\` takes ${expected} argument(s) (usage: ${verb.usage})` };
   }
   const args = {};
-  verb.positionals.forEach((name, i) => { args[name] = positionals[i]; });
+  [...verb.positionals, ...optional].forEach((name, i) => {
+    if (positionals[i] !== undefined) args[name] = positionals[i];
+  });
   return { verbName, verb, args, options, json };
 }
 

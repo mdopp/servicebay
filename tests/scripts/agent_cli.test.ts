@@ -175,7 +175,11 @@ const SUCCESS_BODY: Record<string, unknown> = {
     summary: 'Published, pulled, and on the digest the registry serves. Nothing to do.',
   },
   progress: {
-    job: { id: 'job-2f11', phase: 'running', progress: { currentItem: 'asteroids', deployedNames: [], totalCount: 1 } },
+    job: {
+      id: 'job-2f11', phase: 'running', startedAt: '2026-09-22T05:00:00Z', endedAt: null,
+      progress: { currentItem: 'asteroids', deployedNames: [], totalCount: 1 },
+      error: null, warnings: [], logTail: ['Pulling ghcr.io/mdopp/asteroids:latest…'],
+    },
     jobIsActive: true,
   },
 };
@@ -739,6 +743,79 @@ describe('update never reports a no-op as an update (#2990, and #2983 behind it)
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('has no option');
     }
+  });
+});
+
+describe('progress redeems the id install prints, and says how the last run ended (#3027)', () => {
+  const finished = (phase: string, over: Record<string, unknown> = {}) => ({
+    job: null,
+    jobIsActive: false,
+    last: {
+      id: '57fa8f30', phase, startedAt: '2026-09-22T05:00:00Z', endedAt: '2026-09-22T05:02:00Z',
+      progress: { currentItem: null, deployedNames: [], totalCount: 1 },
+      error: phase === 'error' ? 'Nothing was deployed: 0 of 1 requested service(s) reached the box (flutstunde).' : null,
+      warnings: [],
+      logTail: ['❌ flutstunde carries no template spec in this manifest — nothing was deployed for it.'],
+      ...over,
+    },
+  });
+
+  it('takes the id that `install` printed', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.progress) };
+    await cli.run(['progress', '57fa8f30'], { env: envWith() });
+    expect(seen.url).toBe('/api/install/current?jobId=57fa8f30');
+  });
+
+  it('still works with no id at all', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.progress) };
+    const result = await cli.run(['progress'], { env: envWith() });
+    expect(seen.url).toBe('/api/install/current');
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('reports how the LAST run ended instead of "nothing is running"', async () => {
+    // The whole complaint: the error was recorded, precise, and unreachable.
+    reply = { status: 200, body: JSON.stringify(finished('error')) };
+    const result = await cli.run(['progress'], { env: envWith() });
+    expect(result.stdout).toContain('57fa8f30');
+    expect(result.stdout).toContain('Nothing was deployed');
+    expect(result.stdout).toContain('no template spec');
+    expect(result.stdout).toContain('the last one');
+  });
+
+  it('a finished-with-error job does NOT exit 0', async () => {
+    reply = { status: 200, body: JSON.stringify(finished('error')) };
+    expect((await cli.run(['progress'], { env: envWith() })).exitCode).toBe(11);
+  });
+
+  it.each(['crashed', 'aborted'])('a %s job does not exit 0 either', async (phase) => {
+    reply = { status: 200, body: JSON.stringify(finished(phase)) };
+    expect((await cli.run(['progress'], { env: envWith() })).exitCode).toBe(11);
+  });
+
+  it('a finished-and-done job exits 0', async () => {
+    reply = { status: 200, body: JSON.stringify(finished('done')) };
+    expect((await cli.run(['progress'], { env: envWith() })).exitCode).toBe(0);
+  });
+
+  it('a box that has never run an install says so, and exits 0', async () => {
+    reply = { status: 200, body: JSON.stringify({ job: null, jobIsActive: false }) };
+    const result = await cli.run(['progress'], { env: envWith() });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('none has been recorded');
+  });
+
+  it('relays a 404 for an id nobody has, with the message', async () => {
+    reply = { status: 404, body: JSON.stringify({ error: 'No install job with id "nope".' }) };
+    const result = await cli.run(['progress', 'nope'], { env: envWith() });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('No install job with id');
+  });
+
+  it('takes at most one argument', async () => {
+    const result = await cli.run(['progress', 'a', 'b'], { env: envWith() });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('0-1 argument');
   });
 });
 
