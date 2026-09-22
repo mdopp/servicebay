@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.44.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.43.0...servicebay-v5.44.0) (2026-09-22)
+
+
+### Features
+
+* **agent-cli:** source-add — register a repo as a template source ([f7d643a](https://github.com/mdopp/servicebay/commit/f7d643a306eef8f1db4f2c4e544cf6148dfda442)), closes [#3034](https://github.com/mdopp/servicebay/issues/3034)
+* **agent-cli:** source-add, and stop calling an unreadable manifest "not published" ([3f8574c](https://github.com/mdopp/servicebay/commit/3f8574c744f70a63e032b79ad46db5258b7b9024))
+
+
+### Bug Fixes
+
+* **images:** a manifest we could not read is not "NOT PUBLISHED" ([2c4faa5](https://github.com/mdopp/servicebay/commit/2c4faa547ea7e472903518195aab7765c5dd7881)), closes [#3033](https://github.com/mdopp/servicebay/issues/3033)
+
 ## [5.43.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.42.0...servicebay-v5.43.0) (2026-09-22)
 
 
