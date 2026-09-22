@@ -22,6 +22,9 @@ import { ServiceListing } from '../serviceListing';
 import { describePortCollisions } from '../portCollisionMessage';
 import { preflightDeployment } from '../deployPreflightRun';
 import { refuses, describeFindings } from '../deployPreflight';
+import { setDeployWarnings } from '../deployWarnings';
+
+
 import { writeExtraConfigFiles } from '../extraConfigFiles';
 import { migratePredecessors, runMigrationScript } from './migrations';
 import { runPostDeployScript } from './postDeploy';
@@ -154,6 +157,12 @@ export async function deployKubeService(
     if (refuses(preflight)) {
         throw new Error(`Refusing to deploy "${name}":\n${describeFindings(preflight)}`);
     }
+    // A warning nobody sees is not a warning. The first cut logged the
+    // non-blocking findings and returned the usual "deployed successfully",
+    // so a caller had no way to learn that the probe could not be checked at
+    // all — which is the same silent-success shape this check exists to end.
+    // `lastDeployWarnings` carries them back to whoever called.
+    setDeployWarnings(name, preflight.filter(f => f.severity === 'warn').map(f => f.message));
 
     // Migrate any pre-rename predecessor units first so their host-port
     // ownership is released before the port-collision pre-flight runs.

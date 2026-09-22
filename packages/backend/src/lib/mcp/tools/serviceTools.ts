@@ -17,6 +17,7 @@ import { ServiceName, TrashId, QuadletFileName, HostFilePath } from '@/lib/api/s
 // the second entry point to the same sink, so they reuse that boundary contract
 // verbatim — the same shared schemas plus the same containment rule.
 import { checkExtraFileScope, DEFAULT_TEMPLATE_DATA_DIR } from '@/lib/services/deployRequest';
+import { takeDeployWarnings } from '@/lib/services/deployWarnings';
 import { getConfig } from '@/lib/config';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { redactBundleEnvironments, redactServiceFiles } from '../redact';
@@ -157,7 +158,12 @@ export function registerServiceTools({ server }: ToolRegistration) {
         resolvedYamlFileName,
         extraFiles,
       );
-      return textResult(`Service "${name}" deployed successfully${extraFiles?.length ? ` (${extraFiles.length} extra file${extraFiles.length === 1 ? '' : 's'} written)` : ''}`);
+      // #3020 follow-up — say what the preflight could not establish. A deploy
+      // that reports only "successfully" while a health probe went unchecked is
+      // the silent success this whole check was built to end.
+      const warnings = takeDeployWarnings(name);
+      const base = `Service "${name}" deployed successfully${extraFiles?.length ? ` (${extraFiles.length} extra file${extraFiles.length === 1 ? '' : 's'} written)` : ''}`;
+      return textResult(warnings.length > 0 ? `${base}\n\nPREFLIGHT WARNINGS (${warnings.length}):\n- ${warnings.join('\n- ')}` : base);
     },
   );
 

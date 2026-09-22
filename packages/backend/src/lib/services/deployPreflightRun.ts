@@ -19,7 +19,7 @@
  *  - **It never turns our blindness into a refusal.** Only a container that
  *    RAN and reported the binary absent refuses. Everything else warns.
  */
-import { agentManager } from '@/lib/agent/manager';
+import { getExecutor } from '@/lib/executor';
 import { logger } from '@/lib/logger';
 import {
   collectProbeCommands,
@@ -29,6 +29,11 @@ import {
 } from './deployPreflight';
 
 const PROBE_TIMEOUT_MS = 20 * 1000;
+/** Overridden as the container's entrypoint so the image's own wrapper cannot
+ *  reinterpret our arguments — the equals form leaves podman nothing to guess. */
+const SHELL = 'sh';
+/** podman could not give us an answer about the binary at all. */
+const NOT_OUR_ANSWER = /no such image|unable to find image|image not known|pull.*never|unknown flag|executable file not found|no such file or directory/i;
 
 /**
  * Is `binary` on PATH inside `image`?
@@ -42,21 +47,31 @@ export async function binaryInImage(
   binary: string,
 ): Promise<{ present: boolean | null; detail?: string }> {
   try {
-    // The same door the rest of the deploy path goes through
-    // (`agentManager.ensureAgent`), not a second executor: a preflight that
-    // reaches the node by a different route is a preflight that can be absent
-    // exactly where the deploy is present.
-    const agent = await agentManager.ensureAgent(nodeName);
-    const res = await agent.sendCommand(
-      'safe_exec',
-      { argv: ['podman', 'run', '--rm', '--pull=never', '--entrypoint', 'sh', '--', image, '-c', `command -v ${binary}`] },
-      { timeoutMs: PROBE_TIMEOUT_MS },
-    ) as { code?: number; stdout?: string; stderr?: string };
-    if (res.code === 0) return { present: true };
+    // Through `execSafe`, like every other exec on this path. The first cut
+    // called `sendCommand('safe_exec', …)` directly, which worked but wrote no
+    // `safe_exec:` audit line — so when the check failed to fire on the box
+    // there was nothing in the journal to look at, and the fault could not be
+    // told apart from the check never running (#3020 follow-up).
+    const res = await getExecutor(nodeName).execSafe(
+      ['podman', 'run', '--rm', '--pull=never', `--entrypoint=${SHELL}`, image, '-c', `command -v ${binary}`],
+      { timeoutMs: PROBE_TIMEOUT_MS, check: false },
+    );
+    const stdout = (res.stdout ?? '').trim();
     const stderr = (res.stderr ?? '').trim();
+
+    // `command -v` PRINTS THE PATH when it finds the binary. An exit 0 with no
+    // path means something other than our shell ran — an image whose entrypoint
+    // swallowed the arguments, a wrapper that lost the real exit code. Reading
+    // that as "present" is exactly how a check reports success for something it
+    // never established, so it is `unknown` instead.
+    if (res.code === 0) {
+      return stdout
+        ? { present: true }
+        : { present: null, detail: 'the probe exited 0 but printed no path, so nothing was actually established' };
+    }
     // The image is not on this node, or podman could not start it at all —
     // that says nothing about the binary.
-    if (/no such image|unable to find image|image not known|pull.*never|unknown flag|no such file or directory.*sh/i.test(stderr)) {
+    if (NOT_OUR_ANSWER.test(stderr)) {
       return { present: null, detail: stderr.slice(0, 160) || `podman exit ${res.code}` };
     }
     // `command -v` exits 1 when the binary is absent. The container ran; this
