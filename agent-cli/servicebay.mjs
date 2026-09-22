@@ -433,8 +433,13 @@ export const VERBS = {
     text: body => {
       const images = Array.isArray(body?.images) ? body.images : [];
       const rows = images.map(img => {
+        // Only `not-published` is an assertion that nothing was ever pushed.
+        // `unreachable` and `unknown` mean we could not look — rendering those
+        // as NOT PUBLISHED sends someone to fix a build that is fine (#3033).
         const verdict = img?.published !== true
-          ? `NOT PUBLISHED (${String(img?.problem ?? 'unknown')})`
+          ? (img?.problem === 'not-published'
+            ? 'NOT PUBLISHED — the registry serves no such tag'
+            : `could not check (${String(img?.problem ?? 'unknown')})`)
           : img?.upToDate === false
             ? `published, local is behind ${shortDigest(img?.registry)}`
             : img?.pulled !== true

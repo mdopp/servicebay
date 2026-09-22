@@ -970,9 +970,26 @@ describe('images tells a session WHICH kind of "no" it hit (#2995)', () => {
     const result = await cli.run(['images', 'asteroids'], { env: envWith() });
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout).toContain('NOT PUBLISHED');
-    expect(result.stdout).toContain('not-published');
+    expect(result.stdout).toContain('serves no such tag');
     // The registry's own words survive to the shell, not just our label.
     expect(result.stdout).toContain('manifest unknown');
+  });
+
+  it('an answer we could not READ is not reported as "not published" (#3033)', async () => {
+    // A real image reported NOT PUBLISHED because its manifest shape was not
+    // one we could read. That sends someone to fix a build that is fine — the
+    // opposite failure from the one this verb was built for, and the same
+    // class: a field that is formally true rendered as a stronger claim.
+    reply = {
+      status: 200,
+      body: JSON.stringify(report(
+        { ok: false, summary: 'Could not reach the registry …' },
+        { published: false, registry: null, problem: 'unknown', detail: 'no digest could be read' },
+      )),
+    };
+    const result = await cli.run(['images', 'asteroids'], { env: envWith() });
+    expect(result.stdout).toContain('could not check');
+    expect(result.stdout).not.toContain('NOT PUBLISHED');
   });
 
   it('distinguishes an unreachable registry from a missing build in its output', async () => {

@@ -147,10 +147,22 @@ proxy host at `<sub>.<PUBLIC_DOMAIN>`:
    without a health endpoint, and with a CI that didn't gate on tests).
 2. **Image** — build + push it; confirm the box can `podman pull` it.
 3. **Place the template** — push to a template registry, OR write each file under
-   `/mnt/data/servicebay/local-templates/templates/<name>/` (survives reinstall,
-   no git needed). One `write_file` per file: it is jailed to `/mnt/data`,
-   creates the parent dir, and sets `core:core` ownership so the install runner
-   can read what you dropped. Check the result with `list_dir`.
+   `/mnt/data/servicebay/local-templates/templates/<name>/`. Note the path: the
+   directory is **`templates/`, plural**, and the service name is a directory
+   *inside* it. A tree written to `…/local-templates/template/<name>/` is not
+   found, the install reports that the template carries no spec, and nothing
+   about that message points at the missing `s` — one session lost an hour
+   there. Survives reinstall, no git needed.
+
+   One `write_file` per file: it is jailed to `/mnt/data`, creates the parent
+   dir, and sets `core:core` ownership so the install runner can read what you
+   dropped. **Check the path back with `list_dir` before installing** — that is
+   the cheapest place to catch a typo in it:
+
+   ```
+   list_dir /mnt/data/servicebay/local-templates/templates
+     → your <name> must be in this listing, not one level up
+   ```
 4. **Install** — `install_template` `{names:["<name>"], templateSource:"Local",
    variables:{…}}` returns a `jobId`; then poll `get_install_progress`
    `{jobId, logsSince:<previous logsOffset>}` until `phase:"done"` (`error` /
