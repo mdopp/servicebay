@@ -92,6 +92,19 @@ describe('summarise names a next move, not a status word', () => {
   it('an unreachable registry says explicitly that it proves nothing', () => {
     const s = summarise('asteroids', [img({ published: false, problem: 'unreachable', registry: null })]);
     expect(s).toContain('says nothing about whether the image exists');
+    expect(s).toContain('Retry');
+  });
+
+  it('a registry that ANSWERED unreadably is not called unreachable (#3036)', () => {
+    // Measured on the box: the summary said "Could not reach the registry"
+    // while the registry had answered and only its manifest was unreadable.
+    // A reader told it is unreachable retries; the thing to do is look at what
+    // was served.
+    const s = summarise('asteroids', [img({ published: false, problem: 'unknown', registry: null })]);
+    expect(s).toContain('The registry answered');
+    expect(s).not.toContain('Could not reach');
+    expect(s).toContain('unknown, NOT no');
+    expect(s).toContain('podman manifest inspect');
   });
 
   it('a behind image points at the verb that moves it', () => {
