@@ -111,11 +111,11 @@ describe('extractImageDigest', () => {
     expect(extractImageDigest('garbage')).toBeNull();
   });
 
-  /* #3033 — the shapes a real registry answers with, and the ones that made a
+  /* #3036 — the shapes a real registry answers with, and the ones that made a
    * published image read as missing. Each of these was reported as
    * "NOT PUBLISHED" for an image `podman pull` fetches happily, which is the
    * opposite of the failure `servicebay images` exists to catch. */
-  describe('the shapes that produced a false negative (#3033)', () => {
+  describe('the shapes that produced a false negative (#3036)', () => {
     it('unwraps the ARRAY podman inspect answers with', () => {
       // `podman inspect` returns one entry per matched object; `podman manifest
       // inspect` returns a bare one. The two digest readers had drifted apart

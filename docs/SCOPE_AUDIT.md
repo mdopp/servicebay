@@ -154,7 +154,7 @@ not listed here reject Bearer tokens (cookie/internal-token only).
 | `/api/system/disk-import/*` | GET/POST | `mutate` | scan/plan/apply a drive import (file moves into canonical folders = additive) |
 | `/api/system/nginx/proxy-hosts` | POST | `mutate` | create/update a live NPM proxy host (additive; the `create_proxy_route` tool path) |
 | `/api/install/template` | POST | `mutate` | install one template the full wizard way (assemble → job → start) — the REST twin of `install_template`, which has carried `mutate` since #2141, and the route the agent CLI's `install` verb speaks. Additive always: it takes no `wipeMode` (ADR 0004). Its `propose`-tier sibling `/api/install/requests` only asks |
-| `/api/system/template-sources` | POST | `mutate` | register a repo as a template source (writes `config.registries`, then clones it) — the step between "I built a project" and "the box can install it"; the only path before was the cookie-only onboarding route, which adds no item (#3034) |
+| `/api/system/template-sources` | POST | `mutate` | register a repo as a template source (writes `config.registries`, then clones it) — the step between "I built a project" and "the box can install it"; the only path before was the cookie-only onboarding route, which adds no item (#3035) |
 | `/api/system/external-backup/register` | POST | `mutate` | register a NAS backup source (config write) |
 | `/api/system/external-backup/target` | POST | `mutate` | write NAS target config |
 | `/api/system/external-backup/delete` | POST | `mutate` | delete one NAS archive file |
