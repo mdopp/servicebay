@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.44.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.44.0...servicebay-v5.44.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* **images:** a registry that answered is not a registry we could not reach ([a6a15d8](https://github.com/mdopp/servicebay/commit/a6a15d82686a41dcae500681b50a614d53dd7b30))
+* **images:** a registry that answered is not a registry we could not reach ([1e6c90f](https://github.com/mdopp/servicebay/commit/1e6c90fbb789f9fe8f7fc62122e722b668cde6a4)), closes [#3036](https://github.com/mdopp/servicebay/issues/3036)
+
 ## [5.44.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.43.0...servicebay-v5.44.0) (2026-09-22)
 
 
