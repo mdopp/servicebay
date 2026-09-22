@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.44.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.44.1...servicebay-v5.44.2) (2026-09-22)
+
+
+### Bug Fixes
+
+* **images:** show what could not be read, not only that it could not ([dea7c1e](https://github.com/mdopp/servicebay/commit/dea7c1e5773a22cb49028aae6a4a9ff89180c523))
+* **images:** show what could not be read, not only that it could not ([8c5bd13](https://github.com/mdopp/servicebay/commit/8c5bd133a55451d9143c7c0bb28703b3b5d2714b)), closes [#3036](https://github.com/mdopp/servicebay/issues/3036)
+
 ## [5.44.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.44.0...servicebay-v5.44.1) (2026-09-22)
 
 
