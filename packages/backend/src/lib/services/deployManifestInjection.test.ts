@@ -49,6 +49,20 @@ vi.mock('../agent/manager', () => ({
     },
 }));
 vi.mock('../history', () => ({ saveSnapshot: vi.fn() }));
+// `getExecutor` is the argv exec path production uses (#3020 preflight and
+// everything else). Backing it with the SAME fake agent keeps one door for the
+// whole deploy — the first cut moved production onto `agentManager` so this
+// harness would reach it, which is the wrong direction and cost a live bug.
+vi.mock('../executor', () => ({
+    getExecutor: () => ({
+        execSafe: async (argv: string[], options: { check?: boolean } = {}) => {
+            const res = await mockSendCommand('safe_exec', { argv }) as { code?: number; stdout?: string; stderr?: string };
+            const out = { code: res?.code ?? 0, stdout: res?.stdout ?? '', stderr: res?.stderr ?? '' };
+            if (options.check !== false && out.code !== 0) throw new Error(`Command failed: ${argv.join(' ')}`);
+            return out;
+        },
+    }),
+}));
 
 import { ServiceLifecycle } from './serviceLifecycle';
 import { validatePodManifest } from './podSchema';
@@ -472,7 +486,9 @@ describe('#3020 — a probe binary the image lacks is refused at the deploy chok
                 // `podman run --rm --pull=never … sh -c 'command -v curl'`
                 // exits 1 when the binary is not in the image. The container
                 // RAN — this is a real answer, not a failure to look.
-                if (argv[0] === 'podman' && argv.includes('--pull=never')) {
+                if (argv[0] === 'podman' && argv.some(a => a.includes('--pull=never'))) {
+                    // `command -v` exits 1 and prints nothing when the binary
+                    // is absent. The container RAN — a real answer.
                     return { code: 1, stdout: '', stderr: '' };
                 }
                 return { code: 0, stdout: '', stderr: '' };
@@ -523,10 +539,46 @@ describe('#3020 — a probe binary the image lacks is refused at the deploy chok
     });
 
     it('deploys the same manifest when the image really carries the binary', async () => {
-        // The regression this must not cause. Default stub: `safe_exec` exits
-        // 0, i.e. `command -v curl` found it.
-        stubAgent();
+        // The regression this must not cause. `command -v` prints the path when
+        // it finds the binary — an exit 0 with NO path is not "present", it is
+        // "something else ran" (#3020, reopened).
+        mockSendCommand.mockImplementation(async (action: string, params?: Record<string, unknown>) => {
+            if (action === 'write_file') return 'ok';
+            if (action === 'read_file') return { content: '' };
+            if (action === 'safe_exec') {
+                const argv = (params?.argv as string[] | undefined) ?? [];
+                if (argv[0] === 'podman' && argv.some(a => a.includes('--pull=never'))) {
+                    return { code: 0, stdout: '/usr/bin/curl\n', stderr: '' };
+                }
+                return { code: 0, stdout: '', stderr: '' };
+            }
+            return { code: 0, stdout: '', stderr: '' };
+        });
         await expect(deploy(CURL_IN_ALPINE)).resolves.toBeUndefined();
+    });
+
+    it('a SILENT exit 0 does not read as "the binary is there" — it warns instead', async () => {
+        // The leading candidate for why the refusal did not fire on the box:
+        // an image whose entrypoint swallows the arguments exits 0 and prints
+        // nothing. That must never read as a pass.
+        mockSendCommand.mockImplementation(async (action: string, params?: Record<string, unknown>) => {
+            if (action === 'write_file') return 'ok';
+            if (action === 'read_file') return { content: '' };
+            if (action === 'safe_exec') {
+                const argv = (params?.argv as string[] | undefined) ?? [];
+                if (argv[0] === 'podman' && argv.some(a => a.includes('--pull=never'))) {
+                    return { code: 0, stdout: '', stderr: '' };
+                }
+                return { code: 0, stdout: '', stderr: '' };
+            }
+            return { code: 0, stdout: '', stderr: '' };
+        });
+        const { takeDeployWarnings } = await import('./deployWarnings');
+        // It deploys (blindness is not a refusal) …
+        await expect(deploy(CURL_IN_ALPINE)).resolves.toBeUndefined();
+        // … but it SAYS it could not establish anything.
+        const warnings = takeDeployWarnings(SERVICE);
+        expect(warnings.join(' ')).toContain('unverified');
     });
 
     it('deploys when the image is not on the node yet — blindness is not a refusal', async () => {
