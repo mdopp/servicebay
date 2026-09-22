@@ -29,7 +29,14 @@ import type { HostPortCollision } from './serviceListing';
 /** The recipe that covers "this service should serve something else now". */
 const ROLL_RECIPE = 'recipe-roll-new-image-to-running-service';
 
-export function describePortCollisions(nodeName: string, collisions: HostPortCollision[]): string {
+export function describePortCollisions(
+  nodeName: string,
+  collisions: HostPortCollision[],
+  /** Ports nothing holds, so the message can name the third exit instead of
+   *  leaving "pick another one" as an exercise (#3028). Omitted when the box's
+   *  listener table could not be read — better silent than wrong. */
+  freePorts: number[] = [],
+): string {
   const detail = collisions
     .map(c => `port ${c.hostPort} is owned by ${c.serviceName} (${c.holderActive ? 'running' : 'installed but stopped'})`)
     .join('; ');
@@ -58,8 +65,9 @@ export function describePortCollisions(nodeName: string, collisions: HostPortCol
   );
 
   lines.push(
-    'Only if this really is a NEW service alongside the existing one, give it a different host port. '
-    + 'Do not redeploy the holder with a placeholder to free the port: that takes down whatever it serves.',
+    'Only if this really is a NEW service alongside the existing one, give it a different host port'
+    + (freePorts.length > 0 ? `: ${freePorts.join(', ')} are free right now` : ' (`servicebay ports` lists what is taken and what is not)')
+    + '. Do not redeploy the holder with a placeholder to free the port: that takes down whatever it serves.',
   );
 
   return lines.join(' ');

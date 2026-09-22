@@ -473,6 +473,43 @@ export const VERBS = {
     exit: body => (body?.ok === true ? (body?.complete === true ? 0 : 9) : 8),
   },
 
+  ports: {
+    summary: 'what is listening on the box, and what is free — including what is no service',
+    usage: 'ports [--node <name>]',
+    effect: 'read',
+    scope: 'read',
+    method: 'GET',
+    positionals: [],
+    options: ['node'],
+    path: (_args, opts) => `/api/system/ports${opts.node ? `?node=${enc(opts.node)}` : ''}`,
+    // Your pod has its own network namespace, so `ss -ltn` in here shows you
+    // NOTHING about the box. Ask this before you pick a host port; a collision
+    // found afterwards is an error message you have to interpret, and the last
+    // session that interpreted one rewrote another service to free the port
+    // (#3028).
+    reads: ['ports', 'free', 'summary'],
+    text: body => {
+      const ports = Array.isArray(body?.ports) ? body.ports : [];
+      const free = Array.isArray(body?.free) ? body.free : [];
+      const rows = ports.map(p => line(
+        String(p?.port ?? '?').padStart(6),
+        String(p?.protocol ?? '').padEnd(4),
+        String(p?.owner ?? '?').padEnd(34),
+        p?.kind === 'service' ? '(service)' : p?.kind === 'control-plane' ? '(ServiceBay itself)' : '(no service)',
+      ));
+      return [
+        ...(rows.length > 0 ? rows : ['could not read the listener table']),
+        '',
+        line('free: ', free.join('  ') || '(none suggested)'),
+        '',
+        String(body?.summary ?? ''),
+      ].join('\n');
+    },
+    // An empty table is not "everything is free" — it is a failed read, and
+    // acting on it walks into the collision this verb exists to prevent.
+    exit: body => (Array.isArray(body?.ports) && body.ports.length > 0 ? 0 : 10),
+  },
+
   /* ── the mutating pair (#2990, ADR 0017) ──────────────────────────────
    *
    * These change the box. They are here because the pi-web token already
