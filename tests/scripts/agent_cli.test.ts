@@ -136,7 +136,7 @@ const SUCCESS_BODY: Record<string, unknown> = {
     logs: [],
   },
   install: { jobId: 'job-2f11', phase: 'running' },
-  // #3034 — registering a repo as a template source.
+  // #3035 — registering a repo as a template source.
   'source-add': {
     name: 'flutstunde',
     url: 'https://github.com/mdopp/flutstunde.git',
@@ -984,7 +984,7 @@ describe('images tells a session WHICH kind of "no" it hit (#2995)', () => {
     expect(result.stdout).toContain('manifest unknown');
   });
 
-  it('an answer we could not READ is not reported as "not published" (#3033)', async () => {
+  it('an answer we could not READ is not reported as "not published" (#3036)', async () => {
     // A real image reported NOT PUBLISHED because its manifest shape was not
     // one we could read. That sends someone to fix a build that is fine — the
     // opposite failure from the one this verb was built for, and the same
@@ -1029,7 +1029,7 @@ describe('images tells a session WHICH kind of "no" it hit (#2995)', () => {
   });
 });
 
-describe('source-add reports what the sync did, not that a line was written (#3034)', () => {
+describe('source-add reports what the sync did, not that a line was written (#3035)', () => {
   const answer = (over: Record<string, unknown> = {}) => ({
     name: 'flutstunde', url: 'https://github.com/mdopp/flutstunde.git',
     added: true, synced: true, detail: 'registered and synced', ...over,

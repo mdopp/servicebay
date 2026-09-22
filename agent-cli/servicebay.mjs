@@ -435,7 +435,7 @@ export const VERBS = {
       const rows = images.map(img => {
         // Only `not-published` is an assertion that nothing was ever pushed.
         // `unreachable` and `unknown` mean we could not look — rendering those
-        // as NOT PUBLISHED sends someone to fix a build that is fine (#3033).
+        // as NOT PUBLISHED sends someone to fix a build that is fine (#3036).
         const verdict = img?.published !== true
           ? (img?.problem === 'not-published'
             ? 'NOT PUBLISHED — the registry serves no such tag'
@@ -619,7 +619,7 @@ export const VERBS = {
     ].join('\n'),
     // Registered but not synced is not ready: the entry exists and the repo
     // served nothing. Reporting that as success is how a session installs from
-    // a source that has no templates and then wonders why (#3034).
+    // a source that has no templates and then wonders why (#3035).
     //   0 registered and synced · 12 registered but the sync did not succeed
     exit: body => (body?.synced === true ? 0 : 12),
   },

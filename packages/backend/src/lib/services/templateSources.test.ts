@@ -1,5 +1,5 @@
 /**
- * Registering a template source (#3034).
+ * Registering a template source (#3035).
  *
  * The step that was missing between "I built a project" and "the box can
  * install it": the only path in was the cookie-only onboarding route, which

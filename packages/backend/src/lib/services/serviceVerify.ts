@@ -138,7 +138,7 @@ export function checkImage(imageReport: { ok?: boolean; summary?: string; images
   const measured = images.map(i => `${i.image}: ${verdict(i)}`).join('; ');
   // Only a registry that ANSWERED and has no such tag is a problem. One we
   // could not reach, or whose manifest we could not read, is unknown — calling
-  // that a problem sends someone to fix a build that is fine (#3033).
+  // that a problem sends someone to fix a build that is fine (#3036).
   const unpublished = images.filter(i => i.published === false && i.problem === 'not-published');
   if (unpublished.length > 0) return { ...base, status: 'problem', measured, detail: imageReport.summary };
   const unreadable = images.filter(i => i.published === false);

@@ -60,7 +60,7 @@ function platformOf(entry: unknown): Record<string, unknown> | undefined {
  * An index built by buildx carries attestation entries whose platform is
  * `unknown/unknown`. They are not the image, and counting them as candidates
  * is how a perfectly published single-platform image reads as unreadable
- * (#3033). Several real platforms and no amd64 is genuinely ambiguous, and
+ * (#3036). Several real platforms and no amd64 is genuinely ambiguous, and
  * null — a guess dressed as a digest would be worse than no answer.
  */
 function digestFromIndex(manifests: unknown): string | null {
@@ -83,7 +83,7 @@ export function extractImageDigest(manifest: unknown): string | null {
   // rather than at each call site is deliberate: the two digest readers had
   // drifted apart on exactly this, so a real image reported "no digest could be
   // read from its manifest" — which rendered as NOT PUBLISHED for an image
-  // `podman pull` fetches happily (#3033).
+  // `podman pull` fetches happily (#3036).
   const doc = Array.isArray(manifest) ? manifest[0] : manifest;
   if (!doc || typeof doc !== 'object') return null;
   const m = doc as Record<string, unknown>;
