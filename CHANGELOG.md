@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.43.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.42.0...servicebay-v5.43.0) (2026-09-22)
+
+
+### Features
+
+* **agent-cli:** progress takes the id install prints, and says how the last run ended ([28d481a](https://github.com/mdopp/servicebay/commit/28d481add880e4958265b76d7135be2f6b72198f))
+* **agent-cli:** progress takes the id install prints, and says how the last run ended ([0266a63](https://github.com/mdopp/servicebay/commit/0266a630fb2fd3a09ee64066f2a9742fa9ca6ba4)), closes [#3027](https://github.com/mdopp/servicebay/issues/3027)
+* **agent-cli:** servicebay ports — the port map a pod structurally cannot see ([b265316](https://github.com/mdopp/servicebay/commit/b2653169ba6a6f6a09f120242a8c654599cb6061))
+* **agent-cli:** servicebay ports — the port map a pod structurally cannot see ([dfa7eae](https://github.com/mdopp/servicebay/commit/dfa7eaee06966d6aae0a8384afd215c7d9e11ef3)), closes [#3028](https://github.com/mdopp/servicebay/issues/3028)
+
+
+### Bug Fixes
+
+* **deploy:** a silent exit 0 is not "the binary is there", and a warning nobody sees is not a warning ([3fd0511](https://github.com/mdopp/servicebay/commit/3fd051173744b2d8ab2e03b57e00aa1edbe0fd7b))
+* **deploy:** a silent exit 0 is not "the binary is there", and a warning nobody sees is not a warning ([932d5d3](https://github.com/mdopp/servicebay/commit/932d5d330545585a5812c2f0f71884ce644f3253)), closes [#3020](https://github.com/mdopp/servicebay/issues/3020)
+
 ## [5.42.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.41.3...servicebay-v5.42.0) (2026-09-21)
 
 
