@@ -92,6 +92,14 @@ export function classifyRegistryError(message: string): { problem: ImageProblem;
   return { problem: 'unknown', detail };
 }
 
+/** The head of a payload we could not read, flattened onto one line. Enough to
+ *  recognise the shape; not so much that it drowns the message. */
+function excerpt(payload: string, max = 240): string {
+  const flat = payload.replace(/\s+/g, ' ').trim();
+  if (!flat) return '(empty output)';
+  return flat.length > max ? `${flat.slice(0, max)}… (${flat.length} chars)` : flat;
+}
+
 async function inspectRegistry(image: string, nodeName: string): Promise<Pick<ServiceImageStatus, 'registry' | 'problem' | 'detail'>> {
   try {
     const { stdout } = await getExecutor(nodeName).execSafe(
@@ -101,8 +109,21 @@ async function inspectRegistry(image: string, nodeName: string): Promise<Pick<Se
     const digest = extractImageDigest(JSON.parse(stdout));
     if (digest) return { registry: digest, problem: null };
     // The registry answered with something we cannot read a digest out of.
-    // Not published is the wrong word for that, so say what it is.
-    return { registry: null, problem: 'unknown', detail: 'the registry answered, but no digest could be read from its manifest' };
+    // Not published is the wrong word for that — and neither is "no digest
+    // could be read" on its own: that sentence names the symptom and withholds
+    // the one fact needed to fix it. Measured on the box, it cost a trip
+    // through the registry's HTTP API to learn what podman had actually
+    // returned. So the answer carries the payload it could not read.
+    //
+    // A manifest is public metadata — media types, digests, sizes, layer
+    // references. It holds no credential, which is why quoting it here is safe
+    // in a way quoting a log line would not be.
+    logger.info('imageStatus', `unreadable manifest for ${image}: ${stdout.slice(0, 1000)}`);
+    return {
+      registry: null,
+      problem: 'unknown',
+      detail: `the registry answered, but no digest could be read from what podman returned: ${excerpt(stdout)}`,
+    };
   } catch (e) {
     const { problem, detail } = classifyRegistryError(e instanceof Error ? e.message : String(e));
     logger.info('imageStatus', `registry inspect ${image}: ${problem} (${detail})`);
