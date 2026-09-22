@@ -433,8 +433,13 @@ export const VERBS = {
     text: body => {
       const images = Array.isArray(body?.images) ? body.images : [];
       const rows = images.map(img => {
+        // Only `not-published` is an assertion that nothing was ever pushed.
+        // `unreachable` and `unknown` mean we could not look — rendering those
+        // as NOT PUBLISHED sends someone to fix a build that is fine (#3033).
         const verdict = img?.published !== true
-          ? `NOT PUBLISHED (${String(img?.problem ?? 'unknown')})`
+          ? (img?.problem === 'not-published'
+            ? 'NOT PUBLISHED — the registry serves no such tag'
+            : `could not check (${String(img?.problem ?? 'unknown')})`)
           : img?.upToDate === false
             ? `published, local is behind ${shortDigest(img?.registry)}`
             : img?.pulled !== true
@@ -586,6 +591,37 @@ export const VERBS = {
     // the server's own word for "the pull did not take" — an agent scripting
     // on `$?` must not read that as success, or #2983 is merely relocated.
     exit: body => (body?.stale === true ? 6 : 0),
+  },
+
+  'source-add': {
+    summary: 'register a repo as a template source, so its templates can be installed — CHANGES the box',
+    usage: 'source-add <repo-url> [--name <name>] [--branch <ref>]',
+    effect: 'mutate',
+    scope: 'mutate',
+    method: 'POST',
+    positionals: ['url'],
+    options: ['name', 'branch'],
+    path: () => '/api/system/template-sources',
+    // The step that was missing between "I built a project" and "the box can
+    // install it". Before this, a new source meant hand-editing config.json on
+    // the box, which no session can do — so no agent could install anything it
+    // had just built.
+    body: (args, opts) => ({
+      url: args.url,
+      ...(opts.name ? { name: opts.name } : {}),
+      ...(opts.branch ? { branch: opts.branch } : {}),
+    }),
+    reads: ['name', 'added', 'synced', 'detail'],
+    text: body => [
+      line('source ', String(body?.name ?? '?'), body?.added === true ? '(registered)' : '(already registered)'),
+      line('synced ', body?.synced === true ? 'yes' : 'NO'),
+      String(body?.detail ?? ''),
+    ].join('\n'),
+    // Registered but not synced is not ready: the entry exists and the repo
+    // served nothing. Reporting that as success is how a session installs from
+    // a source that has no templates and then wonders why (#3034).
+    //   0 registered and synced · 12 registered but the sync did not succeed
+    exit: body => (body?.synced === true ? 0 : 12),
   },
 
   install: {

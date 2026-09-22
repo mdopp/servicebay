@@ -131,9 +131,18 @@ export function checkImage(imageReport: { ok?: boolean; summary?: string; images
   if (!imageReport) return { ...base, status: 'unknown', measured: 'could not read the image status' };
   const images = imageReport.images ?? [];
   if (images.length === 0) return { ...base, status: 'skipped', measured: 'the service declares no image reference' };
-  const measured = images.map(i => `${i.image}: ${i.published ? (i.upToDate === false ? 'behind' : i.upToDate === null ? 'published, local unknown' : 'current') : `NOT PUBLISHED (${i.problem ?? 'unknown'})`}`).join('; ');
-  const unpublished = images.filter(i => i.published === false);
+  const verdict = (i: { published?: boolean; upToDate?: boolean | null; problem?: string | null }) => {
+    if (i.published) return i.upToDate === false ? 'behind' : i.upToDate === null ? 'published, local unknown' : 'current';
+    return i.problem === 'not-published' ? 'NOT PUBLISHED' : `could not check (${i.problem ?? 'unknown'})`;
+  };
+  const measured = images.map(i => `${i.image}: ${verdict(i)}`).join('; ');
+  // Only a registry that ANSWERED and has no such tag is a problem. One we
+  // could not reach, or whose manifest we could not read, is unknown — calling
+  // that a problem sends someone to fix a build that is fine (#3033).
+  const unpublished = images.filter(i => i.published === false && i.problem === 'not-published');
   if (unpublished.length > 0) return { ...base, status: 'problem', measured, detail: imageReport.summary };
+  const unreadable = images.filter(i => i.published === false);
+  if (unreadable.length > 0) return { ...base, status: 'unknown', measured, detail: imageReport.summary };
   if (images.some(i => i.upToDate === false)) {
     return { ...base, status: 'problem', measured, detail: `The registry serves a newer image than the one running. \`servicebay update <service>\` moves it.` };
   }

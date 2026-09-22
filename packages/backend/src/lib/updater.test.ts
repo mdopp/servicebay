@@ -110,6 +110,60 @@ describe('extractImageDigest', () => {
     expect(extractImageDigest(null)).toBeNull();
     expect(extractImageDigest('garbage')).toBeNull();
   });
+
+  /* #3033 — the shapes a real registry answers with, and the ones that made a
+   * published image read as missing. Each of these was reported as
+   * "NOT PUBLISHED" for an image `podman pull` fetches happily, which is the
+   * opposite of the failure `servicebay images` exists to catch. */
+  describe('the shapes that produced a false negative (#3033)', () => {
+    it('unwraps the ARRAY podman inspect answers with', () => {
+      // `podman inspect` returns one entry per matched object; `podman manifest
+      // inspect` returns a bare one. The two digest readers had drifted apart
+      // on exactly this — one unwrapped, the other did not.
+      expect(extractImageDigest([{ config: { digest: 'sha256:ccc' } }])).toBe('sha256:ccc');
+      expect(extractImageDigest([JSON.parse(manifestList('sha256:ddd'))])).toBe('sha256:ddd');
+      expect(extractImageDigest([])).toBeNull();
+    });
+
+    it('reads a single-platform index that is not amd64-labelled', () => {
+      // One real entry and nothing to choose between: that IS the image.
+      expect(extractImageDigest({
+        manifests: [{ digest: 'sha256:eee', platform: { os: 'linux', architecture: 'arm64' } }],
+      })).toBe('sha256:eee');
+    });
+
+    it('ignores buildx attestation entries rather than being confused by them', () => {
+      // An index built by buildx carries an `unknown/unknown` attestation
+      // alongside the image. Counting it as a candidate leaves two entries and
+      // no amd64 — which is how a fine image reads as unreadable.
+      expect(extractImageDigest({
+        manifests: [
+          { digest: 'sha256:fff', platform: { os: 'linux', architecture: 'arm64' } },
+          { digest: 'sha256:att', platform: { os: 'unknown', architecture: 'unknown' } },
+        ],
+      })).toBe('sha256:fff');
+    });
+
+    it('still prefers amd64 when the index really is multi-arch', () => {
+      expect(extractImageDigest({
+        manifests: [
+          { digest: 'sha256:arm', platform: { os: 'linux', architecture: 'arm64' } },
+          { digest: 'sha256:amd', platform: { os: 'linux', architecture: 'amd64' } },
+        ],
+      })).toBe('sha256:amd');
+    });
+
+    it('does NOT guess when several real platforms are present and none is amd64', () => {
+      // Two candidates and no rule to pick between them: unknown is the honest
+      // answer, and it must not be dressed up as a digest.
+      expect(extractImageDigest({
+        manifests: [
+          { digest: 'sha256:arm', platform: { os: 'linux', architecture: 'arm64' } },
+          { digest: 'sha256:s390', platform: { os: 'linux', architecture: 's390x' } },
+        ],
+      })).toBeNull();
+    });
+  });
 });
 
 describe('checkForUpdates — tag/image reconciliation', () => {

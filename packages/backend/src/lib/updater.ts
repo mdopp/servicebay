@@ -42,22 +42,55 @@ interface Release {
  * entry's digest is the stable per-image identity that changes exactly when a
  * new image is pushed to the tag. Exported for unit testing the parsing.
  */
-export function extractImageDigest(manifest: unknown): string | null {
-  if (!manifest || typeof manifest !== 'object') return null;
-  const m = manifest as Record<string, unknown>;
+/** A readable string digest, or null. */
+function digestString(entry: unknown): string | null {
+  const d = (entry as Record<string, unknown>)?.digest;
+  return typeof d === 'string' && d.length > 0 ? d : null;
+}
 
-  // Manifest list (multi-arch): pick the linux/amd64 platform entry.
-  const manifests = m.manifests;
-  if (Array.isArray(manifests)) {
-    const amd64 = manifests.find((entry) => {
-      const platform = (entry as Record<string, unknown>)?.platform as
-        | Record<string, unknown>
-        | undefined;
-      return platform?.os === 'linux' && platform?.architecture === 'amd64';
-    }) as Record<string, unknown> | undefined;
-    const listed = amd64?.digest;
-    if (typeof listed === 'string' && listed.length > 0) return listed;
-  }
+/** The platform block of an index entry. */
+function platformOf(entry: unknown): Record<string, unknown> | undefined {
+  return (entry as Record<string, unknown>)?.platform as Record<string, unknown> | undefined;
+}
+
+/**
+ * The image digest out of a manifest list / OCI index: linux/amd64 if it is
+ * there, else the single real entry when there is exactly one.
+ *
+ * An index built by buildx carries attestation entries whose platform is
+ * `unknown/unknown`. They are not the image, and counting them as candidates
+ * is how a perfectly published single-platform image reads as unreadable
+ * (#3033). Several real platforms and no amd64 is genuinely ambiguous, and
+ * null — a guess dressed as a digest would be worse than no answer.
+ */
+function digestFromIndex(manifests: unknown): string | null {
+  if (!Array.isArray(manifests)) return null;
+  const amd64 = manifests.find(e => platformOf(e)?.os === 'linux' && platformOf(e)?.architecture === 'amd64');
+  const listed = digestString(amd64);
+  if (listed) return listed;
+
+  const real = manifests.filter(e => {
+    const p = platformOf(e);
+    return digestString(e) !== null && p?.architecture !== 'unknown' && p?.os !== 'unknown';
+  });
+  return real.length === 1 ? digestString(real[0]) : null;
+}
+
+export function extractImageDigest(manifest: unknown): string | null {
+  if (!manifest) return null;
+  // `podman inspect` answers with an ARRAY (one entry per matched object) while
+  // `podman manifest inspect` answers with a bare object. Unwrapping here
+  // rather than at each call site is deliberate: the two digest readers had
+  // drifted apart on exactly this, so a real image reported "no digest could be
+  // read from its manifest" — which rendered as NOT PUBLISHED for an image
+  // `podman pull` fetches happily (#3033).
+  const doc = Array.isArray(manifest) ? manifest[0] : manifest;
+  if (!doc || typeof doc !== 'object') return null;
+  const m = doc as Record<string, unknown>;
+
+  // Manifest list / OCI index (multi-arch): prefer the linux/amd64 entry.
+  const fromIndex = digestFromIndex(m.manifests);
+  if (fromIndex) return fromIndex;
 
   // Single-arch image manifest: the config digest is its stable identity.
   const config = m.config as Record<string, unknown> | undefined;
