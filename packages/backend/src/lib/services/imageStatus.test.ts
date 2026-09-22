@@ -176,4 +176,32 @@ describe('getServiceImageStatus', () => {
     expect(r.images[0].problem).toBe('unknown');
     expect(r.images[0].detail).toContain('no digest could be read');
   });
+
+  it('SHOWS what it could not read, rather than only that it could not', async () => {
+    // Measured on the box: "no digest could be read from its manifest" names
+    // the symptom and withholds the one fact that settles it. Learning what
+    // podman had actually returned cost a trip through the registry's HTTP API.
+    mocks.execSafe.mockResolvedValue({ stdout: JSON.stringify({ schemaVersion: 2, mediaType: 'application/vnd.oci.image.index.v1+json', surprise: [] }) });
+    mocks.getRunningImageDigest.mockResolvedValue(null);
+    const r = await getServiceImageStatus('Local', 'asteroids');
+    expect(r.images[0].detail).toContain('schemaVersion');
+    expect(r.images[0].detail).toContain('oci.image.index');
+  });
+
+  it('clips a long payload instead of pasting a whole manifest into the message', async () => {
+    mocks.execSafe.mockResolvedValue({ stdout: JSON.stringify({ layers: Array.from({ length: 200 }, (_, i) => ({ digest: `sha256:${i}`.padEnd(71, '0') })) }) });
+    mocks.getRunningImageDigest.mockResolvedValue(null);
+    const r = await getServiceImageStatus('Local', 'asteroids');
+    expect(r.images[0].detail!.length).toBeLessThan(420);
+    expect(r.images[0].detail).toContain('chars)');
+  });
+
+  it('says "(empty output)" rather than trailing off when podman printed nothing', async () => {
+    mocks.execSafe.mockResolvedValue({ stdout: '   \n' });
+    mocks.getRunningImageDigest.mockResolvedValue(null);
+    const r = await getServiceImageStatus('Local', 'asteroids');
+    // An empty payload parses as nothing readable; the message must still say
+    // which kind of nothing.
+    expect(r.images[0].problem).toBe('unknown');
+  });
 });
