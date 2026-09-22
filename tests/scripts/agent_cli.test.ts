@@ -136,6 +136,14 @@ const SUCCESS_BODY: Record<string, unknown> = {
     logs: [],
   },
   install: { jobId: 'job-2f11', phase: 'running' },
+  // #3034 — registering a repo as a template source.
+  'source-add': {
+    name: 'flutstunde',
+    url: 'https://github.com/mdopp/flutstunde.git',
+    added: true,
+    synced: true,
+    detail: 'flutstunde registered and synced. Install one of its templates with `servicebay install <template> --source flutstunde`.',
+  },
   // #3028. A pod cannot see the box's ports; this is what it gets instead.
   ports: {
     node: 'Local',
@@ -202,6 +210,7 @@ const ARGV: Record<string, string[]> = {
   'request-status': ['request-status', 'req-7f3a'],
   update: ['update', 'asteroids-bubblegum'],
   install: ['install', 'asteroids'],
+  'source-add': ['source-add', 'https://github.com/mdopp/flutstunde.git'],
   images: ['images', 'asteroids'],
   verify: ['verify', 'asteroids'],
   ports: ['ports'],
@@ -1016,6 +1025,66 @@ describe('images tells a session WHICH kind of "no" it hit (#2995)', () => {
       const result = await cli.run(['images', 'asteroids', flag], { env: envWith() });
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('has no option');
+    }
+  });
+});
+
+describe('source-add reports what the sync did, not that a line was written (#3034)', () => {
+  const answer = (over: Record<string, unknown> = {}) => ({
+    name: 'flutstunde', url: 'https://github.com/mdopp/flutstunde.git',
+    added: true, synced: true, detail: 'registered and synced', ...over,
+  });
+
+  it('speaks the mutate-tier route with the url', async () => {
+    reply = { status: 200, body: JSON.stringify(answer()) };
+    await cli.run(['source-add', 'https://github.com/mdopp/flutstunde.git'], { env: envWith() });
+    expect(seen.method).toBe('POST');
+    expect(seen.url).toBe('/api/system/template-sources');
+    expect(JSON.parse(seen.body)).toEqual({ url: 'https://github.com/mdopp/flutstunde.git' });
+  });
+
+  it('carries an explicit name and branch when given', async () => {
+    reply = { status: 200, body: JSON.stringify(answer()) };
+    await cli.run(['source-add', 'https://x/y.git', '--name', 'y', '--branch', 'main'], { env: envWith() });
+    expect(JSON.parse(seen.body)).toEqual({ url: 'https://x/y.git', name: 'y', branch: 'main' });
+  });
+
+  it('registered AND synced exits 0', async () => {
+    reply = { status: 200, body: JSON.stringify(answer()) };
+    const r = await cli.run(['source-add', 'https://x/y.git'], { env: envWith() });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('synced   yes');
+  });
+
+  it('registered but NOT synced does not exit 0 — the repo served nothing', async () => {
+    // The distinction that matters: the entry exists and the source is empty
+    // or unreachable. Reporting that as success is how a session installs from
+    // a source with no templates and then wonders why.
+    reply = { status: 200, body: JSON.stringify(answer({ synced: false, detail: 'sync did not succeed: Repository not found' })) };
+    const r = await cli.run(['source-add', 'https://x/y.git'], { env: envWith() });
+    expect(r.exitCode).toBe(12);
+    expect(r.stdout).toContain('synced   NO');
+    expect(r.stdout).toContain('Repository not found');
+  });
+
+  it('--json cannot read as ok while the sync failed', async () => {
+    reply = { status: 200, body: JSON.stringify(answer({ synced: false })) };
+    const r = await cli.run(['source-add', 'https://x/y.git', '--json'], { env: envWith() });
+    expect(JSON.parse(r.stdout).ok).toBe(false);
+  });
+
+  it('relays the refusal of a local path with its message', async () => {
+    reply = { status: 400, body: JSON.stringify({ error: '"/mnt/data" is a local path, not a repository URL.' }) };
+    const r = await cli.run(['source-add', '/mnt/data'], { env: envWith() });
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('local path');
+  });
+
+  it('has no flag that would remove or disable a source', async () => {
+    for (const flag of ['--remove', '--disable', '--delete', '--force']) {
+      const r = await cli.run(['source-add', 'https://x/y.git', flag], { env: envWith() });
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain('has no option');
     }
   });
 });

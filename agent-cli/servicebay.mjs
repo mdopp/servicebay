@@ -593,6 +593,37 @@ export const VERBS = {
     exit: body => (body?.stale === true ? 6 : 0),
   },
 
+  'source-add': {
+    summary: 'register a repo as a template source, so its templates can be installed — CHANGES the box',
+    usage: 'source-add <repo-url> [--name <name>] [--branch <ref>]',
+    effect: 'mutate',
+    scope: 'mutate',
+    method: 'POST',
+    positionals: ['url'],
+    options: ['name', 'branch'],
+    path: () => '/api/system/template-sources',
+    // The step that was missing between "I built a project" and "the box can
+    // install it". Before this, a new source meant hand-editing config.json on
+    // the box, which no session can do — so no agent could install anything it
+    // had just built.
+    body: (args, opts) => ({
+      url: args.url,
+      ...(opts.name ? { name: opts.name } : {}),
+      ...(opts.branch ? { branch: opts.branch } : {}),
+    }),
+    reads: ['name', 'added', 'synced', 'detail'],
+    text: body => [
+      line('source ', String(body?.name ?? '?'), body?.added === true ? '(registered)' : '(already registered)'),
+      line('synced ', body?.synced === true ? 'yes' : 'NO'),
+      String(body?.detail ?? ''),
+    ].join('\n'),
+    // Registered but not synced is not ready: the entry exists and the repo
+    // served nothing. Reporting that as success is how a session installs from
+    // a source that has no templates and then wonders why (#3034).
+    //   0 registered and synced · 12 registered but the sync did not succeed
+    exit: body => (body?.synced === true ? 0 : 12),
+  },
+
   install: {
     summary: 'install a template the full wizard way — CHANGES the box',
     usage: 'install <template> [--var <NAME=value>] [--source <name>] [--node <name>]',
