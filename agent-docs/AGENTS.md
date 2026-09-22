@@ -86,6 +86,7 @@ one unfiltered dump costs more of your context than the rest of this file.
 | `servicebay progress` | Show the install job running right now: phase, current item, what it has deployed so far. |
 | `servicebay images <service> [--node <name>]` | Is what this service pulls actually published, pulled and current? Names WHICH kind of "no": `not-published` means nothing was ever pushed under that tag. Exit 7 when something is wrong. |
 | `servicebay verify <service> [--node <name>]` | **Is this deployment actually done?** Six measurements: health check (with the last health-log line), restarts, published image, no application embedded in the pod spec, proxy route names a real service, public URL answers. Exit 8 a check failed, **9 nothing failed but something could not be measured**. |
+| `servicebay ports [--node <name>]` | **What is listening on the box, and what is free.** Including what is no ServiceBay service — sshd, adguard, the control plane itself. Your pod has its own network namespace, so `ss -ltn` in here shows you nothing about the box. Exit 10 when the table could not be read (that is not "everything is free"). |
 | `servicebay update <service> [--mode fresh] [--node <name>]` | Move a service onto the image its registry publishes and force-recreate its containers, so it cannot come back up on the cached one. Prints before/after digests per image. **CHANGES the box**; needs `lifecycle`. `--mode fresh` deletes the local image first — the fallback for a stuck one. Exit 6 means the pull did not take. |
 | `servicebay install <template> [--var <NAME=value>] [--source <name>] [--node <name>]` | Install a template the full wizard way (variables, secrets, subdomain, proxy, SSO wiring). The service is named after the template. **CHANGES the box**; needs `mutate`. Additive always — there is no wipe. |
 | `servicebay request-remove <service> --reason <text> [--node <name>]` | ASK the operator to remove a service. It removes nothing; approving moves it to the trash (restorable for seven days), never a purge. Prints an approval id. |
@@ -264,16 +265,22 @@ says how.
    prints it, and so does `.git/config` to anyone who reads the checkout. The
    same holds for any command line: see the `exec` note under **What your
    token can and cannot do**.
-2. **Replacing what a domain serves means updating the service that owns it.**
+2. **Pick a host port with `servicebay ports`, never by guessing.** You are in a
+   network namespace of your own: `ss -ltn` here is empty no matter how busy the
+   box is. Two outages in two days came from a guessed port — one of them `3000`,
+   which ServiceBay's own backend holds. If you hit a collision anyway, the
+   holder keeps its port: update that service or request its removal, and never
+   rewrite someone else's definition to free one.
+3. **Replacing what a domain serves means updating the service that owns it.**
    If `<name>.<domain>` already points at a service, that service gets the new
    image (`servicebay assist recipe-roll-new-image-to-running-service`) — you do
    not deploy a second service beside it, and you do not rewrite the old one's
    definition to free its port. A service that is to go away is removed by the
    operator (destroy tier): say so in your report and carry on with what you own.
-3. **Releases go through release-please only** — never hand-bump a version, edit
+4. **Releases go through release-please only** — never hand-bump a version, edit
    a changelog, or tag by hand (ADR 0003:
    `servicebay assist adr-0003-releases-via-release-please-only`).
-4. **The new image reaches the running service through ServiceBay** — and not
+5. **The new image reaches the running service through ServiceBay** — and not
    through the tool whose name suggests it. For a service that is **already
    installed**, `install_template` re-pulls the image and leaves the running
    container on the old layers, and a plain restart reuses the cached image.
@@ -289,7 +296,7 @@ says how.
    speak it — the companion app, automation. From a shell you do not need it.)
    The full recipe, including rollback anchors, is
    `servicebay assist recipe-roll-new-image-to-running-service`.
-5. **Assists, the CLI and this file are the exception**: they are delivered from
+6. **Assists, the CLI and this file are the exception**: they are delivered from
    the repo checkout, not from an image, so a `docs(assists):` commit on `main`
    reaches a running box within the hour with **no release**
    (`servicebay assist adr-0014-assist-catalog-delivered-at-runtime`).

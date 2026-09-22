@@ -136,6 +136,17 @@ const SUCCESS_BODY: Record<string, unknown> = {
     logs: [],
   },
   install: { jobId: 'job-2f11', phase: 'running' },
+  // #3028. A pod cannot see the box's ports; this is what it gets instead.
+  ports: {
+    node: 'Local',
+    ports: [
+      { port: 3000, protocol: 'tcp', owner: 'servicebay (the control plane UI/backend)', kind: 'control-plane', address: '0.0.0.0' },
+      { port: 8096, protocol: 'tcp', owner: 'media', kind: 'service', address: '0.0.0.0' },
+      { port: 22, protocol: 'tcp', owner: 'sshd', kind: 'other', address: '0.0.0.0' },
+    ],
+    free: [8090, 8091, 8092],
+    summary: '3 port(s) in use on Local, 2 of them held by something that is NOT a ServiceBay service.',
+  },
   // #3021. The SUCCESS case is a fully-measured, fully-green deployment; the
   // other verdicts have their own block.
   verify: {
@@ -189,6 +200,7 @@ const ARGV: Record<string, string[]> = {
   install: ['install', 'asteroids'],
   images: ['images', 'asteroids'],
   verify: ['verify', 'asteroids'],
+  ports: ['ports'],
   progress: ['progress'],
 };
 
@@ -724,6 +736,43 @@ describe('update never reports a no-op as an update (#2990, and #2983 behind it)
   it('has no flag that would delete, wipe or reset anything', async () => {
     for (const flag of ['--force', '--wipe', '--remove', '--yes']) {
       const result = await cli.run(['update', 'asteroids-bubblegum', flag], { env: envWith() });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('has no option');
+    }
+  });
+});
+
+describe('ports shows what a pod structurally cannot see (#3028)', () => {
+  it('reads only — a GET with no body', async () => {
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.ports) };
+    await cli.run(['ports'], { env: envWith() });
+    expect(seen.method).toBe('GET');
+    expect(seen.url).toBe('/api/system/ports');
+    expect(seen.body).toBe('');
+  });
+
+  it('shows the control plane and the non-services, not just ServiceBay services', async () => {
+    // `services --json` shows neither, and both refuse a bind just as hard.
+    reply = { status: 200, body: JSON.stringify(SUCCESS_BODY.ports) };
+    const result = await cli.run(['ports'], { env: envWith() });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('ServiceBay itself');
+    expect(result.stdout).toContain('sshd');
+    expect(result.stdout).toContain('(no service)');
+    expect(result.stdout).toContain('8090');
+  });
+
+  it('an empty table exits non-zero — it is a failed read, not an empty box', async () => {
+    // Reading "nothing is listening" as "everything is free" walks straight
+    // into the collision this verb exists to prevent.
+    reply = { status: 200, body: JSON.stringify({ node: 'Local', ports: [], free: [], summary: 'could not read' }) };
+    const result = await cli.run(['ports'], { env: envWith() });
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  it('has no flag that would reserve, bind or free a port', async () => {
+    for (const flag of ['--reserve', '--free', '--bind', '--assign']) {
+      const result = await cli.run(['ports', flag, '8090'], { env: envWith() });
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain('has no option');
     }

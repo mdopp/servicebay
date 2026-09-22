@@ -20,6 +20,7 @@ import { injectServiceDirectives } from '../quadletDirectives';
 import { applyAutoUpdatePolicy } from '../quadletAutoUpdate';
 import { ServiceListing } from '../serviceListing';
 import { describePortCollisions } from '../portCollisionMessage';
+import { readHostPorts } from '../hostPortsRun';
 import { preflightDeployment } from '../deployPreflightRun';
 import { refuses, describeFindings } from '../deployPreflight';
 import { setDeployWarnings } from '../deployWarnings';
@@ -175,7 +176,11 @@ export async function deployKubeService(
     // permanently inactive in the dashboard.
     const collisions = await ServiceListing.findHostPortCollisions(nodeName, name, yamlContent);
     if (collisions.length > 0) {
-        throw new Error(describePortCollisions(nodeName, collisions));
+        // Name the third exit concretely (#3028). A failed read means no
+        // suggestion rather than a wrong one — the message still carries the
+        // two that matter.
+        const free = await readHostPorts(nodeName).then(r => r.free, () => [] as number[]);
+        throw new Error(describePortCollisions(nodeName, collisions, free));
     }
 
     // Inject the default systemd directives (TimeoutStartSec for slow

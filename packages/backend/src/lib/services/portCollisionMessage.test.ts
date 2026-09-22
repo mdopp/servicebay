@@ -58,6 +58,21 @@ describe('describePortCollisions', () => {
     expect(m).toContain('Do not redeploy the holder with a placeholder');
   });
 
+  it('names concrete free ports when the box could be read (#3028)', () => {
+    const m = describePortCollisions('Local', [holder()], [8090, 8092, 8093]);
+    expect(m).toContain('8090, 8092, 8093 are free right now');
+    // The last session that read "change the host port" without an alternative
+    // rewrote the OTHER service to free it. The alternative comes with the
+    // refusal now.
+    expect(m).toContain('Do not redeploy the holder with a placeholder');
+  });
+
+  it('says how to find one rather than inventing one when the box could NOT be read', () => {
+    const m = describePortCollisions('Local', [holder()], []);
+    expect(m).toContain('servicebay ports');
+    expect(m).not.toMatch(/are free right now/);
+  });
+
   it('handles several holders without inventing a single one', () => {
     const m = describePortCollisions('Local', [
       holder({ hostPort: 8080, serviceName: 'a' }),

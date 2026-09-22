@@ -130,6 +130,7 @@ not listed here reject Bearer tokens (cookie/internal-token only).
 | `/api/install/current` | GET | `read` | poll install progress |
 | `/api/services/[name]/images` | GET | `read` | is the image this service pulls published, pulled and current — inspects a manifest and the local image store, pulls nothing. The read-tier answer to "did CI ever publish anything" (#2995) |
 | `/api/services/[name]/verify` | GET | `read` | the six deployment checks measured (health + last health-log line, restarts, published image, no embedded application, proxy route names a real service, public URL answers) — reads only, changes nothing (#3021) |
+| `/api/system/ports` | GET | `read` | what is listening on the node and what is free, including non-ServiceBay listeners (sshd, adguard, the control plane) — reads `ss -tulpnH` and the service list, binds nothing (#3028) |
 | `/api/services/[name]/removal-requests` | POST | `propose` | ASK for a service to be removed — files an approval whose `on_approve` re-dispatches `delete_service`; removes nothing itself. The destroy-tier twin of `/api/install/requests` (#2994) |
 | `/api/install/plan` | POST | `read` | compute install plan (inspect-only) |
 | `/api/settings` | GET | `read` | read settings |
