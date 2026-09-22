@@ -125,9 +125,18 @@ export function summarise(service: string, images: ServiceImageStatus[]): string
   if (refused.length > 0) {
     return `The registry refused us for ${refused.map(i => i.image).join(', ')} — the package is private or this node has no pull credential for it.`;
   }
-  const unreachable = images.filter(i => i.problem === 'unreachable' || i.problem === 'unknown');
+  const unreachable = images.filter(i => i.problem === 'unreachable');
   if (unreachable.length > 0) {
     return `Could not reach the registry for ${unreachable.map(i => i.image).join(', ')}; this says nothing about whether the image exists. Retry.`;
+  }
+  // The registry ANSWERED and we could not read what it said. Saying "could not
+  // reach" there is the same conflation one level down from the one #3036
+  // fixed in the rendering: a reader told the registry is unreachable retries,
+  // when the thing to do is look at what it actually served.
+  const unreadable = images.filter(i => i.problem === 'unknown');
+  if (unreadable.length > 0) {
+    return `The registry answered for ${unreadable.map(i => i.image).join(', ')}, but its manifest could not be read — `
+      + 'so whether the image exists is unknown, NOT no. `podman manifest inspect <image>` on the box shows what it served.';
   }
   const behind = images.filter(i => i.upToDate === false);
   if (behind.length > 0) {
