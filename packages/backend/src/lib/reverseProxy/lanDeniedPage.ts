@@ -29,6 +29,7 @@
  * the operator just gets an explanation instead of a blank wall.
  */
 import { agentManager } from '@/lib/agent/manager';
+import { ensureDirAndProbeOwner, realignSudoWrite } from '@/lib/services/sudoWriteOwnership';
 import { listNodes } from '@/lib/nodes';
 import { logger } from '@/lib/logger';
 
@@ -424,18 +425,51 @@ export function buildForwardAuthDeniedPageHtml(domain?: string, publicDomain?: s
  * Uses `sudo` because NPM's container writes its `/data` tree as root from
  * the host's perspective (same reason `patchProxyHostConfFile` does).
  */
+/**
+ * Write one explainer page into NPM's data volume, and leave it owned by
+ * whoever has to read it (#3044).
+ *
+ * The write needs `sudo`: the volume belongs to NPM's mapped uid, not to
+ * `core`. But `sudo tee` leaves the file owned by HOST ROOT, and NPM chowns
+ * its whole data volume on startup — a root-owned file there is outside its
+ * user namespace, its `chown` fails with EPERM, and its `prepare` step exits
+ * 1. On 2026-09-26 that took the reverse proxy down entirely: 24 of 24 domains
+ * unreachable, because of six explainer pages whose CONTENT was perfectly
+ * fine.
+ *
+ * So every sudo write here is followed by the ownership realignment the
+ * install transport has had since #1298 — `chown --reference` off the nearest
+ * ancestor that is not root-owned, which is the only thing that knows which
+ * uid this particular pod runs as.
+ */
+async function writeExplainerPage(
+  agent: { sendCommand(action: string, params?: unknown): Promise<unknown> },
+  hostPath: string,
+  content: string,
+): Promise<string | null> {
+  const dir = hostPath.slice(0, hostPath.lastIndexOf('/')) || '/';
+  const ownerRef = await ensureDirAndProbeOwner(agent, dir).catch(() => null);
+  const res = (await agent.sendCommand('write_file', {
+    path: hostPath,
+    content,
+    sudo: true,
+  })) as { result?: string; error?: string };
+  if (res?.error) return res.error;
+  // Best-effort, and never fatal: the page is written and only a LATER
+  // restart of the consuming pod trips over the ownership. But that later
+  // restart is exactly what happened, so it is always attempted.
+  await realignSudoWrite(agent, hostPath, dir, ownerRef);
+  return null;
+}
+
 export async function deployLanDeniedPage(node?: string): Promise<boolean> {
   try {
     const nodes = await listNodes();
     const nodeName = node ?? nodes[0]?.Name ?? 'Local';
     const agent = agentManager.getAgent(nodeName);
-    const res = (await agent.sendCommand('write_file', {
-      path: LAN_DENIED_PAGE_HOST_PATH,
-      content: LAN_DENIED_PAGE_HTML,
-      sudo: true,
-    })) as { result?: string; error?: string };
-    if (res?.error) {
-      logger.warn('ProxyHosts', `Failed to deploy LAN-only explainer page: ${res.error}`);
+    const failure = await writeExplainerPage(agent, LAN_DENIED_PAGE_HOST_PATH, LAN_DENIED_PAGE_HTML);
+    if (failure) {
+      logger.warn('ProxyHosts', `Failed to deploy LAN-only explainer page: ${failure}`);
       return false;
     }
     logger.info('ProxyHosts', `Deployed LAN-only 403 explainer to ${LAN_DENIED_PAGE_HOST_PATH}`);
@@ -465,13 +499,9 @@ export async function deployForwardAuthDeniedPage(
     const nodeName = node ?? nodes[0]?.Name ?? 'Local';
     const agent = agentManager.getAgent(nodeName);
     const hostPath = forwardAuthDeniedHostPath(domain);
-    const res = (await agent.sendCommand('write_file', {
-      path: hostPath,
-      content: buildForwardAuthDeniedPageHtml(domain, publicDomain),
-      sudo: true,
-    })) as { result?: string; error?: string };
-    if (res?.error) {
-      logger.warn('ProxyHosts', `Failed to deploy forward-auth deny explainer for ${domain}: ${res.error}`);
+    const failure = await writeExplainerPage(agent, hostPath, buildForwardAuthDeniedPageHtml(domain, publicDomain));
+    if (failure) {
+      logger.warn('ProxyHosts', `Failed to deploy forward-auth deny explainer for ${domain}: ${failure}`);
       return false;
     }
     logger.info('ProxyHosts', `Deployed forward-auth 403 explainer for ${domain} to ${hostPath}`);
