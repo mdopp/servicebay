@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.44.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.44.2...servicebay-v5.44.3) (2026-09-26)
+
+
+### Bug Fixes
+
+* **proxy:** a page ServiceBay writes must not be one NPM cannot own ([192fd21](https://github.com/mdopp/servicebay/commit/192fd218ff8b00252511cf1268d893e643514208))
+* **proxy:** a page ServiceBay writes must not be one NPM cannot own ([50bd6c7](https://github.com/mdopp/servicebay/commit/50bd6c7419b02038d602b1ab9b080da82a20ea9b)), closes [#3044](https://github.com/mdopp/servicebay/issues/3044)
+
 ## [5.44.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.44.1...servicebay-v5.44.2) (2026-09-22)
 
 
