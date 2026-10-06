@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   classifyDanglingRoute,
   forwardHostForPort,
+  forwardHostForObservedBinds,
+  isRouteDangling,
   describeRouteVerdict,
   actionIdsForVerdict,
   buildRouteItem,
@@ -306,5 +308,147 @@ describe('formatRouteStateHint', () => {
 
   it('says nothing when nothing is wrong', () => {
     expect(formatRouteStateHint(tallyRouteStates(3, [], 0))).toBeUndefined();
+  });
+});
+
+// ── #3049 — right port, wrong address; and a proven listener outranks the twin ──
+//
+// Both shapes are taken from the live box on 2026-10-06, where this probe
+// had been red on every one of 9 recorded runs for reasons that were not
+// faults — sitting next to two rows that genuinely were.
+
+describe('bind-moved — the port is right and the address moved (#3049)', () => {
+  // AdGuard's quadlet publishes 8083, so the twin records it on the LAN
+  // IP; AdGuard's own config binds the web UI to 127.0.0.1:8083. The
+  // route forwarded to the LAN address, which refuses.
+  const ADGUARD_OWNERS: RouteOwner[] = [{ domain: 'dns.dopp.cloud', service: 'adguard' }];
+  const ADGUARD_SERVICES: RouteTargetService[] = [{
+    name: 'adguard',
+    ports: [
+      { hostPort: 8083, containerPort: 8083, protocol: 'tcp', hostIp: '192.168.178.100' },
+      { hostPort: 53, containerPort: 53, protocol: 'tcp', hostIp: '192.168.178.100' },
+      { hostPort: 53, containerPort: 53, protocol: 'udp', hostIp: '192.168.178.100' },
+    ],
+  }];
+  const ADGUARD_ROUTE = {
+    domain: 'dns.dopp.cloud',
+    targetHost: '192.168.178.100',
+    targetPort: 8083,
+    listening: false,
+    observedBinds: ['127.0.0.1'],
+  };
+
+  it('moves the host and keeps the port, instead of repointing the admin UI onto the DNS port', () => {
+    const verdict = classifyDanglingRoute(ADGUARD_ROUTE, ADGUARD_OWNERS, ADGUARD_SERVICES);
+    expect(verdict).toEqual({
+      kind: 'bind-moved',
+      service: 'adguard',
+      port: 8083,
+      forwardHost: '127.0.0.1',
+    });
+    // The regression this guards: port 53 must never be the proposal.
+    expect(JSON.stringify(verdict)).not.toContain('53');
+  });
+
+  it('offers a repoint and never a deletion — the service is up and serving that port', () => {
+    const verdict = classifyDanglingRoute(ADGUARD_ROUTE, ADGUARD_OWNERS, ADGUARD_SERVICES);
+    expect(actionIdsForVerdict(verdict)).toEqual(['repoint_route']);
+    expect(actionIdsForVerdict(verdict)).not.toContain('delete_route');
+  });
+
+  it('says which half is wrong, so the row is not read as a port problem', () => {
+    const verdict = classifyDanglingRoute(ADGUARD_ROUTE, ADGUARD_OWNERS, ADGUARD_SERVICES);
+    const detail = describeRouteVerdict(ADGUARD_ROUTE, verdict);
+    expect(detail).toContain('port 8083 is right');
+    expect(detail).toContain('127.0.0.1');
+  });
+
+  it('will not capture a route for an unrelated process that merely holds the port', () => {
+    // The owning service does NOT declare 8083 here, so a loopback
+    // listener on it is somebody else's — repointing at it would send a
+    // live domain to the wrong process.
+    const elsewhere: RouteTargetService[] = [{
+      name: 'adguard',
+      ports: [{ hostPort: 9999, containerPort: 9999, protocol: 'tcp' }],
+    }];
+    const verdict = classifyDanglingRoute(ADGUARD_ROUTE, ADGUARD_OWNERS, elsewhere);
+    expect(verdict.kind).not.toBe('bind-moved');
+  });
+
+  it('refuses to guess between several non-loopback binds', () => {
+    const verdict = classifyDanglingRoute(
+      { ...ADGUARD_ROUTE, observedBinds: ['10.0.0.5', '192.168.1.9'] },
+      ADGUARD_OWNERS,
+      ADGUARD_SERVICES,
+    );
+    expect(verdict.kind).not.toBe('bind-moved');
+  });
+
+  it('falls back to "no listener" when the declared port is open nowhere', () => {
+    const silent: RouteTargetService[] = [{
+      name: 'adguard',
+      ports: [{ hostPort: 8083, containerPort: 8083, protocol: 'tcp' }],
+    }];
+    const verdict = classifyDanglingRoute(
+      { ...ADGUARD_ROUTE, observedBinds: [] },
+      ADGUARD_OWNERS,
+      silent,
+    );
+    expect(verdict).toEqual({ kind: 'no-listener', service: 'adguard' });
+  });
+
+  it('reports bind moves as their own sentence, not as a wrong port', () => {
+    const tally = tallyRouteStates(25, [
+      { kind: 'bind-moved', service: 'adguard', port: 8083, forwardHost: '127.0.0.1' },
+    ], 0);
+    expect(tally.bindMoved).toBe(1);
+    expect(tally.moved).toBe(0);
+    const detail = formatRouteStateDetail(tally);
+    expect(detail).toContain('address their service does not bind');
+    expect(detail).not.toContain('no longer publishes');
+    expect(formatRouteStateHint(tally)).toContain('forward HOST');
+  });
+});
+
+describe('forwardHostForObservedBinds', () => {
+  it('prefers loopback — NPM shares the host netns and can reach it', () => {
+    expect(forwardHostForObservedBinds(['127.0.0.1'], '192.168.178.100')).toBe('127.0.0.1');
+    expect(forwardHostForObservedBinds(['127.0.0.53'], '192.168.178.100')).toBe('127.0.0.1');
+  });
+
+  it('takes a single other address', () => {
+    expect(forwardHostForObservedBinds(['10.0.0.5'], '192.168.178.100')).toBe('10.0.0.5');
+  });
+
+  it('is undefined for a wildcard bind — it already serves every address', () => {
+    expect(forwardHostForObservedBinds(['0.0.0.0'], '192.168.178.100')).toBeUndefined();
+    expect(forwardHostForObservedBinds(['::'], '192.168.178.100')).toBeUndefined();
+  });
+
+  it('is undefined when the only bind is the one the route already uses', () => {
+    expect(forwardHostForObservedBinds(['192.168.178.100'], '192.168.178.100')).toBeUndefined();
+  });
+
+  it('is undefined for no observation at all', () => {
+    expect(forwardHostForObservedBinds(undefined, '192.168.178.100')).toBeUndefined();
+    expect(forwardHostForObservedBinds([], '192.168.178.100')).toBeUndefined();
+  });
+});
+
+describe('isRouteDangling — a proven listener outranks the twin (#3049)', () => {
+  it('clears a route whose port is served by something the twin does not know', () => {
+    // llama.dopp.cloud -> 11435: a host-side python model router, not a
+    // managed container, so `portIsKnown` is false while the port is open.
+    expect(isRouteDangling(true, false)).toBe(false);
+  });
+
+  it('still flags a closed port even when the twin declares it', () => {
+    // #2860's ollama shape must keep working.
+    expect(isRouteDangling(false, true)).toBe(true);
+  });
+
+  it('falls back to the twin only when the snapshot could not be read', () => {
+    expect(isRouteDangling(undefined, false)).toBe(true);
+    expect(isRouteDangling(undefined, true)).toBe(false);
   });
 });

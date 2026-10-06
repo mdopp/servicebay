@@ -125,6 +125,18 @@ export function hasListener(
 }
 
 /**
+ * Every bind address seen for one port (#3049).
+ *
+ * `hasListener` answers "can my forward host reach it", which collapses
+ * "nothing serves this port" and "something serves it on a different
+ * address" into the same `false`. Those need opposite repairs, so the
+ * route classifier needs the addresses themselves.
+ */
+export function bindsForPort(snapshot: ListenSnapshot, port: number): string[] {
+  return [...(snapshot.binds.get(port) ?? [])];
+}
+
+/**
  * Take the snapshot through the agent, for callers outside the diagnose
  * run's own exec fan-out (the `delete_route` handler re-derives a
  * route's state at click time). Any failure yields an empty snapshot, so

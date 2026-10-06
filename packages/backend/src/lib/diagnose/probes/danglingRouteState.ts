@@ -25,6 +25,20 @@
  * does not fix anything — it gives up the subdomain and its certificate
  * binding to correct a wrong number. The fix is to move the route.
  *
+ * #3049 added a fifth, and it is the inverse mistake: the port is RIGHT
+ * and the ADDRESS moved. AdGuard's quadlet publishes 8083, so the twin
+ * records it on the LAN IP, but AdGuard's own config binds the web UI to
+ * `127.0.0.1:8083`. `dns.dopp.cloud` forwarded to the LAN address, which
+ * refuses — and because AdGuard also publishes 53, the port-only logic
+ * concluded "publishes 53, not 8083" and offered to move the admin UI
+ * onto the DNS port. That verdict is `bind-moved`: same port, new host.
+ * It is checked before any port move, because keeping the port is the
+ * narrower repair, and it requires the service's own record to claim the
+ * port so an unrelated process holding it elsewhere cannot capture the
+ * route. Note the twin's `hostIp` is useless here — it is what the
+ * quadlet asked for, not what the app bound — so the addresses come from
+ * the `ss -ltn` snapshot.
+ *
  * Same shape #2594 fixed for certificates: one probe, two causes, an
  * offered action that makes the worse one worse. This module is the pure
  * half — no I/O — so both the probe (twin data, hourly) and the action
@@ -72,6 +86,18 @@ export interface DanglingRoute {
    * could not answer, and is never read as "closed".
    */
   listening?: boolean;
+  /**
+   * Every bind address the snapshot saw for `targetPort`, whether or not
+   * `targetHost` can reach them (#3049). This is what separates "the port
+   * moved" from "the port is fine, the bind address moved": when
+   * `listening` is false but this is non-empty, something IS serving the
+   * port, just not where the route looks for it.
+   *
+   * Comes from the snapshot, never from the twin — a host-network
+   * container's declared `hostIp` is what the quadlet asked for, not what
+   * the app inside chose to bind, and on the box those disagree.
+   */
+  observedBinds?: string[];
 }
 
 /**
@@ -85,6 +111,7 @@ export interface DanglingRoute {
  */
 export type DanglingRouteVerdict =
   | { kind: 'port-moved'; service: string; to: number; forwardHost?: string }
+  | { kind: 'bind-moved'; service: string; port: number; forwardHost: string }
   | { kind: 'port-ambiguous'; service: string; candidates: number[] }
   | { kind: 'service-silent'; service: string }
   | { kind: 'no-listener'; service?: string }
@@ -108,6 +135,59 @@ export function forwardHostForPort(hostIp?: string): string | undefined {
   return ip;
 }
 
+/** Loopback in every spelling, including the whole `127.0.0.0/8` block. */
+function isLoopbackAddr(addr: string): boolean {
+  return LOOPBACK.has(addr) || addr.startsWith('127.');
+}
+
+/**
+ * #3049 — the forward host a repoint should use when the route's PORT is
+ * open but not on the address the route forwards to, or `undefined` when
+ * the observed binds give no single defensible answer.
+ *
+ * Loopback wins outright: NPM runs with `hostNetwork: true` and shares the
+ * host's loopback, so a service that moved its bind to `127.0.0.1` is
+ * reachable there and nowhere else. Otherwise exactly one other address
+ * has to be on offer — several is a guess, and a guess sends a live domain
+ * at the wrong interface.
+ */
+export function forwardHostForObservedBinds(
+  observedBinds: string[] | undefined,
+  currentHost?: string,
+): string | undefined {
+  const addrs = (observedBinds ?? [])
+    .map(b => b.trim())
+    .filter(b => !WILDCARD_BIND.has(b));
+  const current = (currentHost ?? '').trim();
+  // A bind the route already points at is not a move.
+  const candidates = [...new Set(addrs.filter(a => a !== current))];
+  if (candidates.length === 0) return undefined;
+  if (candidates.some(isLoopbackAddr)) return '127.0.0.1';
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+/**
+ * Is this route dangling at all (#3049)? The gate in front of every
+ * verdict below, kept here so the precedence is one testable rule rather
+ * than a condition buried in the diagnose run.
+ *
+ * Evidence order matters. A live listener on the forward port is direct
+ * proof the route reaches something, and it outranks `portIsKnown` — the
+ * twin's "some managed service declares this port", which is blind to
+ * host processes. `llama.dopp.cloud` → 11435 is served by a host-side
+ * model router, so it was permanently reported as drifted with an offered
+ * repoint onto llama.cpp's 11434 that would have bypassed the router.
+ *
+ * `listening === undefined` means the snapshot could not be read; only
+ * then does the twin get a vote, because guessing "closed" from a failed
+ * `ss` would offer to delete healthy routes (#2860).
+ */
+export function isRouteDangling(listening: boolean | undefined, portIsKnown: boolean): boolean {
+  if (listening === true) return false;
+  if (listening === false) return true;
+  return !portIsKnown;
+}
+
 /** TCP publishes only — a UDP mapping cannot serve an HTTP route. */
 function servableTcpPorts(service: RouteTargetService): PublishedPort[] {
   return (service.ports ?? []).filter(p => {
@@ -129,6 +209,30 @@ export function classifyDanglingRoute(
   services: RouteTargetService[],
 ): DanglingRouteVerdict {
   const verdict = classifyFromServices(route, owners, services);
+  // #3049 — before anything else: the owning service declares THIS port
+  // and the port is genuinely open, just not on the address the route
+  // forwards to. Then the port was never the problem and moving it is the
+  // wrong repair.
+  //
+  // This is `dns.dopp.cloud` on the box: AdGuard's quadlet publishes 8083
+  // so the twin records `hostIp: 192.168.178.100`, but AdGuard's own
+  // config binds its web UI to `127.0.0.1:8083`. The route forwarded to
+  // the LAN address, which refuses — and because AdGuard also publishes
+  // 53, `classifyFromServices` concluded "publishes 53, not 8083" and
+  // offered to repoint the admin UI onto the DNS port. Nobody noticed the
+  // route was broken at all, because Authelia bounces you to the login
+  // page before the upstream is ever reached.
+  //
+  // Checked first, and deliberately narrow: it requires the service's own
+  // record to claim this exact port, so an unrelated process that happens
+  // to hold the port on another address can never capture the route.
+  const owner = serviceForVerdict(verdict);
+  if (route.listening === false && owner && declaresPort(services, owner, route.targetPort)) {
+    const forwardHost = forwardHostForObservedBinds(route.observedBinds, route.targetHost);
+    if (forwardHost) {
+      return { kind: 'bind-moved', service: owner, port: route.targetPort, forwardHost };
+    }
+  }
   // #2860 — the entry claims to publish this very port and nothing is
   // listening on it: the service record is stale, not merely stopped.
   // Deliberately narrow. `target-gone` keeps its own reason ("no service
@@ -140,6 +244,11 @@ export function classifyDanglingRoute(
     return { kind: 'no-listener', service: verdict.service };
   }
   return verdict;
+}
+
+/** The owning service a verdict names, if it names one. */
+function serviceForVerdict(verdict: DanglingRouteVerdict): string | undefined {
+  return verdict.service;
 }
 
 /** Does this service's record claim to publish `port` over TCP? */
@@ -212,6 +321,8 @@ export function describeRouteVerdict(route: DanglingRoute, verdict: DanglingRout
   switch (verdict.kind) {
     case 'port-moved':
       return `${target} — ${verdict.service} is running and publishes ${verdict.to}, not ${route.targetPort}. The route stayed on the old port.`;
+    case 'bind-moved':
+      return `${target} — port ${verdict.port} is right, the address is not: ${verdict.service} publishes ${verdict.port} but binds it on ${(route.observedBinds ?? []).join(', ') || verdict.forwardHost}, so ${route.targetHost ?? '?'} refuses the connection. The route needs ${verdict.forwardHost}:${verdict.port}.`;
     case 'port-ambiguous':
       return `${target} — ${verdict.service} is running but publishes ${verdict.candidates.join(', ')}; none of them is ${route.targetPort}, and no single one is the obvious replacement.`;
     case 'service-silent':
@@ -230,7 +341,11 @@ export function describeRouteVerdict(route: DanglingRoute, verdict: DanglingRout
 /** Which fix, if any, this verdict earns. */
 export function actionIdsForVerdict(verdict: DanglingRouteVerdict): string[] {
   switch (verdict.kind) {
+    // Both move kinds earn the same button: one narrow NPM PUT that
+    // patches forward_host as well as forward_port, which is exactly
+    // what a bind move needs and what a port move already used.
     case 'port-moved':
+    case 'bind-moved':
       return ['repoint_route'];
     // The service is alive: deleting its route is the fix that makes the
     // state worse, so it is deliberately not offered. `port-ambiguous`
@@ -263,6 +378,8 @@ export interface RouteStateTally {
   /** Every proxy route the twin knows about — the denominator. */
   total: number;
   moved: number;
+  /** Right port, wrong address (#3049). */
+  bindMoved: number;
   ambiguous: number;
   silent: number;
   /** Forward port open by nobody, service entry notwithstanding (#2860). */
@@ -281,6 +398,7 @@ export function tallyRouteStates(
   return {
     total,
     moved: count('port-moved'),
+    bindMoved: count('bind-moved'),
     ambiguous: count('port-ambiguous'),
     silent: count('service-silent'),
     noListener: count('no-listener'),
@@ -299,6 +417,9 @@ export function formatRouteStateDetail(tally: RouteStateTally): string {
   const wrong = tally.moved + tally.ambiguous;
   if (wrong > 0) {
     parts.push(`${wrong} of ${tally.total} point at a port their service no longer publishes`);
+  }
+  if (tally.bindMoved > 0) {
+    parts.push(`${tally.bindMoved} of ${tally.total} use the right port on an address their service does not bind`);
   }
   if (tally.silent > 0) {
     parts.push(`${tally.silent} of ${tally.total} point at a service that publishes nothing right now`);
@@ -323,6 +444,9 @@ export function formatRouteStateHint(tally: RouteStateTally): string | undefined
   const lines: string[] = [];
   if (tally.moved > 0) {
     lines.push('"Repoint route" moves the route to the port the service publishes now — the subdomain and its certificate stay as they are. Deleting such a route would give up a working domain to fix a wrong number.');
+  }
+  if (tally.bindMoved > 0) {
+    lines.push('Rows reading "the address is not": the service publishes the port the route uses but binds it to a different address (typically 127.0.0.1 instead of the LAN IP), so the forward is refused. "Repoint route" moves the forward HOST and leaves the port alone.');
   }
   if (tally.ambiguous > 0) {
     lines.push('Rows with no button: the service is running but publishes several ports, so there is no safe automatic choice — set the right one on the service page.');

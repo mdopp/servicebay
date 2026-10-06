@@ -29,7 +29,7 @@ import { getNodeTwin } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
 import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
 import { deleteProxyHost, findProxyHostByDomain, updateProxyHost } from '@/lib/npm/proxyHosts';
-import { fetchListenSnapshot, hasListener } from '@/lib/diagnose/listenSnapshot';
+import { bindsForPort, fetchListenSnapshot, hasListener } from '@/lib/diagnose/listenSnapshot';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 import {
   classifyDanglingRoute,
@@ -83,9 +83,14 @@ async function currentVerdictFor(
   // Re-take that reading here (one bounded `ss -ltn`) or the re-derive
   // downgrades the verdict to `service-silent` and refuses the very
   // deletion the row offered.
-  const listening = hasListener(await fetchListenSnapshot(node), currentHost, currentPort);
+  const snapshot = await fetchListenSnapshot(node);
+  const listening = hasListener(snapshot, currentHost, currentPort);
+  // #3049 — the bind addresses behind the port, not just "is it reachable
+  // from here". Without them a bind move re-derives as a port move and the
+  // repoint lands on the wrong port.
+  const observedBinds = bindsForPort(snapshot, currentPort);
   return classifyDanglingRoute(
-    { domain, targetHost: currentHost, targetPort: currentPort, listening },
+    { domain, targetHost: currentHost, targetPort: currentPort, listening, observedBinds },
     owners,
     services,
   );
@@ -146,6 +151,9 @@ async function deleteRoute({
   // `no-listener` joins `target-gone` as a deletable state (#2860): the
   // forward port is closed *right now*, re-checked a moment ago, so the
   // route serves nothing whatever the on-disk service entry claims.
+  // `bind-moved` is deliberately NOT in this allow-list: the service is up
+  // and serving the very port the route uses, so deleting the domain to fix
+  // an address is the worst available repair (#3049).
   if (verdict && verdict.kind !== 'target-gone' && verdict.kind !== 'no-listener') {
     return { ok: false, message: refusalForLiveService(itemId, verdict), refresh: true };
   }
@@ -157,6 +165,8 @@ function refusalForLiveService(domain: string, verdict: DanglingRouteVerdict): s
   switch (verdict.kind) {
     case 'port-moved':
       return `Not deleted: ${verdict.service} is running and publishes ${verdict.to} — the route is on the wrong port, not orphaned. Use "Repoint route" so ${domain} and its certificate survive.`;
+    case 'bind-moved':
+      return `Not deleted: ${verdict.service} is serving port ${verdict.port} right now, just on ${verdict.forwardHost} rather than the address ${domain} forwards to. Use "Repoint route" — the port is already correct.`;
     case 'port-ambiguous':
       return `Not deleted: ${verdict.service} is running and publishes ${verdict.candidates.join(', ')} — the route points at none of them, but the service is alive. Set the right port on the service page rather than giving up ${domain}.`;
     case 'service-silent':
@@ -205,14 +215,19 @@ async function repointRoute({
       refresh: false,
     };
   }
-  if (verdict.kind !== 'port-moved') {
+  if (verdict.kind !== 'port-moved' && verdict.kind !== 'bind-moved') {
     return { ok: false, message: refusalForRepoint(itemId, verdict), refresh: true };
   }
-  const patch: { forward_port: number; forward_host?: string } = { forward_port: verdict.to };
-  if (verdict.forwardHost && verdict.forwardHost !== host.forward_host) {
+  // A bind move keeps the port and changes only the address; a port move
+  // may change both. One narrow PUT covers both shapes.
+  const patch: { forward_port: number; forward_host?: string } =
+    verdict.kind === 'bind-moved'
+      ? { forward_port: verdict.port, forward_host: verdict.forwardHost }
+      : { forward_port: verdict.to };
+  if (verdict.kind === 'port-moved' && verdict.forwardHost && verdict.forwardHost !== host.forward_host) {
     patch.forward_host = verdict.forwardHost;
   }
-  return performProxyHostRepoint(adminUrl, token, host, patch, itemId, verdict.service);
+  return performProxyHostRepoint(adminUrl, token, host, patch, itemId, verdict.service, verdict.kind);
 }
 
 /** Why a repoint was refused — always names the state that replaced
@@ -228,6 +243,7 @@ function refusalForRepoint(domain: string, verdict: DanglingRouteVerdict): strin
     case 'target-gone':
       return `Not repointed: ${domain} has no live service behind it any more — this is now a "Delete route" case.`;
     case 'port-moved':
+    case 'bind-moved':
       return `Not repointed: the state of ${domain} changed since the check ran.`;
   }
 }
@@ -241,6 +257,7 @@ async function performProxyHostRepoint(
   patch: { forward_port: number; forward_host?: string },
   domain: string,
   service: string,
+  kind: 'port-moved' | 'bind-moved',
 ): Promise<ProbeActionResult> {
   const from = `${host.forward_host ?? '?'}:${host.forward_port ?? '?'}`;
   const to = `${patch.forward_host ?? host.forward_host ?? '?'}:${patch.forward_port}`;
@@ -257,7 +274,11 @@ async function performProxyHostRepoint(
     logger.info('diagnose:dangling_proxy', `Repointed ${domain}: ${from} → ${to} (service ${service})`);
     return {
       ok: true,
-      message: `${domain} now forwards to ${to} instead of ${from} — the port ${service} actually publishes. Certificate and exposure are unchanged.`,
+      message: `${domain} now forwards to ${to} instead of ${from} — ${
+        kind === 'bind-moved'
+          ? `the address ${service} actually binds that port on (the port was already right)`
+          : `the port ${service} actually publishes`
+      }. Certificate and exposure are unchanged.`,
       refresh: true,
     };
   } catch (e) {

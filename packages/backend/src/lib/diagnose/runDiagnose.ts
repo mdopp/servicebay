@@ -27,6 +27,7 @@ import { checkMediaLibraryAccess } from '@/lib/diagnose/probes/mediaLibraryAcces
 import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing';
 import {
   classifyDanglingRoute,
+  isRouteDangling,
   buildRouteItem,
   tallyRouteStates,
   formatRouteStateDetail,
@@ -40,6 +41,7 @@ import {
   LISTEN_SNAPSHOT_COMMAND,
   parseListenSnapshot,
   hasListener,
+  bindsForPort,
 } from '@/lib/diagnose/listenSnapshot';
 import { checkNginxOnlineFailed } from '@/lib/diagnose/probes/nginxOnlineFailed';
 import { checkForwardAuthDrift } from '@/lib/diagnose/probes/forwardAuthDrift';
@@ -930,11 +932,29 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
       // can't speak to) is still not our business; a closed one is.
       const isProxySelfRef = ['127.0.0.1', 'localhost', '::1'].includes(targetHost ?? '');
       if (isProxySelfRef && listening !== false) continue;
-      if (!knownPorts.has(targetPort) || listening === false) {
+      // #3049 — the listener snapshot outranks `knownPorts`. `knownPorts`
+      // only knows ports declared by a managed service or container, so a
+      // route served by a HOST process reads as dangling however healthy it
+      // is: `llama.dopp.cloud` → 11435 is a host-side python model router
+      // that answers /v1/models with 200 and dispatches to llama.cpp (it is
+      // also what solaris-chat talks to over loopback), and the probe offered
+      // to repoint it onto llama.cpp's own 11434 — bypassing the router.
+      //
+      // So: a proven listener means not dangling, full stop. `knownPorts`
+      // survives only as the fallback for when the snapshot could not be
+      // read at all (`listening === undefined`), where guessing "closed"
+      // would delete healthy routes (#2860's rule, unchanged).
+      if (isRouteDangling(listening, knownPorts.has(targetPort))) {
         // The action handlers map domain → NPM proxy_host id at dispatch
         // time (the digital twin doesn't track NPM's primary key — see
         // danglingProxy.ts header comment), so the item id is the domain.
-        const route = { domain: server.server_name?.[0], targetHost, targetPort, listening };
+        const route = {
+          domain: server.server_name?.[0],
+          targetHost,
+          targetPort,
+          listening,
+          observedBinds: bindsForPort(listenSnapshot, targetPort),
+        };
         const verdict = classifyDanglingRoute(route, routeOwners, targetServices);
         verdicts.push(verdict);
         const item = buildRouteItem(route, verdict);
