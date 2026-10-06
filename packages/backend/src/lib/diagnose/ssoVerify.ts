@@ -601,8 +601,18 @@ export async function realProbeOidcAuthorization(
 }
 
 // Jellyfin's fixed container port (templates/media/template.yml) + the
-// X-Emby-Authorization client identifier every /Users/AuthenticateByName needs
-// (the server 400s without it).
+// client identifier every /Users/AuthenticateByName needs (the server 400s
+// without it — `AuthenticateNewSessionInternal` throws with no device info).
+//
+// #3048 — this MUST ride on `Authorization`, not the legacy
+// `X-Emby-Authorization`. Jellyfin 12 ignores the `X-` spelling entirely, so
+// the request arrives unidentified and the exception middleware answers 400
+// *before* any auth provider runs. That turned every Jellyfin call ServiceBay
+// makes into a 400 the moment `jellyfin:latest` crossed 10.x → 12.x, and this
+// probe then reported it as "LDAP-Auth plugin missing or its LLDAP bind is
+// broken" — blaming LDAP for a header. Verified on the box: same request, only
+// the header name swapped, 400 → 401 with a real LDAP search in the log.
+// `Authorization` is accepted by 10.8+ as well, so this is not a 12-only path.
 const JELLYFIN_PORT = 8096;
 function jellyfinAuthHeader(deviceId: string, token?: string): string {
   const base = `MediaBrowser Client="servicebay-ssoverify", Device="servicebay", DeviceId="${deviceId}", Version="1"`;
@@ -621,15 +631,22 @@ export async function realProbeJellyfinLogin(ephemeralUser: string, password: st
   try {
     const res = await fetch(`${base}/Users/AuthenticateByName`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Emby-Authorization': jellyfinAuthHeader(deviceId) },
+      headers: { 'Content-Type': 'application/json', 'Authorization': jellyfinAuthHeader(deviceId) },
       body: JSON.stringify({ Username: ephemeralUser, Pw: password }),
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     if (res.status !== 200) {
+      // #3048 — a 400 is NOT an LDAP verdict. Jellyfin answers 400 when it
+      // could not identify the client at all, which happens before any auth
+      // provider is consulted, so the LDAP-Auth plugin has not been asked
+      // anything yet. Saying "plugin missing or LLDAP bind broken" there sent
+      // the operator after a healthy plugin for the whole of 2026-10-06.
       return {
         ok: false,
         code: res.status,
-        detail: `Jellyfin rejected the LLDAP login (HTTP ${res.status}) — LDAP-Auth plugin missing or its LLDAP bind is broken`,
+        detail: res.status === 400
+          ? `Jellyfin returned HTTP 400 before authenticating — it rejected the request itself, so this says nothing about LDAP. Usually the client-identification header: Jellyfin 12 only reads "Authorization", not the legacy "X-Emby-Authorization".`
+          : `Jellyfin rejected the LLDAP login (HTTP ${res.status}) — LDAP-Auth plugin missing or its LLDAP bind is broken`,
       };
     }
     const body = (await res.json().catch(() => null)) as { AccessToken?: string; User?: { Id?: string } } | null;
@@ -662,7 +679,7 @@ async function cleanupJellyfinProfile(base: string, userId: string | undefined):
     const deviceId = `sb-ssoverify-cleanup-${randomBytes(3).toString('hex')}`;
     const auth = await fetch(`${base}/Users/AuthenticateByName`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Emby-Authorization': jellyfinAuthHeader(deviceId) },
+      headers: { 'Content-Type': 'application/json', 'Authorization': jellyfinAuthHeader(deviceId) },
       body: JSON.stringify({ Username: 'admin', Pw: adminPw }),
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
@@ -671,7 +688,7 @@ async function cleanupJellyfinProfile(base: string, userId: string | undefined):
     if (!token) return false;
     const del = await fetch(`${base}/Users/${userId}`, {
       method: 'DELETE',
-      headers: { 'X-Emby-Authorization': jellyfinAuthHeader(deviceId, token) },
+      headers: { 'Authorization': jellyfinAuthHeader(deviceId, token) },
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     return del.status === 200 || del.status === 204;

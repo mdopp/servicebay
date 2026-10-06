@@ -321,6 +321,18 @@ def install_gpu_quadlet_fallback() -> bool:
 # auth log shows where the token came from. The Device + DeviceId pair
 # also lets the operator revoke this token cleanly from
 # Dashboard → API Keys if they want a clean audit trail.
+#
+# #3048 — this value is sent in the `Authorization` header, NOT the legacy
+# `X-Emby-Authorization`. Jellyfin 12 ignores the `X-` spelling, so the
+# request arrives with no client identity and `AuthenticateNewSessionInternal`
+# throws; the exception middleware answers 400 before any auth provider runs.
+# When `jellyfin:latest` crossed 10.x → 12.x this silently cost every deploy
+# its admin token, which in turn skipped the LDAP plugin-binary install, Quick
+# Connect, library auto-add, AND wrote `<EnabledFolders></EnabledFolders>`
+# empty — so LDAP users auto-created on first login got no libraries at all.
+# Verified on the box: identical request, only the header name swapped,
+# 400 → 401 with a real LDAP search in the log. 10.8+ accepts `Authorization`
+# too, so this is not a 12-only path and needs no version sniffing.
 JELLYFIN_AUTH_HEADER = (
     'MediaBrowser Client="ServiceBay", Device="post-deploy", '
     'DeviceId="servicebay-postdeploy", Version="1.0"'
@@ -463,12 +475,12 @@ def jellyfin_run_first_setup(base_url: str, admin_user: str, admin_password: str
 
 def jellyfin_get_token(base_url: str, admin_user: str, admin_password: str) -> str | None:
     """Authenticate as the seeded admin and return an access token. Each
-    /Users/AuthenticateByName needs the X-Emby-Authorization client
-    identifier — the server returns 400 without it."""
+    /Users/AuthenticateByName needs the client identifier header — the
+    server returns 400 without it (see the auth-header constant, #3048)."""
     code, body = request_json(
         "POST", f"{base_url}/Users/AuthenticateByName",
         {"Username": admin_user, "Pw": admin_password},
-        extra_headers={"X-Emby-Authorization": JELLYFIN_AUTH_HEADER},
+        extra_headers={"Authorization": JELLYFIN_AUTH_HEADER},
     )
     if code == 200 and isinstance(body, dict):
         return body.get("AccessToken")
@@ -483,7 +495,7 @@ def jellyfin_enable_quick_connect(base_url: str, token: str) -> None:
         "POST", f"{base_url}/QuickConnect/Enable?status=true",
         None,
         extra_headers={
-            "X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"',
+            "Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"',
         },
     )
     if code in (200, 204):
@@ -530,7 +542,7 @@ def _jellyfin_create_library(base_url: str, token: str, name: str, collection_ty
     code, body = request_json(
         "POST", f"{base_url}/Library/VirtualFolders{qs}",
         {"LibraryOptions": {"PathInfos": [{"Path": container_path}], "EnableRealtimeMonitor": False}},
-        extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+        extra_headers={"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
     )
     if code in (200, 204):
         return "created"
@@ -555,7 +567,7 @@ def ensure_jellyfin_bookshelf_plugin(base_url: str, token: str) -> bool:
     code, _ = request_json(
         "POST", f"{base_url}/Packages/Installed/Bookshelf",
         None,
-        extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+        extra_headers={"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
     )
     if code in (200, 204):
         log("   ✅ Jellyfin Bookshelf plugin install requested (audiobooks → playable AudioBook items).")
@@ -614,7 +626,7 @@ def jellyfin_provision_libraries(base_url: str, token: str, media_root: str) -> 
     # Resolve names → library GUIDs (the ItemId Jellyfin uses in user policies).
     code, folders = request_json(
         "GET", f"{base_url}/Library/VirtualFolders", None,
-        extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+        extra_headers={"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
     )
     byname = {f["Name"]: f["ItemId"] for f in folders} if isinstance(folders, list) else {}
     public_guids = [byname[n] for n in public_names if n in byname]
@@ -625,7 +637,7 @@ def jellyfin_provision_libraries(base_url: str, token: str, media_root: str) -> 
     if created_any:
         request_json(
             "POST", f"{base_url}/Library/Refresh", None,
-            extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+            extra_headers={"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
         )
     n_private = sum(len(v) for v in private_by_user.values())
     log(f"✅ Jellyfin libraries: {len(public_guids)} public, {n_private} private"
@@ -644,7 +656,7 @@ def jellyfin_set_user_access(base_url: str, token: str, public_guids: list[str],
         return
     code, users = request_json(
         "GET", f"{base_url}/Users", None,
-        extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+        extra_headers={"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
     )
     if not isinstance(users, list):
         log(f"(note) could not list Jellyfin users (HTTP {code}) — skipping per-user library access.")
@@ -658,7 +670,7 @@ def jellyfin_set_user_access(base_url: str, token: str, public_guids: list[str],
         policy["EnabledFolders"] = enabled
         st, _ = request_json(
             "POST", f"{base_url}/Users/{user['Id']}/Policy", policy,
-            extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+            extra_headers={"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
         )
         ok = st in (200, 204)
         log(f"   {user.get('Name')}: {len(enabled)} libraries" + ("" if ok else f" (FAILED HTTP {st})"))
@@ -808,7 +820,7 @@ def ensure_jellyfin_ldap_plugin(
         code, _ = request_json(
             "POST", f"{base_url}/Packages/Installed/LDAP%20Authentication",
             None,
-            extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+            extra_headers={"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
         )
         if code in (200, 204):
             log("   ✅ Jellyfin LDAP-Authentication plugin install requested.")
@@ -880,7 +892,7 @@ def jellyfin_enable_music_providers(base_url: str, token: str, folders: object) 
     it never blocks the deploy."""
     if not isinstance(folders, list):
         return
-    auth = {"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
+    auth = {"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
     type_options = [
         {
             "Type": item_type,
@@ -933,7 +945,7 @@ def ensure_jellyfin_lrclib_plugin(base_url: str, token: str) -> bool:
     already registered, and Jellyfin no-ops a re-install of a present plugin. A
     failure just logs a breadcrumb (operator can add it from Dashboard → Plugins
     → Catalog) and continues — it never blocks the deploy."""
-    auth = {"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
+    auth = {"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
 
     # 1. Ensure the community plugin repository is registered.
     code, repos = request_json("GET", f"{base_url}/Repositories", None, extra_headers=auth)
@@ -994,7 +1006,7 @@ def ensure_jellyfin_dlna_server(base_url: str, token: str) -> bool:
     Best-effort + idempotent: re-asserts EnableServer=true every deploy, so a
     fresh reinstall never loses it. A failure just logs a breadcrumb (operator
     can flip it in Dashboard → DLNA); it never blocks the deploy."""
-    auth = {"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
+    auth = {"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
 
     # 1. Request the DLNA plugin install (idempotent — no-ops if already present
     #    or built into the core). Resolves from the default catalog.
@@ -1056,7 +1068,7 @@ def jellyfin_enable_nvenc(base_url: str, token: str) -> bool:
     deliberately chose a different accelerator (vaapi, qsv, …) keeps it.
     Only `none`/unset is taken over. Re-asserted on every deploy, so a
     reinstall never silently drops back to software."""
-    auth = {"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
+    auth = {"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
 
     code, options = request_json(
         "GET", f"{base_url}/System/Configuration/encoding", None, extra_headers=auth,
@@ -1168,7 +1180,7 @@ def main() -> int:
                 # fresh reinstall never loses them. Best-effort, never blocks.
                 _, folders = request_json(
                     "GET", f"{jellyfin_base}/Library/VirtualFolders", None,
-                    extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{jf_token}"'},
+                    extra_headers={"Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{jf_token}"'},
                 )
                 jellyfin_enable_music_providers(jellyfin_base, jf_token, folders)
                 ensure_jellyfin_lrclib_plugin(jellyfin_base, jf_token)

@@ -173,3 +173,62 @@ describe('template post-deploy.py → ServiceBay API contract (#584)', () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * #3048 — Jellyfin's client-identification header.
+ *
+ * Jellyfin 12 reads the identifier only from `Authorization`; it ignores
+ * the legacy `X-Emby-Authorization`, so a request carrying only the `X-`
+ * spelling arrives with no client identity and the server answers 400
+ * from `AuthenticateNewSessionInternal` before any auth provider runs.
+ *
+ * That cost every media deploy its admin token the moment
+ * `jellyfin:latest` crossed 10.x -> 12.x, which silently skipped the LDAP
+ * plugin-binary install, Quick Connect and library auto-add, and wrote
+ * `<EnabledFolders></EnabledFolders>` empty — so LDAP users auto-created
+ * on first login got no libraries at all.
+ *
+ * This is an upstream service's contract rather than ServiceBay's, which
+ * is why the header is pinned here by lint instead of by a live call.
+ */
+describe('Jellyfin auth header in post-deploy scripts (#3048)', () => {
+  const mediaPostDeploy = path.join(TEMPLATES_DIR, 'media', 'post-deploy.py');
+
+  it('exists, so the assertions below are not vacuous', () => {
+    expect(fs.existsSync(mediaPostDeploy)).toBe(true);
+  });
+
+  it('sends the identifier on Authorization and nowhere else', () => {
+    const src = fs.readFileSync(mediaPostDeploy, 'utf-8');
+    const legacy = src.match(/["']X-Emby-Authorization["']\s*:/g) ?? [];
+    expect(legacy).toEqual([]);
+    expect(src).toMatch(/["']Authorization["']\s*:\s*f?['"]?\{?JELLYFIN_AUTH_HEADER/);
+  });
+
+  it('pairs every JELLYFIN_AUTH_HEADER call site with an Authorization key', () => {
+    const src = fs.readFileSync(mediaPostDeploy, 'utf-8');
+    // Line-wise rather than count-wise: a bare interpolation would be a
+    // header nobody sends, but comments and the constant's own definition
+    // legitimately name it too.
+    const unkeyed = src
+      .split('\n')
+      .map((line, i) => ({ line, n: i + 1 }))
+      .filter(({ line }) => line.includes('JELLYFIN_AUTH_HEADER'))
+      .filter(({ line }) => !/^\s*#/.test(line))
+      .filter(({ line }) => !/^JELLYFIN_AUTH_HEADER\s*=/.test(line))
+      .filter(({ line }) => !/["']Authorization["']\s*:/.test(line))
+      .map(({ line, n }) => `${n}: ${line.trim()}`);
+    expect(unkeyed, 'JELLYFIN_AUTH_HEADER used without an Authorization key').toEqual([]);
+  });
+
+  it('keeps no other template on the legacy header either', () => {
+    for (const name of fs.readdirSync(TEMPLATES_DIR)) {
+      const f = path.join(TEMPLATES_DIR, name, 'post-deploy.py');
+      if (!fs.existsSync(f)) continue;
+      expect(
+        fs.readFileSync(f, 'utf-8'),
+        `${name}/post-deploy.py still sends X-Emby-Authorization (#3048)`,
+      ).not.toMatch(/["']X-Emby-Authorization["']\s*:/);
+    }
+  });
+});

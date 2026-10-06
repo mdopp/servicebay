@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const { mockGetConfig } = vi.hoisted(() => ({ mockGetConfig: vi.fn() }));
 vi.mock('@/lib/config', () => ({ getConfig: () => mockGetConfig() }));
@@ -631,5 +633,40 @@ describe('makeEphemeralUsername', () => {
     const b = makeEphemeralUsername(1000);
     expect(a).toMatch(/^sb-ssoverify-1000-[0-9a-f]{6}$/);
     expect(a).not.toBe(b); // random suffix differs
+  });
+});
+
+// ── #3048 — the client-identification header Jellyfin 12 actually reads ──
+describe('Jellyfin client-identification header (#3048)', () => {
+  // Read from the repo rather than import.meta.url: this suite runs under
+  // a vitest alias where import.meta.url is not a file: URL.
+  const source = readFileSync(
+    resolve(process.cwd(), 'packages/backend/src/lib/diagnose/ssoVerify.ts'),
+    'utf8',
+  );
+
+  it('sends the identifier on Authorization, never the legacy X-Emby-Authorization', () => {
+    // Jellyfin 12 ignores the `X-` spelling, so the request arrives with no
+    // client identity and the server answers 400 before any auth provider
+    // runs. Verified on the box: identical request, only the header name
+    // swapped, 400 -> 401 with a real LDAP search in the log.
+    expect(source).not.toMatch(/['"]X-Emby-Authorization['"]\s*:/);
+    expect(source).toMatch(/['"]Authorization['"]\s*:\s*jellyfinAuthHeader\(/);
+  });
+
+  it('every jellyfinAuthHeader call site rides on a header, none left unsent', () => {
+    const calls = source.match(/jellyfinAuthHeader\(/g) ?? [];
+    const sent = source.match(/['"]Authorization['"]\s*:\s*jellyfinAuthHeader\(/g) ?? [];
+    // One extra occurrence is the function's own declaration.
+    expect(calls.length).toBe(sent.length + 1);
+  });
+
+  it('does not blame LDAP for a 400, which is decided before LDAP is consulted', () => {
+    expect(source).toMatch(/res\.status === 400/);
+    // The LDAP wording must be reachable only on the non-400 branch.
+    const idx400 = source.indexOf('res.status === 400');
+    const idxLdap = source.indexOf('LDAP-Auth plugin missing or its LLDAP bind is broken');
+    expect(idx400).toBeGreaterThan(-1);
+    expect(idxLdap).toBeGreaterThan(idx400);
   });
 });
